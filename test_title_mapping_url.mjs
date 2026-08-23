@@ -73,4 +73,3 @@ check('5.2 抛错后原合并结果不受影响', globals.titleMappingTable.get(
 
 console.log(`\n==== 结果: ${pass}/${pass + fail} 通过 ====`);
 process.exit(fail === 0 ? 0 : 1);
-
