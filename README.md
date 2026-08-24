@@ -21,6 +21,12 @@
 - 收藏列表接口返回 `favoriteSupported`，用于声明当前部署是否具备持久化收藏能力。
 - 在 serverless 平台未配置 Redis 时，收藏相关 UI 会禁用并提示配置 `UPSTASH_REDIS_REST_URL` 与 `UPSTASH_REDIS_REST_TOKEN`。
 
+## 渐变彩色弹幕
+
+- B 站大会员渐变弹幕（`color_v2` 扩展字段）透传：源数据携带时原样保留，`color` 字段仍输出单色以保持协议兼容；弹幕合并时会保留组内第一条可用的 `color_v2`。
+- `GRADIENT_CHANCE` 渐变命中概率（0-100，默认 `0` 关闭）：`CONVERT_COLOR=color` 模式下，白色弹幕按该概率改为从渐变色带取色；颜色随弹幕出现时间平滑流转（60 秒循环），相邻弹幕颜色渐变过渡。
+- `GRADIENT_COLORS` 渐变色带：可填皮肤名（`bilibili` 粉→蓝 / `sweet` 粉紫 / `cyber` 电竞 / `sunset` 日落 / `ocean` 海洋 / `mint` 薄荷 / `rainbow` 彩虹七色）或自定义十进制颜色值逗号分隔串（至少 2 个），默认使用 `bilibili` 皮肤。
+
 ## 版本
 
 - 当前 fork 版本：v1.20.8。
