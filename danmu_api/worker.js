@@ -8,7 +8,7 @@ import AIClient from './utils/ai-util.js';
 import { getBangumi, getComment, getCommentByUrl, getSegmentComment, matchAnime, searchAnime, searchEpisodes } from "./apis/dandan-api.js";
 import { handleFavoriteAdd, handleFavoriteList, handleFavoriteRefresh, handleFavoriteRemove, handleFavoriteSchedule } from "./apis/favorite-api.js";
 import { getFongmiDanmaku } from "./apis/clients/fongmi-api.js";
-import { handleConfig, handleUI, handleLogs, handleClearLogs, handleDeploy, handleClearCache, handleReqRecords, handleCacheAnimes, handleRemoteMappingLogs, handleRemoteMappingRefresh } from "./apis/system-api.js";
+import { handleConfig, handleUI, handleLogs, handleClearLogs, handleDeploy, handleClearCache, handleReqRecords, handleCacheAnimes, handleRemoteMappingLogs, handleRemoteMappingRefresh, handleRemoteAutoMatchMappingRefresh } from "./apis/system-api.js";
 import { handleForwardTrace } from "./apis/forward-trace-api.js";
 import { handleSetEnv, handleAddEnv, handleDelEnv, handleAiVerify } from "./apis/env-api.js";
 import { extendBangumiDownloadLifecycle } from "./utils/bangumi-data-util.js";
@@ -389,7 +389,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   // GET /api/v2/bangumi/:animeId
   if (path.startsWith("/api/v2/bangumi/") && method === "GET") {
-    return getBangumi(path);
+    return getBangumi(path, null, url.searchParams.get('source'));
   }
 
   // GET /api/v2/comment/:commentId or /api/v2/comment?url=xxx or /api/v2/extcomment?url=xxx
@@ -555,6 +555,14 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       return jsonResponse({ success: false, errorMessage: "需要 ADMIN_TOKEN 权限" }, 403);
     }
     return handleRemoteMappingRefresh();
+  }
+
+  // POST /api/auto-match-mapping/refresh - 管理员手动刷新远程季集映射表
+  if (path === "/api/auto-match-mapping/refresh" && method === "POST") {
+    if (!explicitToken || explicitToken !== globals.adminToken) {
+      return jsonResponse({ success: false, errorMessage: "需要 ADMIN_TOKEN 权限" }, 403);
+    }
+    return handleRemoteAutoMatchMappingRefresh();
   }
 
   if (path === '/api/debug/forward-trace') {

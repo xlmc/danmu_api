@@ -17,6 +17,8 @@ import { getRedisCaches, judgeRedisValid } from './utils/redis-util.js';
 import { persistFavorites, refreshFavoriteByKeyword } from './apis/favorite-api.js';
 import { startFavoriteScheduler, stopFavoriteScheduler } from './utils/favorite-schedule-util.js';
 import { formatHostForUrl, listenOnAllInterfaces } from './utils/server-listen-util.js';
+import { initializeRemoteAutoMatchMapping } from './utils/auto-match-mapping-url-util.js';
+import { ensureRemoteTitleMapping } from './utils/title-mapping-url-util.js';
 
 // =====================
 // server.js - 本地node智能启动脚本：根据 Node.js 环境自动选择最优启动模式
@@ -514,6 +516,8 @@ async function startServer() {
   // 初始化全局变量环境
   try {
     Globals.init(process.env);
+    await ensureRemoteTitleMapping();
+    await initializeRemoteAutoMatchMapping();
   } catch (e) {
     console.error('[server] Globals init failed:', e);
   }

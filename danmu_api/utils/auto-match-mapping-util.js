@@ -14,6 +14,64 @@ function normalizeRuleTitle(value) {
     .toLowerCase();
 }
 
+const ruleIndexCache = new WeakMap();
+
+function getRuleIndex(rules) {
+  if (!Array.isArray(rules)) return new Map();
+  const cached = ruleIndexCache.get(rules);
+  if (cached) return cached;
+  const index = new Map();
+  for (const rule of rules) {
+    const key = `${rule.sourceTitleKey}\u0000${rule.sourceSeason}`;
+    const bucket = index.get(key) || [];
+    bucket.push(rule);
+    index.set(key, bucket);
+  }
+  ruleIndexCache.set(rules, index);
+  return index;
+}
+
+function splitRuleEntries(value) {
+  const entries = [];
+  let current = '';
+  let markerDepth = 0;
+  const source = String(value || '').replace(/\r/g, '')
+    .split('\n')
+    .filter(line => !/^\s*(?:#|\/\/)/.test(line))
+    .join('\n');
+  for (const char of source) {
+    if (char === '{') markerDepth++;
+    if (char === '}') markerDepth = Math.max(0, markerDepth - 1);
+    if ((char === ';' || char === '\n') && markerDepth === 0) {
+      if (current.trim()) entries.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) entries.push(current.trim());
+  return entries;
+}
+
+function parseIdentityMarker(value) {
+  const text = String(value || '');
+  const marker = text.match(/\{\[([^\]]+)\]\}/);
+  const fields = {};
+  if (marker) {
+    for (const item of marker[1].split(';')) {
+      const eq = item.indexOf('=');
+      if (eq === -1) continue;
+      fields[item.slice(0, eq).trim().toLowerCase()] = item.slice(eq + 1).trim();
+    }
+  }
+  const tmdbId = Number(fields.tmdbid || fields.tmdb || 0);
+  return {
+    cleanText: text.replace(/\{\[[^\]]+\]\}/g, '').replace(/\s+/g, ' ').trim(),
+    tmdbId: Number.isInteger(tmdbId) && tmdbId > 0 ? tmdbId : null,
+    mediaType: fields.type || ''
+  };
+}
+
 function parseEpisodeSide(value, { allowPlatform = false } = {}) {
   let text = String(value || '').trim();
   let platform = '';
@@ -39,10 +97,12 @@ function parseEpisodeSide(value, { allowPlatform = false } = {}) {
 }
 
 function parseTargetTitle(value) {
-  const displayTitle = String(value || '').trim();
+  const identity = parseIdentityMarker(value);
+  const displayTitle = identity.cleanText;
   const yearMatch = displayTitle.match(/[（(]((?:19|20)\d{2})[)）]/);
   const typeMatches = [...displayTitle.matchAll(/【([^】]+)】/g)];
   const mediaType = typeMatches.length > 0 ? typeMatches[typeMatches.length - 1][1].trim() : '';
+  const markerMediaType = String(identity.mediaType || '').toLowerCase();
   const title = displayTitle
     .replace(/[（(](?:19|20)\d{2}[)）]/g, '')
     .replace(/【[^】]+】/g, '')
@@ -52,7 +112,9 @@ function parseTargetTitle(value) {
     title,
     displayTitle,
     year: yearMatch ? Number(yearMatch[1]) : null,
-    mediaType
+    // MoviePilot 的 type=tv 只是 TMDB 媒体大类，不能拿来排除动画候选；显式【类型】仍作为严格限定。
+    mediaType: mediaType || (markerMediaType === 'movie' ? 'movie' : (markerMediaType && markerMediaType !== 'tv' ? markerMediaType : '')),
+    tmdbId: identity.tmdbId
   };
 }
 
@@ -64,9 +126,9 @@ export function parseAutoMatchMappingRules(value, allowedPlatforms = []) {
   const warnings = [];
   const allowed = new Set((allowedPlatforms || []).map(item => String(item).toLowerCase()));
 
-  for (const [index, rawRule] of String(value || '').split(';').entries()) {
+  for (const [index, rawRule] of splitRuleEntries(value).entries()) {
     const text = rawRule.trim();
-    if (!text) continue;
+    if (!text || text.startsWith('#') || text.startsWith('//')) continue;
 
     const arrowIndex = text.indexOf('->');
     if (arrowIndex === -1 || text.indexOf('->', arrowIndex + 2) !== -1) {
@@ -114,6 +176,7 @@ export function parseAutoMatchMappingRules(value, allowedPlatforms = []) {
       targetDisplayTitle: targetTitle.displayTitle,
       targetYear: targetTitle.year,
       targetType: targetTitle.mediaType,
+      targetTmdbId: targetTitle.tmdbId,
       targetSeason: targetSide.season,
       targetStartEpisode: targetSide.startEpisode,
       targetEndEpisode: targetSide.endEpisode,
@@ -130,8 +193,7 @@ export function resolveAutoMatchMapping(rules, { title, season, episode }) {
   const episodeNumber = Number(episode);
   if (!titleKey || !Number.isInteger(seasonNumber) || !Number.isInteger(episodeNumber)) return null;
 
-  const matches = (Array.isArray(rules) ? rules : []).filter(rule => {
-    if (rule.sourceTitleKey !== titleKey || rule.sourceSeason !== seasonNumber) return false;
+  const matches = (getRuleIndex(rules).get(`${titleKey}\u0000${seasonNumber}`) || []).filter(rule => {
     if (episodeNumber < rule.sourceStartEpisode) return false;
     return rule.sourceEndEpisode === null || episodeNumber <= rule.sourceEndEpisode;
   });
@@ -140,6 +202,8 @@ export function resolveAutoMatchMapping(rules, { title, season, episode }) {
   // episode is the most specific transition point. Keep declaration order
   // only as the tie-breaker for rules with the same specificity.
   matches.sort((left, right) => {
+    const originOrder = Number(right.originPriority || 0) - Number(left.originPriority || 0);
+    if (originOrder !== 0) return originOrder;
     const boundedOrder = Number(right.bounded) - Number(left.bounded);
     if (boundedOrder !== 0) return boundedOrder;
     if (!left.bounded && left.sourceStartEpisode !== right.sourceStartEpisode) {
@@ -154,6 +218,20 @@ export function resolveAutoMatchMapping(rules, { title, season, episode }) {
     ...rule,
     targetEpisode: rule.targetStartEpisode + episodeNumber - rule.sourceStartEpisode
   };
+}
+
+export function mergeAutoMatchMappingRules(localRules, remoteRules) {
+  const local = (Array.isArray(localRules) ? localRules : []).map(rule => ({
+    ...rule,
+    origin: 'local',
+    originPriority: 2
+  }));
+  const remote = (Array.isArray(remoteRules) ? remoteRules : []).map(rule => ({
+    ...rule,
+    origin: 'remote',
+    originPriority: 1
+  }));
+  return [...local, ...remote];
 }
 
 function normalizeMediaType(value) {
@@ -193,6 +271,14 @@ export function candidateMatchesMappingQualifiers(anime, mapping) {
   if (!anime || !mapping) return false;
   const candidateTitles = [anime.animeTitle, ...(Array.isArray(anime.aliases) ? anime.aliases : [])].filter(Boolean);
 
+  if (mapping.targetTmdbId) {
+    const candidateIds = [anime.tmdbId, anime.tmdb_id, anime.externalIds?.tmdb, anime.externalIds?.tmdbId]
+      .map(Number)
+      .filter(value => Number.isInteger(value) && value > 0);
+    // 有明确外部身份时必须一致；没有外部身份的弹幕源继续由标题、年份和类型严格校验。
+    if (candidateIds.length > 0 && !candidateIds.includes(mapping.targetTmdbId)) return false;
+  }
+
   if (mapping.targetYear) {
     const years = candidateTitles
       .map(title => String(title).match(/(?:19|20)\d{2}/)?.[0])
@@ -216,7 +302,7 @@ export function candidateMatchesMappingQualifiers(anime, mapping) {
 }
 
 export function filterMappingQualifierCandidates(animes, mapping) {
-  if (!mapping?.targetYear && !mapping?.targetType) return [];
+  if (!mapping?.targetYear && !mapping?.targetType && !mapping?.targetTmdbId) return [];
   return (Array.isArray(animes) ? animes : []).filter(anime => candidateMatchesMappingQualifiers(anime, mapping));
 }
 

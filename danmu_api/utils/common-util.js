@@ -220,7 +220,7 @@ export function normalizeSpaces(str) {
  * @param {string} query - 搜索关键词
  * @returns {boolean} 是否匹配
  */
-export function strictTitleMatch(title, query) {
+export function strictTitleMatch(title, query, parsedSeason = null) {
   if (!title || !query) return false;
 
   // 剧名杂音清理：移除画质/配音/版本等杂音词，避免阻塞匹配
@@ -228,16 +228,20 @@ export function strictTitleMatch(title, query) {
   const cleanTitle = tagFilter ? title.replace(tagFilter, '').trim() : title;
   const cleanQuery = tagFilter ? query.replace(tagFilter, '').trim() : query;
 
-  const t = normalizeSpaces(cleanTitle);
-  const q = normalizeSpaces(cleanQuery);
+  const t = normalizeSpaces(cleanTitle).toLowerCase();
+  const q = normalizeSpaces(cleanQuery).toLowerCase();
 
-  // 完全匹配
+  // 查询已经包含完整季名时，标题完全相等即可；parsedSeason 可能是该条目内部的 S01。
   if (t === q) return true;
+
+  // 严格模式必须尊重已解析出的季：候选明确写了其他季时直接排除。
+  const candidateSeason = getExplicitSeasonNumber(cleanTitle);
+  if (parsedSeason !== null && candidateSeason !== null && Number(candidateSeason) !== Number(parsedSeason)) return false;
 
   // 标题以搜索词开头，且后面为季号或有效关键词时，允许严格匹配通过
   if (t.startsWith(q) && t.length > q.length) {
     const suffix = t.substring(q.length);
-    const seasonPattern = /^(?:[\dⅡⅢⅣⅤⅥⅦⅧⅨⅩ]|[sS]\d+|Season\s*\d+|Part\s*\d+|第\d+|[第]?\s*[零一二三四五六七八九十]+\s*[季期部]|年番|合集|部(?!分)|部分|篇|剧场|完结|最终)/;
+    const seasonPattern = /^(?:[\dⅡⅢⅣⅤⅥⅦⅧⅨⅩⅰⅱⅲⅳⅴⅵⅶⅷⅸⅹ]|s\d+|Season\s*\d+|Part\s*\d+|第\d+|[第]?\s*[零一二三四五六七八九十]+\s*[季期部]|年番|合集|部(?!分)|部分|篇|剧场|完结|最终)/i;
     if (seasonPattern.test(suffix)) return true;
   }
 
@@ -277,7 +281,7 @@ export function titleMatches(title, query, parsedSeason = null, forceNonStrict =
   if (!titleText || !queryText) return false;
 
   // 策略1：严格模式仅允许头部或完全匹配（forceNonStrict 为 true 时跳过，用于偏好记录等场景）
-  if (!forceNonStrict && globals.strictTitleMatch) return strictTitleMatch(titleText, queryText);
+  if (!forceNonStrict && globals.strictTitleMatch) return strictTitleMatch(titleText, queryText, parsedSeason);
 
   // 剧名杂音清理：移除画质/配音/版本等杂音词，避免阻塞匹配
   const tagFilter = globals.titleNoiseFilter || null;
