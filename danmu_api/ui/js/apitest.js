@@ -1299,10 +1299,12 @@ function displayManualAnimeList(animes) {
     animes.forEach(anime => {
         const animeId = Number.parseInt(anime.animeId, 10);
         if (!Number.isFinite(animeId)) return;
+        const source = String(anime.source || '');
         const img = escapeHtml(anime.imageUrl || 'https://placehold.co/150x200?text=No+Image');
-        html += '<div class="anime-item" onclick="manualGetBangumi(' + animeId + ')">';
+        html += '<div class="anime-item" onclick="manualGetBangumi(' + animeId + ', ' + JSON.stringify(source).replace(/"/g, '&quot;') + ')">';
         html += '<img src="' + img + '" alt="' + escapeHtml(anime.animeTitle) + '" referrerpolicy="no-referrer" class="anime-item-img">';
         html += '<h4 class="anime-title">' + escapeHtml(anime.animeTitle) + ' - 共' + (anime.episodeCount || '?') + '集</h4>';
+        html += '<div class="text-gray font-size-12">' + escapeHtml([source, anime.typeDescription || anime.type, anime.startDate ? String(anime.startDate).slice(0, 4) : ''].filter(Boolean).join(' · ')) + '</div>';
         html += '</div>';
     });
     html += '</div>';
@@ -1310,7 +1312,7 @@ function displayManualAnimeList(animes) {
     container.style.display = 'block';
 }
 
-async function manualGetBangumi(animeId) {
+async function manualGetBangumi(animeId, source = '') {
     const detailRequestId = startManualBangumiRequest();
     const requestTrace = danmuTestState.currentManualSearchCallTraceBase
         ? cloneDanmuCallTrace(danmuTestState.currentManualSearchCallTraceBase)
@@ -1321,7 +1323,7 @@ async function manualGetBangumi(animeId) {
     showDanmuView(['manual-episode-list'], ['manual-anime-list', 'danmu-result-area']);
 
     let bangumiStartedAt = 0;
-    const bangumiUrl = '/api/v2/bangumi/' + animeId;
+    const bangumiUrl = '/api/v2/bangumi/' + animeId + (source ? '?source=' + encodeURIComponent(source) : '');
     try {
         bangumiStartedAt = performance.now();
         const resp = await fetch(buildApiUrl(bangumiUrl));

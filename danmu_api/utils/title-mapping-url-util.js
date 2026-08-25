@@ -452,10 +452,10 @@ async function refreshRemoteTitleMapping(url, reason = 'scheduled') {
 /**
  * 【归一化：把各种分隔符统一成空格】
  * 例："Monster.Island.2017" → "Monster Island 2017"
- * 正则 [.\s_\-] 表示：点号 / 空白 / 下划线 / 连字符，全部替换成一个空格。
+ * 点号、空白、下划线、连字符、加号及中英文逗号统一成空格。
  */
 function normalizeSeparators(str) {
-  return String(str || '').replace(/[.\s_\-]+/g, ' ').trim();
+  return String(str || '').replace(/[.\s_+\-,，]+/g, ' ').trim();
 }
 
 /**
@@ -464,7 +464,7 @@ function normalizeSeparators(str) {
  * 这是最宽松的兜底匹配，只用来最后救场。
  */
 function compactKey(str) {
-  return String(str || '').replace(/[.\s_\-]+/g, '').toLowerCase();
+  return String(str || '').replace(/[.\s_+\-,，]+/g, '').toLowerCase();
 }
 
 /**
@@ -480,7 +480,10 @@ function compactKey(str) {
  * 说明：如果不同键归一化后撞到一起（例如 "A-B" 和 "A B"），
  *       只保留第一个出现的（与业务上「先写优先」的直觉一致）。
  */
+const mappingIndexCache = new WeakMap();
+
 function buildMappingIndex(table) {
+  if (table instanceof Map && mappingIndexCache.has(table)) return mappingIndexCache.get(table);
   const rawIndex = new Map();
   const normIndex = new Map();
   const compactIndex = new Map();
@@ -497,7 +500,9 @@ function buildMappingIndex(table) {
       if (compact && !compactIndex.has(compact)) compactIndex.set(compact, value);
     }
   }
-  return { rawIndex, normIndex, compactIndex };
+  const result = { rawIndex, normIndex, compactIndex };
+  if (table instanceof Map) mappingIndexCache.set(table, result);
+  return result;
 }
 
 /**
@@ -754,6 +759,48 @@ function readPureLocalMappingTable() {
   if (envsTable instanceof Map) return new Map(envsTable);
   const fallback = globals.titleMappingTable instanceof Map ? globals.titleMappingTable : new Map();
   return new Map(fallback);
+}
+
+function resolveMappingFromTable(table, rawTitle, season = null, year = null) {
+  const mappingTable = table instanceof Map ? table : new Map();
+  const index = buildMappingIndex(mappingTable);
+  const candidateKeys = buildMappingCandidateKeys(rawTitle, season, year);
+  for (const key of candidateKeys) {
+    const mapped = index.rawIndex.get(key) ?? index.normIndex.get(normalizeSeparators(key));
+    if (mapped !== undefined) return { matched: true, title: mapped, key };
+  }
+  const compact = compactKey(rawTitle);
+  const mapped = compact ? index.compactIndex.get(compact) : undefined;
+  return mapped === undefined
+    ? { matched: false, title: rawTitle, key: '' }
+    : { matched: true, title: mapped, key: rawTitle };
+}
+
+/** 分层匹配专用：只查询用户本机 TITLE_MAPPING_TABLE。 */
+export function resolveLocalTitleMapping(rawTitle, season = null, year = null) {
+  const table = globals.envs?.titleMappingTable instanceof Map
+    ? globals.envs.titleMappingTable
+    : (globals.titleMappingTable instanceof Map ? globals.titleMappingTable : new Map());
+  return resolveMappingFromTable(table, rawTitle, season, year);
+}
+
+/** 分层匹配专用：只查询已经下载到本机/内存的远程标题缓存。 */
+export function resolveCachedRemoteTitleMapping(rawTitle, season = null, year = null) {
+  const configuredUrl = normalizeMappingSourceUrl(globals.titleMappingTableUrl);
+  const table = configuredUrl && remoteState.url === configuredUrl ? remoteState.mappings : new Map();
+  return resolveMappingFromTable(table, rawTitle, season, year);
+}
+
+/** 匹配阶段只装入磁盘缓存并安排定时器，绝不因缺少缓存而联网。 */
+export async function ensureCachedRemoteTitleMapping() {
+  const url = normalizeMappingSourceUrl(globals.titleMappingTableUrl);
+  if (!url) return;
+  scheduleRemoteRefresh(url);
+  if (remoteState.url !== url || remoteState.mappings.size === 0) {
+    remoteState.localMappings = readPureLocalMappingTable();
+    await loadDiskRemoteMapping(url);
+  }
+  ensureMergedIntoGlobals();
 }
 
 /**

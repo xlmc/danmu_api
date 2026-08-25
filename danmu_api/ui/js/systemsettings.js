@@ -2403,11 +2403,12 @@ function envItemMatchesSearch(item, category, normalizedQuery) {
     ].join(' ').toLocaleLowerCase().includes(normalizedQuery);
 }
 
-function renderRemoteMappingRefreshItem() {
+function renderRemoteMappingRefreshItem(kind = 'title') {
+    const isAutoMatch = kind === 'auto-match';
     return '<div class="env-item">' +
-        '<div class="env-info"><strong>Remote Mapping Update</strong>' +
-        '<div class="text-gray font-size-12 margin-top-3">手动下载并立即应用远程剧名映射表；失败时保留旧缓存。</div></div>' +
-        '<div class="env-actions remote-refresh-actions"><button class="btn btn-secondary" onclick="refreshRemoteMapping(this)">立即更新</button>' +
+        '<div class="env-info"><strong>' + (isAutoMatch ? '季集映射缓存' : '标题映射缓存') + '</strong>' +
+        '<div class="text-gray font-size-12 margin-top-3">手动下载并立即应用远程' + (isAutoMatch ? '季集' : '剧名') + '映射表；失败时保留旧缓存。</div></div>' +
+        '<div class="env-actions remote-refresh-actions"><button class="btn btn-secondary" onclick="refreshRemoteMapping(this, \'' + kind + '\')">立即更新</button>' +
         '<span class="remote-refresh-status text-gray font-size-12" style="display:block;margin-top:4px;" aria-live="polite"></span></div></div>';
 }
 
@@ -2467,7 +2468,7 @@ function renderEnvList() {
         if (themeSettings) themeSettings.hidden = currentCategory !== 'system';
         if (status) status.textContent = previewCategoryMeta[currentCategory].label + ' · ' + categoryItems.length + ' 项';
         list.innerHTML = items.length
-            ? items.map(({ item, originalIndex }) => renderEnvItem(item, currentCategory, originalIndex) + (item.key === 'TITLE_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem() : '')).join('')
+            ? items.map(({ item, originalIndex }) => renderEnvItem(item, currentCategory, originalIndex) + (item.key === 'TITLE_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('title') : item.key === 'AUTO_MATCH_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('auto-match') : '')).join('')
             : '<p class="text-gray padding-20 text-center">暂无配置项</p>';
         return;
     }
@@ -2494,7 +2495,7 @@ function renderEnvList() {
                     <span>\${regularMatches.length} 项</span>
                 </div>
                 <div>
-                    \${regularMatches.map(({ item, originalIndex }) => renderEnvItem(item, category, originalIndex) + (item.key === 'TITLE_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem() : '')).join('')}
+                    \${regularMatches.map(({ item, originalIndex }) => renderEnvItem(item, category, originalIndex) + (item.key === 'TITLE_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('title') : item.key === 'AUTO_MATCH_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('auto-match') : '')).join('')}
                 </div>
             </section>
         \`;
@@ -2506,7 +2507,7 @@ function renderEnvList() {
 }
 
 // 手动更新远程剧名映射表
-async function refreshRemoteMapping(button) {
+async function refreshRemoteMapping(button, kind = 'title') {
     if (!button || button.disabled) return;
     const status = button.parentElement && button.parentElement.querySelector('.remote-refresh-status');
     const setStatus = (text, isError = false) => {
@@ -2524,7 +2525,8 @@ async function refreshRemoteMapping(button) {
         const timeoutId = setTimeout(() => controller.abort(), 10000);
         let response;
         try {
-            response = await fetch(buildApiUrl('/api/title-mapping/refresh', true), { method: 'POST', signal: controller.signal });
+            const endpoint = kind === 'auto-match' ? '/api/auto-match-mapping/refresh' : '/api/title-mapping/refresh';
+            response = await fetch(buildApiUrl(endpoint, true), { method: 'POST', signal: controller.signal });
         } finally {
             clearTimeout(timeoutId);
         }
