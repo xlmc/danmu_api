@@ -72,9 +72,15 @@ function drawNativeCanvas(canvas, fillImage, strokeImage) {
   context.font = font;
   context.textBaseline = 'middle';
   context.lineJoin = 'round';
-  context.lineWidth = 2;
-  context.strokeStyle = strokeImage ? context.createPattern(strokeImage, 'repeat') : '#f2509e';
-  context.fillStyle = fillImage ? context.createPattern(fillImage, 'repeat') : '#ffffff';
+  // B 站原生效果的颜色主要位于描边；调试页放大描边，避免小字号下被白色填充盖住。
+  context.lineWidth = 6;
+  const bilibiliStrokeGradient = context.createLinearGradient(0, 0, width, 0);
+  bilibiliStrokeGradient.addColorStop(0, '#f2509e');
+  bilibiliStrokeGradient.addColorStop(0.5, '#8671b9');
+  bilibiliStrokeGradient.addColorStop(1, '#308bcd');
+  // B 站原生描边资源是同一条粉—紫—蓝色带；用等效渐变绘制，避免远端纹理在小字号下只显示单端颜色。
+  context.strokeStyle = bilibiliStrokeGradient;
+  context.fillStyle = '#ffffff';
   context.strokeText(text, 5, height / 2);
   context.fillText(text, 5, height / 2);
 }
