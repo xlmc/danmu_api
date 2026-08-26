@@ -2091,6 +2091,8 @@ export async function matchAnime(url, req, clientIp) {
     let mappingApplied = false;
     let mapping = null;
     let matchStage = '';
+    let localTitleMapping = null;
+    let remoteTitleMapping = null;
 
     const succeeded = value => Boolean(value?.resAnime && value?.resEpisode);
 
@@ -2156,21 +2158,42 @@ export async function matchAnime(url, req, clientIp) {
 
     // 2. 本机标题表；规则存在不算成功，必须真正找到作品和剧集。
     if (!succeeded(attempt)) {
-      const localTitle = resolveLocalTitleMapping(parsed.title, originalSeason, originalYear);
-      if (localTitle.matched) {
-        const title = normalizeMatchTitle(localTitle.title);
+      localTitleMapping = resolveLocalTitleMapping(parsed.title, originalSeason, originalYear);
+      if (localTitleMapping.matched) {
+        const title = normalizeMatchTitle(localTitleMapping.title);
         const [preferAnimeId, preferSource, offsets] = globals.rememberLastSelect
           ? getPreferAnimeId(title, originalSeason) : [null, null, null];
         attempt = await tryTitlePath({ stage: '本机标题映射', title, preferAnimeId, preferSource, offsets, strictTargetTitle: true }) || attempt;
       }
     }
 
-    // 3. 本机季集表，与标题表并列，不叠加标题表结果。
+    // 3. 本机季集表。标题表实际失败后，先尝试明确的标题+季集组合，
+    // 再用原始标题查季集规则；命中规则不等于成功，仍以作品和剧集为准。
     if (!succeeded(attempt)) {
-      const localRule = resolveAutoMatchMapping(globals.autoMatchMappingTable, {
+      const localRuleCandidates = [];
+      const seenLocalRules = new Set();
+      const addLocalRule = (rule, stage) => {
+        if (!rule) return;
+        const key = `${rule.raw || ''}\u0000${rule.targetTitle || ''}\u0000${rule.targetSeason}\u0000${rule.targetEpisode}`;
+        if (seenLocalRules.has(key)) return;
+        seenLocalRules.add(key);
+        localRuleCandidates.push({ rule, stage });
+      };
+
+      if (localTitleMapping?.matched) {
+        addLocalRule(resolveAutoMatchMapping(globals.autoMatchMappingTable, {
+          title: normalizeMatchTitle(localTitleMapping.title), season: originalSeason, episode: originalEpisode
+        }), '本机标题+季集映射');
+      }
+
+      addLocalRule(resolveAutoMatchMapping(globals.autoMatchMappingTable, {
         title: originalTitle, season: originalSeason, episode: originalEpisode
-      });
-      attempt = await tryAutoMappingPath('本机季集映射', localRule) || attempt;
+      }), '本机季集映射');
+
+      for (const candidate of localRuleCandidates) {
+        attempt = await tryAutoMappingPath(candidate.stage, candidate.rule) || attempt;
+        if (succeeded(attempt)) break;
+      }
     }
 
     // 4. 原项目普通匹配。成功后不读取两个远程缓存。
@@ -2183,22 +2206,46 @@ export async function matchAnime(url, req, clientIp) {
     // 5. 所有本机路径失败后，才读取远程标题缓存；成功即停止。
     if (!succeeded(attempt)) {
       await ensureCachedRemoteTitleMapping();
-      const remoteTitle = resolveCachedRemoteTitleMapping(parsed.title, originalSeason, originalYear);
-      if (remoteTitle.matched) {
-        const title = normalizeMatchTitle(remoteTitle.title);
+      remoteTitleMapping = resolveCachedRemoteTitleMapping(parsed.title, originalSeason, originalYear);
+      if (remoteTitleMapping.matched) {
+        const title = normalizeMatchTitle(remoteTitleMapping.title);
         const [preferAnimeId, preferSource, offsets] = globals.rememberLastSelect
           ? getPreferAnimeId(title, originalSeason) : [null, null, null];
         attempt = await tryTitlePath({ stage: '远程标题缓存', title, preferAnimeId, preferSource, offsets, strictTargetTitle: true }) || attempt;
       }
     }
 
-    // 6. 远程标题实际失败后，最后尝试远程季集缓存。
+    // 6. 远程标题实际失败后，尝试远程季集缓存。
+    // 若标题表和季集表都命中，先尝试“标题+季集”组合；组合规则必须
+    // 明确以标题映射后的标题为源标题，避免把无关规则强行叠加。
     if (!succeeded(attempt)) {
       await ensureRemoteAutoMatchMapping();
-      const remoteRule = resolveAutoMatchMapping(getCachedRemoteAutoMatchMappingRules(), {
+      const remoteRules = getCachedRemoteAutoMatchMappingRules();
+      const remoteRuleCandidates = [];
+      const seenRemoteRules = new Set();
+      const addRemoteRule = (rule, stage) => {
+        if (!rule) return;
+        const key = `${rule.raw || ''}\u0000${rule.targetTitle || ''}\u0000${rule.targetSeason}\u0000${rule.targetEpisode}`;
+        if (seenRemoteRules.has(key)) return;
+        seenRemoteRules.add(key);
+        remoteRuleCandidates.push({ rule, stage });
+      };
+
+      if (remoteTitleMapping?.matched) {
+        const mappedTitle = normalizeMatchTitle(remoteTitleMapping.title);
+        addRemoteRule(resolveAutoMatchMapping(remoteRules, {
+          title: mappedTitle, season: originalSeason, episode: originalEpisode
+        }), '远程标题+季集缓存');
+      }
+
+      addRemoteRule(resolveAutoMatchMapping(remoteRules, {
         title: originalTitle, season: originalSeason, episode: originalEpisode
-      });
-      attempt = await tryAutoMappingPath('远程季集缓存', remoteRule) || attempt;
+      }), '远程季集缓存');
+
+      for (const candidate of remoteRuleCandidates) {
+        attempt = await tryAutoMappingPath(candidate.stage, candidate.rule) || attempt;
+        if (succeeded(attempt)) break;
+      }
     }
 
     attempt ||= { resAnime: null, resEpisode: null, spilloverMatched: false, title: originalTitle, season: originalSeason, episode: originalEpisode };
