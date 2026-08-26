@@ -73,7 +73,7 @@ LogVar 弹幕 API 服务器
   - 优先级：查询参数 > 环境变量 > 默认值
   - 示例：`GET /api/v2/comment/10001?format=xml` 返回 XML 格式弹幕
   - **XML 格式说明**：完全遵循 Bilibili 标准格式，8字段标准弹幕属性
-  - **DanmuX v1 格式**：使用 `?format=danmux` 返回 `schemaVersion: 1` 的增强 JSON；每条评论保留 `p/m`，并可在 `danmux.effects` 中携带标准 `linear` 渐变。只有配置 `DANMUX_GRADIENT_STOPS` 显式 stops 时才生成人工渐变，不使用内置预设。B 站原生纹理可通过 `DANMUX_TEXTURE_GRADIENTS` 显式映射为播放器更容易实现的标准 `linear` 渐变；未映射的原生纹理不会输出，确保 DanmuX 接口只输出标准渐变。
+  - **DanmuX v1 格式**：使用 `?format=danmux` 返回 `schemaVersion: 1` 的增强 JSON；每条评论保留 `p/m`，并可在 `danmux.effects` 中携带标准 `linear` 渐变。只有 `CONVERT_COLOR=color` 且 `GRADIENT_CHANCE` 命中时，普通白色弹幕才生成渐变；颜色来自 `GRADIENT_COLORS`，默认使用 `default` 皮肤。B 站 `color_v2/colorfulSrc` 原生纹理不会作为 DanmuX 效果输出。
   - **下游模拟**：安装依赖后运行 `npm run simulate:danmux`，可看到 `p/m` 兼容、`danmux` 增强解析和模拟播放器渐变渲染三项结果。
 - **日志记录**：捕获 `console.log`（info 级别）和 `console.error`（error 级别），JSON 内容格式化输出。
 - **永久收藏缓存**：适合《火影忍者》《名侦探柯南》等集数较多、重复搜索耗时较长的剧集。只缓存剧集搜索结果，不缓存弹幕。
@@ -155,10 +155,14 @@ LogVar 弹幕 API 服务器
 
    **DanmuX 下游模拟**：保持 API 服务运行，另开终端执行 `npm run demo:player`，然后打开 `http://127.0.0.1:4190`。页面打开后会先自动加载 3 条本地模拟数据（不需要 `commentId`），其中前两条模拟 B 站 `colorfulSrc` 的原生纹理（白色填充＋渐变描边），第三条验证兼容单色回退；要验证真实后台，再填入完整的 `format=danmux` 接口地址并点击“从 API 抓取 10 条”。
 
-   要看到人工渐变，请配置 `DANMUX_GRADIENT_STOPS`，例如：
+   要看到标准渐变，请将普通弹幕转换设为 `color`，并打开渐变概率。例如全量验证：
    ```text
-   [{"position":0,"color":"#FB7299"},{"position":1,"color":"#33B8FF"}]
+   CONVERT_COLOR=color
+   GRADIENT_CHANCE=100
+   GRADIENT_COLORS=default
    ```
+
+   `GRADIENT_CHANCE` 可以改为 `20` 等百分比值；只有普通白色弹幕会参与转换。`GRADIENT_COLORS=bilibili` 只是可选的粉蓝颜色皮肤，并不启用 B 站原生纹理渐变。若需要覆盖皮肤颜色，可额外设置 `DANMUX_GRADIENT_STOPS`。
 
    或者使用下面的命令
    ```bash
@@ -487,9 +491,8 @@ API 支持返回 Bilibili 标准 XML 格式的弹幕数据，通过查询参数 
 | COLOR_POOL    | 【可选】自定义颜色池（`CONVERT_COLOR`为`color`时生效），不配置使用默认颜色池（白、红、橙、黄、绿、青、蓝、紫、粉），格式：十进制颜色值逗号分隔，例如：`16711680,65280,255,16776960`       |
 | LIKE_SWITCH    | 【可选】弹幕点赞数显示开关，默认为`true`（开启），开启后会在弹幕内容后显示点赞数标记，≥5 才显示，避免低赞干扰       |
 | DANMU_OUTPUT_FORMAT    | 【可选】弹幕输出格式，默认为`json`，可选值：`json`（JSON格式）、`xml`（XML格式）、`danmux`（DanmuX v1 增强格式）及所有`@dan-uni/dan-any`支持的输出格式，支持通过查询参数`?format=xml`、`?format=json`或`?format=danmux`等覆盖此设置，优先级：查询参数 > 环境变量 > 默认值       |
-| DANMUX_GRADIENT_STOPS | 【可选】DanmuX v1 人工渐变 stops，必须是 JSON 数组，例如 `[ {"position":0,"color":"#FB7299"}, {"position":1,"color":"#33B8FF"} ]`；为空时不生成人工渐变，只保留单色 Base 和原生渐变。 |
-| DANMUX_GRADIENT_ANGLE | 【可选】DanmuX v1 线性渐变角度，默认为 `0`；仅在 `DANMUX_GRADIENT_STOPS` 有效时生效。 |
-| DANMUX_TEXTURE_GRADIENTS | 【可选】B 站原生纹理到标准线性渐变的映射，必须是 JSON 对象，键为纹理 `uri`（或 `asset:<assetId>`），值为 `{ "angle": 0, "stops": [{ "position": 0, "color": "#FF0000" }, { "position": 1, "color": "#0000FF" }] }`；未映射的原生纹理不会输出，不内置任何颜色预设。 |
+| DANMUX_GRADIENT_STOPS | 【可选】覆盖 DanmuX 标准渐变的 stops；仅对已由 `CONVERT_COLOR=color` 与 `GRADIENT_CHANCE` 选中的普通白色弹幕生效，必须是 JSON 数组，例如 `[ {"position":0,"color":"#FF6B8B"}, {"position":1,"color":"#A259FF"} ]`。 |
+| DANMUX_GRADIENT_ANGLE | 【可选】DanmuX v1 线性渐变角度，默认为 `0`；对由渐变皮肤或 `DANMUX_GRADIENT_STOPS` 生成的标准渐变生效。 |
 | DANMU_SIMPLIFIED_TRADITIONAL    | 【可选】弹幕简繁体转换设置：default（默认不转换）、simplified（繁转简）、traditional（简转繁）       |
 | DANMU_OFFSET      | 【可选】弹幕时间偏移配置，用于解决弹幕与视频不同步的问题。格式：剧名:秒（全剧偏移）或 剧名/季:秒（整季偏移）或 剧名/季/集:秒（单集偏移），支持指定来源：剧名@来源:秒 或 剧名/季@来源1&来源2:秒（不指定来源则对所有来源生效），多条用逗号分隔。例如：`overlord/S01:90, re-zero/S02@bilibili:120, re-zero/S02/E03@dandan&bilibili:10`。正数表示弹幕延后（向右），负数表示弹幕提前（向左）。支持百分比模式，在路径/来源末尾添加 `%`，例如：`东方/S03/E02@tencent%:11`，按 `原时间 * (视频时长 + 偏移秒数) / 视频时长` 计算新的弹幕发送时间。       |
 | UI_THEME    | 【可选】管理界面默认主题，默认为 `lavender`（经典默认）。浏览器中选择的主题会保存在本地并优先使用。可选值：`lavender`（经典默认）、`shinyo`（新叶绿）、`sakura`（哔哩粉）、`tianyi`（天依蓝）、`hatsune`（初音青）、`sakuragi`（樱木红）、`violet`（罗兰紫）、`amber`（LCL橘）       |

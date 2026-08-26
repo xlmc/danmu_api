@@ -6,6 +6,7 @@ import {
   toCompatibilityWire,
   validateGradientEffect,
 } from 'danmux';
+import { DANMUX_GRADIENT_META } from './danmux-meta.js';
 
 function parseComment(comment, sourceLabel) {
   const fields = String(comment.p ?? '').split(',');
@@ -105,6 +106,7 @@ export function convertCommentsToDanmux(danmuData, {
   gradientAngle = 0,
   textureGradients,
   linearOnly = false,
+  applyGradientToAll = true,
 } = {}) {
   const comments = Array.isArray(danmuData?.comments) ? danmuData.comments : [];
   const diagnostics = [];
@@ -115,8 +117,12 @@ export function convertCommentsToDanmux(danmuData, {
     diagnostics.push(...(parsed.diagnostics ?? []).map((entry) => ({ ...entry, index })));
     if (!parsed.value) continue;
     let item = normalizeNativeTextures(parsed.value, textureGradients, diagnostics, index, { linearOnly });
-    if (gradientStops !== undefined) {
-      const generated = applyGradient(item, { angle: gradientAngle, stops: gradientStops });
+    const selectedGradient = comment[DANMUX_GRADIENT_META];
+    const stops = selectedGradient
+      ? (gradientStops ?? selectedGradient.stops)
+      : (applyGradientToAll ? gradientStops : undefined);
+    if (stops !== undefined) {
+      const generated = applyGradient(item, { angle: selectedGradient?.angle ?? gradientAngle, stops });
       diagnostics.push(...(generated.diagnostics ?? []).map((entry) => ({ ...entry, index })));
       item = generated.value ?? item;
     }
