@@ -689,6 +689,9 @@ async function fetchAndSetConfig() {
     const config = await fetch(buildApiUrl('/api/config', true)).then(response => response.json());
     const hasAdminToken = config.hasAdminToken;
     currentAdminToken = config.originalEnvVars?.ADMIN_TOKEN || '';
+    // 首次配置请求即可确定普通 TOKEN，避免 loadEnvVariables 尚未完成时
+    // 外部浏览器点击“系统配置”被误判为没有管理权限。
+    originalToken = config.originalEnvVars?.TOKEN || originalToken;
     return config;
 }
 
