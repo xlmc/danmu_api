@@ -3,6 +3,7 @@ import { log } from './log-util.js'
 import { binResponse, jsonResponse, xmlResponse } from "./http-util.js";
 import { simplized, traditionalized } from './zh-util.js';
 import { convertDanAny } from './dan-any.js';
+import { convertCommentsToDanmux, parseDanmuxGradientStops } from './danmux-adapter.js';
 
 // =====================
 // danmu处理相关函数
@@ -697,6 +698,20 @@ export function formatDanmuResponse(danmuData, queryFormat) {
   format = format.toLowerCase();
 
   log("info", `[system] [danmu] [format] Using format: ${format}`);
+
+  if (format === 'danmux') {
+    try {
+      const gradientStops = parseDanmuxGradientStops(globals.danmuxGradientStops);
+      return jsonResponse(convertCommentsToDanmux(danmuData, {
+        sourceLabel: 'danmu_api',
+        gradientStops,
+        gradientAngle: globals.danmuxGradientAngle,
+      }));
+    } catch (error) {
+      log("error", `[system] [danmu] Failed to convert to DanmuX: ${error.message}`);
+      return jsonResponse({ format: 'danmux', schemaVersion: 1, count: 0, comments: [], diagnostics: [{ code: 'danmux_output_failed', message: error.message }] }, 500);
+    }
+  }
 
   // 兼容旧格式转换
   if (format === 'xml') {
