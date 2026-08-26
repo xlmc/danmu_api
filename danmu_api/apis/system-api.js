@@ -76,7 +76,9 @@ export function handleConfig(hasPermission = false) {
   // ADMIN_TOKEN 后，才要求使用 ADMIN_TOKEN 才能读取完整配置。
   let originalEnvVars = { ...globals.originalEnvVars };
   const hasAdminTokenConfigured = adminToken.trim() !== '';
-  const hasConfigPermission = hasAdminTokenConfigured
+  const hasConfigPermission = globals.tokenAuthDisabled
+    ? true
+    : hasAdminTokenConfigured
     ? globals.currentToken === adminToken
     : globals.currentToken === globals.token;
   if (!hasPermission || !hasConfigPermission) {

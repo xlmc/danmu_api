@@ -74,17 +74,18 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   const knownApiPaths = ["api", "v1", "v2", "search", "match", "favorite", "bangumi", "comment", "danmaku"];
 
   const firstPart = parts[0] || "";
+  const tokenAuthDisabled = globals.tokenAuthDisabled === true;
   const isDefaultToken = globals.token === "87654321";
-  const isValidToken = firstPart === globals.token || firstPart === globals.adminToken;
-  const explicitToken = firstPart === globals.token || (globals.adminToken && firstPart === globals.adminToken)
+  const isValidToken = tokenAuthDisabled || firstPart === globals.token || firstPart === globals.adminToken;
+  const explicitToken = tokenAuthDisabled ? "" : (firstPart === globals.token || (globals.adminToken && firstPart === globals.adminToken)
     ? firstPart
-    : "";
+    : "");
 
-  globals.currentToken = 
+  globals.currentToken = tokenAuthDisabled ? "" : (
     isValidToken ? firstPart :
     isDefaultToken && (firstPart === "87654321" || knownApiPaths.includes(firstPart)) ? 
       (firstPart === "87654321" ? firstPart : "87654321") :
-    "";
+    "");
 
   // 自定义 TOKEN 时收藏接口必须显式携带 token；默认 TOKEN=87654321 时保持无 token 兼容。
   // FAVORITE_REQUIRE_ADMIN 开启后，无论 TOKEN 是否为默认值，都只能使用 ADMIN_TOKEN。
@@ -93,7 +94,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   const isFavoriteListRequest = method === "GET"
     && /^\/(?:api\/v2\/|api\/|v2\/)?favorite\/list$/.test(tokenlessPath);
   if (method !== "OPTIONS" && isFavoriteRequest && !isFavoriteListRequest) {
-    if (!explicitToken && !isDefaultToken) {
+    if (!tokenAuthDisabled && !explicitToken && !isDefaultToken) {
       return jsonResponse(
         { errorCode: 401, success: false, errorMessage: "Favorite API requires an explicit token" },
         401
@@ -219,8 +220,13 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     });
   }
 
+  // 关闭 TOKEN 鉴权时允许直接访问所有路径；仍兼容携带 token 的旧入口。
+  if (tokenAuthDisabled) {
+    if (firstPart === globals.token || (globals.adminToken && firstPart === globals.adminToken)) {
+      path = "/" + parts.slice(1).join("/");
+    }
   // 如果 token 是默认值 87654321
-  if (globals.token === "87654321") {
+  } else if (globals.token === "87654321") {
     if (parts.length > 0) {
       // 如果第一段是正确的默认 token
       if (parts[0] === "87654321" || parts[0] === globals.adminToken) {
@@ -551,9 +557,9 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   // POST /api/title-mapping/refresh - 管理员手动刷新远程映射表
   if (path === "/api/title-mapping/refresh" && method === "POST") {
-    const configAdmin = globals.adminToken
+    const configAdmin = tokenAuthDisabled || (globals.adminToken
       ? explicitToken === globals.adminToken
-      : (explicitToken === globals.token || (isDefaultToken && knownApiPaths.includes(firstPart)));
+      : (explicitToken === globals.token || (isDefaultToken && knownApiPaths.includes(firstPart))));
     if (!configAdmin) {
       return jsonResponse({ success: false, errorMessage: "需要 ADMIN_TOKEN 权限" }, 403);
     }
@@ -562,9 +568,9 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   // POST /api/auto-match-mapping/refresh - 管理员手动刷新远程季集映射表
   if (path === "/api/auto-match-mapping/refresh" && method === "POST") {
-    const configAdmin = globals.adminToken
+    const configAdmin = tokenAuthDisabled || (globals.adminToken
       ? explicitToken === globals.adminToken
-      : (explicitToken === globals.token || (isDefaultToken && knownApiPaths.includes(firstPart)));
+      : (explicitToken === globals.token || (isDefaultToken && knownApiPaths.includes(firstPart))));
     if (!configAdmin) {
       return jsonResponse({ success: false, errorMessage: "需要 ADMIN_TOKEN 权限" }, 403);
     }

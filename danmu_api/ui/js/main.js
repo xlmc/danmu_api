@@ -119,6 +119,7 @@ let latestVersion = '';
 let currentToken = 'globals.currentToken';
 let currentAdminToken = ''; // admin token，用于系统管理
 let originalToken = '';
+let tokenAuthDisabled = false;
 
 // 反向代理/API基础路径配置
 // 从LocalStorage获取用户自定义的Base URL
@@ -179,6 +180,7 @@ function loadEnvVariables() {
         .then(config => {
             // 从配置中获取admin token
             currentAdminToken = config.originalEnvVars?.ADMIN_TOKEN || '';
+            tokenAuthDisabled = config.envs?.TOKEN_AUTH_DISABLED === true || config.envs?.TOKEN_AUTH_DISABLED === 'true' || config.tokenAuthDisabled === true;
 
             originalToken = config.originalEnvVars?.TOKEN || '';
             
@@ -259,6 +261,7 @@ function updateApiEndpoint() {
       // 获取当前页面的协议、主机和端口
       const protocol = window.location.protocol;
       const host = window.location.host;
+      const authDisabled = config.envs?.TOKEN_AUTH_DISABLED === true || config.envs?.TOKEN_AUTH_DISABLED === 'true' || config.tokenAuthDisabled === true;
       const token = config.originalEnvVars?.TOKEN || '87654321'; // 默认token值
       const adminToken = config.originalEnvVars?.ADMIN_TOKEN;
 
@@ -284,7 +287,9 @@ function updateApiEndpoint() {
       let apiToken = '********';
       
       // 判断是否使用默认token
-      if (token === '87654321') {
+      if (authDisabled) {
+        apiToken = '';
+      } else if (token === '87654321') {
         // 如果是默认token，则显示真实token
         apiToken = token;
       } else {
@@ -310,7 +315,7 @@ function updateApiEndpoint() {
       if (cleanBaseUrl.endsWith('/')) {
           cleanBaseUrl = cleanBaseUrl.slice(0, -1);
       }
-      const apiEndpoint = cleanBaseUrl + '/' + apiToken;
+      const apiEndpoint = apiToken ? cleanBaseUrl + '/' + apiToken : cleanBaseUrl;
       
       const apiEndpointElement = document.getElementById('api-endpoint');
       if (apiEndpointElement) {
@@ -424,7 +429,7 @@ function switchSection(section, event = null) {
         const urlToken = pathParts.length > 0 ? pathParts[0] : '';
         
         // 检查URL中是否有token
-        if (!urlToken && originalToken !== "87654321") {
+        if (!tokenAuthDisabled && !urlToken && originalToken !== "87654321") {
             // 提示用户需要在URL中配置TOKEN
             setTimeout(() => {
                 // 获取当前页面的协议、主机和端口

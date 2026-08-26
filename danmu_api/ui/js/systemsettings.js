@@ -627,6 +627,7 @@ function checkAdminToken() {
     }
 
     const ordinaryToken = String(originalToken || currentToken || '').trim();
+    if (tokenAuthDisabled) return true;
     if (!ordinaryToken || /^\\*+$/.test(ordinaryToken)) return false;
     return urlToken === ordinaryToken || (ordinaryToken === '87654321' && !urlToken);
 }
@@ -688,6 +689,7 @@ async function checkDeployPlatformConfig() {
 async function fetchAndSetConfig() {
     const config = await fetch(buildApiUrl('/api/config', true)).then(response => response.json());
     const hasAdminToken = config.hasAdminToken;
+    tokenAuthDisabled = config.envs?.TOKEN_AUTH_DISABLED === true || config.envs?.TOKEN_AUTH_DISABLED === 'true' || config.tokenAuthDisabled === true;
     currentAdminToken = config.originalEnvVars?.ADMIN_TOKEN || '';
     // 首次配置请求即可确定普通 TOKEN，避免 loadEnvVariables 尚未完成时
     // 外部浏览器点击“系统配置”被误判为没有管理权限。

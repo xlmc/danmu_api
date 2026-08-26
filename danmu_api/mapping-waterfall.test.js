@@ -12,6 +12,7 @@ import {
 } from './utils/auto-match-mapping-util.js';
 import { extractEpisodeNumberFromTitle, strictTitleMatch } from './utils/common-util.js';
 import { resolveLocalTitleMapping } from './utils/title-mapping-url-util.js';
+import { parseVerifiedRemoteRules } from './utils/auto-match-mapping-url-util.js';
 
 test('标题映射兼容加号、逗号和空格', () => {
   Globals.init({ TITLE_MAPPING_TABLE: '标题+年份，第一季->目标作品' });
@@ -91,6 +92,37 @@ test('开放规则可供本机手工设置，有限规则在重叠处更具体',
   assert.deepEqual(warnings, []);
   assert.equal(resolveAutoMatchMapping(rules, { title: '作品', season: 1, episode: 2 }).targetTitle, '已确认目标');
   assert.equal(resolveAutoMatchMapping(rules, { title: '作品', season: 1, episode: 4 }).targetEpisode, 54);
+});
+
+test('季集起始点规则命中后按集数差值自动递增', () => {
+  const { rules, warnings } = parseAutoMatchMappingRules('永生 S05E02 -> 永生 S01E58');
+  assert.deepEqual(warnings, []);
+  assert.equal(resolveAutoMatchMapping(rules, { title: '永生', season: 5, episode: 1 }), null);
+  assert.equal(resolveAutoMatchMapping(rules, { title: '永生', season: 5, episode: 2 }).targetEpisode, 58);
+  assert.equal(resolveAutoMatchMapping(rules, { title: '永生', season: 5, episode: 3 }).targetEpisode, 59);
+  assert.equal(resolveAutoMatchMapping(rules, { title: '永生', season: 5, episode: 10 }).targetEpisode, 66);
+});
+
+test('远程季集表保留单点起始规则', () => {
+  const rules = parseVerifiedRemoteRules('永生 S05E02 -> 永生 S01E58');
+  assert.equal(rules.length, 1);
+  assert.equal(rules[0].bounded, false);
+});
+
+test('显式双向季集规则分别递增，不自动反转单向规则', () => {
+  const oneWay = parseAutoMatchMappingRules('永生 S05E02 -> 永生 S01E58').rules;
+  assert.equal(resolveAutoMatchMapping(oneWay, { title: '永生', season: 1, episode: 58 }), null);
+  const { rules, warnings } = parseAutoMatchMappingRules([
+    '永生 S05E02 -> 永生 S01E58',
+    '永生 S01E58 -> 永生 S05E02',
+  ].join('\n'));
+  assert.deepEqual(warnings, []);
+  const forward = resolveAutoMatchMapping(rules, { title: '永生', season: 5, episode: 3 });
+  const reverse = resolveAutoMatchMapping(rules, { title: '永生', season: 1, episode: 59 });
+  assert.equal(forward.targetSeason, 1);
+  assert.equal(forward.targetEpisode, 59);
+  assert.equal(reverse.targetSeason, 5);
+  assert.equal(reverse.targetEpisode, 3);
 });
 
 test('无效和不等长范围不会进入规则表', () => {

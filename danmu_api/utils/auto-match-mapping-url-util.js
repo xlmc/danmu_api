@@ -27,16 +27,13 @@ async function cachePaths() {
   };
 }
 
-function parseVerifiedRemoteRules(text) {
+export function parseVerifiedRemoteRules(text) {
   const { rules, warnings } = parseAutoMatchMappingRules(text, globals.allowedPlatforms);
   warnings.forEach(message => logRemoteMapping('warn', `[system] [remote-mapping] [remote-season] ${message}`));
-  // 远程开放规则会无限向后换算，风险过高；只允许本机显式配置开放规则。
-  const verified = rules.filter(rule => rule.bounded);
-  const skipped = rules.length - verified.length;
-  if (skipped > 0) {
-    logRemoteMapping('warn', `[system] [remote-mapping] [remote-season] 已跳过 ${skipped} 条无结束集的远程开放规则`);
-  }
-  return verified;
+  // 远程表使用“起始集单点规则”：例如 S05E02 -> S01E58，
+  // 命中后由 resolveAutoMatchMapping 按集数差值自动递增到 S01E59、S01E60……。
+  // 规则仍须通过统一解析器校验；本机规则优先级由 mergeAutoMatchMappingRules 保证。
+  return rules;
 }
 
 async function loadDisk(url) {
@@ -80,7 +77,7 @@ async function fetchRemote(url) {
   const response = await httpGet(url, { timeout: 5000, retries: 0 });
   const text = typeof response?.data === 'string' ? response.data : String(response?.data || '');
   const rules = parseVerifiedRemoteRules(text);
-  if (rules.length === 0) throw new Error('远程季集映射表没有可安全启用的有限范围规则');
+  if (rules.length === 0) throw new Error('远程季集映射表没有可启用的有效季集规则');
   state.url = url;
   state.rules = rules;
   state.localRulesRef = null;
@@ -114,7 +111,7 @@ function scheduleRefresh(url) {
 export async function ensureRemoteAutoMatchMapping() {
   const url = normalizeMappingSourceUrl(globals.autoMatchMappingTableUrl);
   if (!url) {
-    logRemoteMapping('info', '[system] [remote-mapping] [remote-season] 未配置远程季集表，跳过缓存检查');
+    logRemoteMapping('info', '[system] [remote-mapping] [remote-season] 未配置远程季集表，跳过缓存检查；当前本机缓存: 0 条规则');
     return;
   }
   scheduleRefresh(url);
@@ -126,16 +123,17 @@ export async function ensureRemoteAutoMatchMapping() {
 export async function initializeRemoteAutoMatchMapping() {
   const url = normalizeMappingSourceUrl(globals.autoMatchMappingTableUrl);
   if (!url) {
-    logRemoteMapping('info', '[system] [remote-mapping] [remote-season] 未配置远程季集表，跳过初始化');
+    logRemoteMapping('info', '[system] [remote-mapping] [remote-season] 未配置远程季集表，跳过初始化；当前本机缓存: 0 条规则');
     return;
   }
   logRemoteMapping('info', `[system] [remote-mapping] [remote-season] 检查远程地址: ${url}`);
   scheduleRefresh(url);
   await loadDisk(url);
+  logRemoteMapping('info', `[system] [remote-mapping] [remote-season] 当前本机缓存: ${state.url === url ? state.rules.length : 0} 条规则`);
   if ((state.url !== url || state.rules.length === 0) && state.initialAttemptedUrl !== url) {
     state.initialAttemptedUrl = url;
     state.fetching ||= fetchRemote(url).catch(error => {
-      logRemoteMapping('warn', `[system] [remote-mapping] [remote-season] 启动更新失败，继续使用现有本机配置: ${error?.message || error}`);
+      logRemoteMapping('warn', `[system] [remote-mapping] [remote-season] 启动更新失败，继续使用现有本机配置（当前缓存 ${state.url === url ? state.rules.length : 0} 条）: ${error?.message || error}`);
       return 0;
     }).finally(() => { state.fetching = null; });
     await state.fetching;
