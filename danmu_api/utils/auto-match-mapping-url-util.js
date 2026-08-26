@@ -113,7 +113,10 @@ function scheduleRefresh(url) {
 
 export async function ensureRemoteAutoMatchMapping() {
   const url = normalizeMappingSourceUrl(globals.autoMatchMappingTableUrl);
-  if (!url) return;
+  if (!url) {
+    logRemoteMapping('info', '[system] [remote-mapping] [remote-season] 未配置远程季集表，跳过缓存检查');
+    return;
+  }
   scheduleRefresh(url);
   if (state.url === url && state.rules.length > 0) return;
   await loadDisk(url);
@@ -122,7 +125,11 @@ export async function ensureRemoteAutoMatchMapping() {
 /** 启动阶段初始化：先装入磁盘缓存；只有磁盘不存在时才联网建立首份缓存。 */
 export async function initializeRemoteAutoMatchMapping() {
   const url = normalizeMappingSourceUrl(globals.autoMatchMappingTableUrl);
-  if (!url) return;
+  if (!url) {
+    logRemoteMapping('info', '[system] [remote-mapping] [remote-season] 未配置远程季集表，跳过初始化');
+    return;
+  }
+  logRemoteMapping('info', `[system] [remote-mapping] [remote-season] 检查远程地址: ${url}`);
   scheduleRefresh(url);
   await loadDisk(url);
   if ((state.url !== url || state.rules.length === 0) && state.initialAttemptedUrl !== url) {

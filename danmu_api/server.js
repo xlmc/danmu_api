@@ -236,6 +236,19 @@ async function setupEnvWatcher() {
           console.log('[server] Environment variables reloaded successfully');
           console.log('[server] Updated keys:', Array.from(newEnvKeys).join(', '));
 
+          // 远程映射地址属于运行时配置。仅重载 process.env 不会更新 globals.envs，
+          // 也不会触发远程表的缓存检查；因此这里同步全局配置并立即重新检查两张表。
+          globals.reInit();
+          Promise.allSettled([
+            ensureRemoteTitleMapping(),
+            initializeRemoteAutoMatchMapping()
+          ]).then(results => {
+            const rejected = results.filter(result => result.status === 'rejected');
+            if (rejected.length > 0) {
+              console.log('[server] Remote mapping reload warning:', rejected.map(result => result.reason?.message || result.reason).join('; '));
+            }
+          });
+
           // 配置变更后同步 Bangumi Data 生命周期：开启则立即确保缓存就绪（缺失则下载），
           // 关闭则释放缓存；先按真实配置同步内存开关，避免重载未刷新 globals 时状态滞后
           const bangumiEnabled = process.env.USE_BANGUMI_DATA === 'true' || process.env.USE_BANGUMI_DATA === true;
