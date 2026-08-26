@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { convertCommentsToDanmux } from '../danmu_api/utils/danmux-adapter.js';
 
 const demoDirectory = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const mimeTypes = {
@@ -19,9 +20,46 @@ function safePath(requestPath) {
   return target;
 }
 
+function sampleResponse() {
+  const enhanced = convertCommentsToDanmux({
+    comments: [
+      { cid: 'demo-1', p: '12,1,25,16711680,0,0,0,100', m: '本地模拟：红色到黄色' },
+      { cid: 'demo-2', p: '18,1,25,65280,0,0,0,100', m: '本地模拟：绿色到蓝色' },
+    ],
+  }, {
+    sourceLabel: 'player-demo',
+    gradientStops: [
+      { position: 0, color: '#FB7299' },
+      { position: 1, color: '#33B8FF' },
+    ],
+  });
+  const fallback = convertCommentsToDanmux({
+    comments: [
+      { cid: 'demo-3', p: '25,1,25,255,0,0,0,100', m: '本地模拟：兼容单色' },
+    ],
+  }, { sourceLabel: 'player-demo' });
+  return {
+    ...enhanced,
+    count: enhanced.count + fallback.count,
+    comments: [...enhanced.comments, ...fallback.comments],
+    diagnostics: [...enhanced.diagnostics, ...fallback.diagnostics],
+  };
+}
+
 const server = createServer(async (request, response) => {
   try {
-    const target = safePath(new URL(request.url, 'http://localhost').pathname);
+    const requestPath = new URL(request.url, 'http://localhost').pathname;
+    if (requestPath === '/sample') {
+      response.writeHead(200, {
+        'access-control-allow-origin': '*',
+        'cache-control': 'no-store',
+        'content-type': 'application/json; charset=utf-8',
+      });
+      response.end(JSON.stringify(sampleResponse()));
+      return;
+    }
+
+    const target = safePath(requestPath);
     if (!target || (await stat(target)).isDirectory()) {
       response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
       response.end('Not found');

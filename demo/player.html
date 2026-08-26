@@ -50,13 +50,16 @@
     </header>
 
     <section class="panel">
-      <h2>抓取地址</h2>
-      <p class="hint">先启动 danmu_api，再填入它的 DanmuX 接口地址。默认抓取前 10 条，避免一次加载太多数据。</p>
+      <h2>数据来源</h2>
+      <p class="hint">先点“加载本地模拟”直接看渐变效果；要验证真实后台，再填入 danmu_api 的完整接口地址。页面最多显示前 10 条。</p>
       <div class="controls" style="margin-top: 12px">
-        <label>danmu_api URL
+        <label>danmu_api URL（真实接口，可选）
           <input id="apiUrl" value="http://127.0.0.1:9321/87654321/api/v2/comment/10001?format=danmux" spellcheck="false">
         </label>
-        <button id="fetchButton" type="button">抓取 10 条</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button id="sampleButton" type="button">加载本地模拟</button>
+          <button id="fetchButton" type="button">从 API 抓取 10 条</button>
+        </div>
       </div>
       <div id="status" class="status" role="status" aria-live="polite"></div>
       <div id="summary" class="summary" aria-live="polite"></div>
