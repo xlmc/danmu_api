@@ -178,7 +178,7 @@ function remoteLogTimestamp() {
  *   1. 系统主日志（log()）——和其他日志混在一起的全量日志
  *   2. 独立缓冲区——专门给远程映射功能看的最近 500 条
  */
-function logRemoteMapping(level, message) {
+export function logRemoteMapping(level, message) {
   log(level, message);                              // 写入主日志
   remoteLogBuffer.push({ timestamp: remoteLogTimestamp(), level, message }); // 写入独立缓冲区
   // 超过 500 条就把最老的一条挤出去（shift 删除数组开头）

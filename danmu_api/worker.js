@@ -551,7 +551,10 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   // POST /api/title-mapping/refresh - 管理员手动刷新远程映射表
   if (path === "/api/title-mapping/refresh" && method === "POST") {
-    if (!explicitToken || explicitToken !== globals.adminToken) {
+    const configAdmin = globals.adminToken
+      ? explicitToken === globals.adminToken
+      : (explicitToken === globals.token || (isDefaultToken && knownApiPaths.includes(firstPart)));
+    if (!configAdmin) {
       return jsonResponse({ success: false, errorMessage: "需要 ADMIN_TOKEN 权限" }, 403);
     }
     return handleRemoteMappingRefresh();
@@ -559,7 +562,10 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   // POST /api/auto-match-mapping/refresh - 管理员手动刷新远程季集映射表
   if (path === "/api/auto-match-mapping/refresh" && method === "POST") {
-    if (!explicitToken || explicitToken !== globals.adminToken) {
+    const configAdmin = globals.adminToken
+      ? explicitToken === globals.adminToken
+      : (explicitToken === globals.token || (isDefaultToken && knownApiPaths.includes(firstPart)));
+    if (!configAdmin) {
       return jsonResponse({ success: false, errorMessage: "需要 ADMIN_TOKEN 权限" }, 403);
     }
     return handleRemoteAutoMatchMappingRefresh();
