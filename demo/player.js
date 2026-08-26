@@ -38,8 +38,8 @@ function nativeTextureMarkup(effects, text) {
   const fillUrl = safeTextureUrl(fill?.source?.uri);
   const strokeUrl = safeTextureUrl(stroke?.source?.uri);
   if (!fillUrl && !strokeUrl) return null;
-  const fillStyle = fillUrl ? ` style="background-image:url('${escapeHtml(fillUrl)}')"` : '';
-  const strokeStyle = strokeUrl ? ` style="background-image:url('${escapeHtml(strokeUrl)}')"` : fillStyle;
+  const fillStyle = ` style="background-color:#ffffff;${fillUrl ? `background-image:url('${escapeHtml(fillUrl)}')` : ''}"`;
+  const strokeStyle = ` style="background-color:#f2509e;${strokeUrl ? `background-image:url('${escapeHtml(strokeUrl)}')` : ''}"`;
   return `<span class="native-bili-text"><span class="native-bili-layer native-bili-stroke"${strokeStyle}>${escapeHtml(text)}</span><span class="native-bili-layer native-bili-fill"${fillStyle}>${escapeHtml(text)}</span></span>`;
 }
 
