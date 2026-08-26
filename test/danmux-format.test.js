@@ -51,5 +51,6 @@ test('formal danmu_api applies the default linear skin only to selected white co
   assert.equal(payload.comments[0].danmux.effects[0].origin, 'generated');
   assert.equal(payload.comments[1].danmux.effects, undefined);
   assert.equal(payload.comments[2].danmux.effects, undefined);
+  assert.equal(payload.comments[2].p, '3,1,16777215,[dandan]');
   assert.equal(payload.diagnostics.some((entry) => entry.code === 'native_texture_dropped'), true);
 });

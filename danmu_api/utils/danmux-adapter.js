@@ -113,7 +113,8 @@ export function convertCommentsToDanmux(danmuData, {
   const converted = [];
   for (let index = 0; index < comments.length; index++) {
     const comment = comments[index];
-    const parsed = parseComment(comment, String(sourceLabel).slice(0, 64) || 'danmu_api');
+    const commentSourceLabel = comment.color_v2 !== undefined ? 'dandan' : sourceLabel;
+    const parsed = parseComment(comment, String(commentSourceLabel).slice(0, 64) || 'danmu_api');
     diagnostics.push(...(parsed.diagnostics ?? []).map((entry) => ({ ...entry, index })));
     if (!parsed.value) continue;
     let item = normalizeNativeTextures(parsed.value, textureGradients, diagnostics, index, { linearOnly });

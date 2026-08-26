@@ -73,7 +73,7 @@ LogVar 弹幕 API 服务器
   - 优先级：查询参数 > 环境变量 > 默认值
   - 示例：`GET /api/v2/comment/10001?format=xml` 返回 XML 格式弹幕
   - **XML 格式说明**：完全遵循 Bilibili 标准格式，8字段标准弹幕属性
-  - **DanmuX v1 格式**：使用 `?format=danmux` 返回 `schemaVersion: 1` 的增强 JSON；每条评论保留 `p/m`，并可在 `danmux.effects` 中携带标准 `linear` 渐变。只有 `CONVERT_COLOR=color` 且 `GRADIENT_CHANCE` 命中时，普通白色弹幕才生成渐变；颜色来自 `GRADIENT_COLORS`，默认使用 `default` 皮肤。B 站 `color_v2/colorfulSrc` 原生纹理不会作为 DanmuX 效果输出。
+  - **DanmuX v1 格式**：使用 `?format=danmux` 返回 `schemaVersion: 1` 的增强 JSON；每条评论保留 `p/m`，并可在 `danmux.effects` 中携带标准 `linear` 渐变。只有 `CONVERT_COLOR=color` 且 `GRADIENT_CHANCE` 命中时，普通白色弹幕才生成渐变；颜色来自 `GRADIENT_COLORS`，默认使用 `default` 皮肤。带 B 站 `color_v2/colorfulSrc` 的原生纹理弹幕不参与渐变、不会输出特效，并改标为 `[dandan]`。
   - **下游模拟**：安装依赖后运行 `npm run simulate:danmux`，可看到 `p/m` 兼容、`danmux` 增强解析和模拟播放器渐变渲染三项结果。
 - **日志记录**：捕获 `console.log`（info 级别）和 `console.error`（error 级别），JSON 内容格式化输出。
 - **永久收藏缓存**：适合《火影忍者》《名侦探柯南》等集数较多、重复搜索耗时较长的剧集。只缓存剧集搜索结果，不缓存弹幕。
