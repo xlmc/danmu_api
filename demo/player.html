@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DanmuX 下游播放器模拟</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #0b1020; color: #edf2ff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: radial-gradient(circle at 80% 0%, #28366b 0, #0b1020 42rem); }
+    main { width: min(1180px, calc(100% - 28px)); margin: auto; padding: 28px 0 44px; }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: clamp(1.6rem, 4vw, 2.4rem); letter-spacing: -0.03em; }
+    h2 { font-size: 1rem; margin-bottom: 12px; }
+    .subtitle, .hint { color: #aab6d8; line-height: 1.55; }
+    .subtitle { margin-top: 8px; }
+    .panel { margin-top: 18px; padding: 17px; border: 1px solid #2b3964; border-radius: 14px; background: rgba(15, 23, 48, 0.92); }
+    .controls { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; }
+    label { display: grid; gap: 7px; color: #b6c2e2; font-size: 0.85rem; }
+    input, button { font: inherit; }
+    input { width: 100%; border: 1px solid #3a4c7c; border-radius: 8px; background: #080d1c; color: #edf2ff; padding: 10px; outline: none; }
+    input:focus { border-color: #7da2ff; box-shadow: 0 0 0 3px #7da2ff2e; }
+    button { border: 0; border-radius: 8px; background: #7da2ff; color: #091128; padding: 10px 15px; font-weight: 700; cursor: pointer; }
+    button:hover { background: #a9c0ff; }
+    .status { min-height: 22px; margin-top: 10px; color: #86efac; font-size: 0.85rem; }
+    .status.error { color: #fda4af; }
+    .summary { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 14px; color: #b6c2e2; font-size: 0.86rem; }
+    .summary strong { color: #edf2ff; }
+    .legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 18px 0 10px; color: #aab6d8; font-size: 0.78rem; }
+    .legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; background: currentColor; }
+    .legend .gradient::before { background: linear-gradient(90deg, #FB7299, #33B8FF); }
+    .comment-list { display: grid; gap: 10px; }
+    .comment { display: grid; grid-template-columns: 72px minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: center; padding: 12px; border: 1px solid #263458; border-radius: 10px; background: #0a1125; }
+    .comment-time { color: #90a0c8; font: 0.78rem "Cascadia Code", Consolas, monospace; }
+    .render-box { min-width: 0; }
+    .render-label { display: block; margin-bottom: 5px; color: #7887ae; font-size: 0.68rem; text-transform: uppercase; letter-spacing: .07em; }
+    .render-text { display: block; overflow-wrap: anywhere; font-size: 1.05rem; font-weight: 700; line-height: 1.35; }
+    .enhanced .render-text { background-clip: text; -webkit-background-clip: text; color: transparent; }
+    .solid .render-text { color: #fff; }
+    .raw { margin-top: 16px; }
+    pre { max-height: 340px; overflow: auto; margin: 0; padding: 12px; border: 1px solid #2b3964; border-radius: 8px; background: #080d1c; color: #dbe5ff; font: 0.76rem/1.5 "Cascadia Code", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+    @media (max-width: 720px) { .controls { grid-template-columns: 1fr; } .comment { grid-template-columns: 58px 1fr; } .comment .enhanced { grid-column: 2; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>DanmuX 下游播放器模拟</h1>
+      <p class="subtitle">从 danmu_api 抓取少量弹幕，同时对比“只读 p/m”的旧播放器和“读取 danmux.effects”的增强播放器。</p>
+    </header>
+
+    <section class="panel">
+      <h2>抓取地址</h2>
+      <p class="hint">先启动 danmu_api，再填入它的 DanmuX 接口地址。默认抓取前 10 条，避免一次加载太多数据。</p>
+      <div class="controls" style="margin-top: 12px">
+        <label>danmu_api URL
+          <input id="apiUrl" value="http://127.0.0.1:9321/87654321/api/v2/comment/10001?format=danmux" spellcheck="false">
+        </label>
+        <button id="fetchButton" type="button">抓取 10 条</button>
+      </div>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+      <div id="summary" class="summary" aria-live="polite"></div>
+    </section>
+
+    <section class="panel">
+      <h2>模拟播放器画面</h2>
+      <div class="legend"><span>旧播放器：只读 p/m</span><span class="gradient">增强播放器：读取 danmux.effects</span></div>
+      <div id="comments" class="comment-list"><p class="hint">等待抓取</p></div>
+      <div class="raw">
+        <h2>当前数据</h2>
+        <pre id="rawOutput">等待抓取</pre>
+      </div>
+    </section>
+  </main>
+  <script src="player.js" defer></script>
+</body>
+</html>

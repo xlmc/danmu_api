@@ -9,7 +9,8 @@
     "build-forward-widget": "node build-forward-widget.js",
     "build-forward-widget:debug": "node build-forward-widget.js --debug",
     "simulate:danmux": "node scripts/simulate-danmux-player.js",
-    "test:danmux": "node --test test/danmux-*.test.js"
+    "test:danmux": "node --test test/danmux-*.test.js",
+    "demo:player": "node demo/player-server.js"
   },
   "author": "",
   "license": "ISC",

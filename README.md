@@ -153,6 +153,13 @@ LogVar 弹幕 API 服务器
 
    **热更新支持**：修改 `config/.env`，应用会自动检测并重新加载配置（无需重启应用）。
 
+   **DanmuX 下游模拟**：保持 API 服务运行，另开终端执行 `npm run demo:player`，然后打开 `http://127.0.0.1:4190`。页面会抓取前 10 条 `format=danmux` 数据，对比只读 `p/m` 的单色播放器和读取 `danmux.effects` 的渐变播放器。
+
+   要看到人工渐变，请配置 `DANMUX_GRADIENT_STOPS`，例如：
+   ```text
+   [{"position":0,"color":"#FB7299"},{"position":1,"color":"#33B8FF"}]
+   ```
+
    或者使用下面的命令
    ```bash
    # 启动
