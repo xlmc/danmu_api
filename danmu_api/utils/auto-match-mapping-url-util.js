@@ -1,7 +1,6 @@
 import { globals } from '../configs/globals.js';
 import { httpGet } from './http-util.js';
-import { log } from './log-util.js';
-import { normalizeMappingSourceUrl } from './title-mapping-url-util.js';
+import { normalizeMappingSourceUrl, logRemoteMapping } from './title-mapping-url-util.js';
 import { mergeAutoMatchMappingRules, parseAutoMatchMappingRules } from './auto-match-mapping-util.js';
 
 const REFRESH_HOUR_BEIJING = 5;
@@ -30,12 +29,12 @@ async function cachePaths() {
 
 function parseVerifiedRemoteRules(text) {
   const { rules, warnings } = parseAutoMatchMappingRules(text, globals.allowedPlatforms);
-  warnings.forEach(message => log('warn', `[system] [remote-auto-match] ${message}`));
+  warnings.forEach(message => logRemoteMapping('warn', `[system] [remote-mapping] [remote-season] ${message}`));
   // 远程开放规则会无限向后换算，风险过高；只允许本机显式配置开放规则。
   const verified = rules.filter(rule => rule.bounded);
   const skipped = rules.length - verified.length;
   if (skipped > 0) {
-    log('warn', `[system] [remote-auto-match] 已跳过 ${skipped} 条无结束集的远程开放规则`);
+    logRemoteMapping('warn', `[system] [remote-mapping] [remote-season] 已跳过 ${skipped} 条无结束集的远程开放规则`);
   }
   return verified;
 }
@@ -55,7 +54,7 @@ async function loadDisk(url) {
     state.url = url;
     state.rules = rules;
     state.localRulesRef = null;
-    log('info', `[system] [remote-auto-match] 已加载本机缓存: ${rules.length} 条规则`);
+    logRemoteMapping('info', `[system] [remote-mapping] [remote-season] 已加载本机缓存: ${rules.length} 条规则`);
     return true;
   } catch {
     return false;
@@ -73,7 +72,7 @@ async function saveDisk(url, text) {
     await fs.rename(temp, paths.text);
     await fs.writeFile(paths.meta, JSON.stringify({ url, fetchedAt: Date.now(), ruleCount: state.rules.length }), 'utf8');
   } catch (error) {
-    log('warn', `[system] [remote-auto-match] 写入本机缓存失败: ${error?.message || error}`);
+    logRemoteMapping('warn', `[system] [remote-mapping] [remote-season] 写入本机缓存失败: ${error?.message || error}`);
   }
 }
 
@@ -86,7 +85,7 @@ async function fetchRemote(url) {
   state.rules = rules;
   state.localRulesRef = null;
   await saveDisk(url, text);
-  log('info', `[system] [remote-auto-match] 远程规则已更新并写入本机: ${rules.length} 条`);
+  logRemoteMapping('info', `[system] [remote-mapping] [remote-season] 远程规则已更新并写入本机: ${rules.length} 条`);
   return rules.length;
 }
 
@@ -104,12 +103,12 @@ function scheduleRefresh(url) {
     try {
       await fetchRemote(url);
     } catch (error) {
-      log('warn', `[system] [remote-auto-match] 定时更新失败，继续使用本机缓存: ${error?.message || error}`);
+      logRemoteMapping('warn', `[system] [remote-mapping] [remote-season] 定时更新失败，继续使用本机缓存: ${error?.message || error}`);
     }
     scheduleRefresh(url);
   }, delay);
   if (typeof state.refreshTimer?.unref === 'function') state.refreshTimer.unref();
-  log('info', '[system] [remote-auto-match] 已安排每日北京时间 05:30 更新');
+  logRemoteMapping('info', '[system] [remote-mapping] [remote-season] 已安排每日北京时间 05:30 更新');
 }
 
 export async function ensureRemoteAutoMatchMapping() {
@@ -129,7 +128,7 @@ export async function initializeRemoteAutoMatchMapping() {
   if ((state.url !== url || state.rules.length === 0) && state.initialAttemptedUrl !== url) {
     state.initialAttemptedUrl = url;
     state.fetching ||= fetchRemote(url).catch(error => {
-      log('warn', `[system] [remote-auto-match] 启动更新失败，继续使用现有本机配置: ${error?.message || error}`);
+      logRemoteMapping('warn', `[system] [remote-mapping] [remote-season] 启动更新失败，继续使用现有本机配置: ${error?.message || error}`);
       return 0;
     }).finally(() => { state.fetching = null; });
     await state.fetching;
