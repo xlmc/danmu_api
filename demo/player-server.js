@@ -36,8 +36,8 @@ function sampleResponse() {
     }, {
       sourceLabel: 'player-demo',
       gradientStops: [
-        { position: 0, color: '#45E0B5' },
-        { position: 1, color: '#33B8FF' },
+        { position: 0, color: '#00FF00' },
+        { position: 1, color: '#245BFF' },
       ],
     }),
   ];
