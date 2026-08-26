@@ -38,9 +38,53 @@ function nativeTextureMarkup(effects, text) {
   const fillUrl = safeTextureUrl(fill?.source?.uri);
   const strokeUrl = safeTextureUrl(stroke?.source?.uri);
   if (!fillUrl && !strokeUrl) return null;
-  const fillStyle = ` style="background-color:#ffffff;${fillUrl ? `background-image:url('${escapeHtml(fillUrl)}')` : ''}"`;
-  const strokeStyle = ` style="background-color:#f2509e;${strokeUrl ? `background-image:url('${escapeHtml(strokeUrl)}')` : ''}"`;
-  return `<span class="native-bili-text"><span class="native-bili-layer native-bili-stroke"${strokeStyle}>${escapeHtml(text)}</span><span class="native-bili-layer native-bili-fill"${fillStyle}>${escapeHtml(text)}</span></span>`;
+  return `<span class="native-bili-text"><canvas class="native-bili-canvas" data-fill-uri="${escapeHtml(fillUrl ?? '')}" data-stroke-uri="${escapeHtml(strokeUrl ?? '')}" data-text="${escapeHtml(text)}" aria-label="${escapeHtml(text)}"></canvas></span>`;
+}
+
+function loadTexture(uri) {
+  return new Promise((resolve) => {
+    if (!uri) {
+      resolve(null);
+      return;
+    }
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => resolve(null);
+    image.src = uri;
+  });
+}
+
+function drawNativeCanvas(canvas, fillImage, strokeImage) {
+  const text = canvas.dataset.text ?? '';
+  const font = '700 17px Inter, ui-sans-serif, system-ui, sans-serif';
+  const measureCanvas = document.createElement('canvas');
+  const measureContext = measureCanvas.getContext('2d');
+  measureContext.font = font;
+  const width = Math.max(80, Math.ceil(measureContext.measureText(text).width + 10));
+  const height = 30;
+  const pixelRatio = window.devicePixelRatio || 1;
+  canvas.width = width * pixelRatio;
+  canvas.height = height * pixelRatio;
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  const context = canvas.getContext('2d');
+  context.scale(pixelRatio, pixelRatio);
+  context.font = font;
+  context.textBaseline = 'middle';
+  context.lineJoin = 'round';
+  context.lineWidth = 2;
+  context.strokeStyle = strokeImage ? context.createPattern(strokeImage, 'repeat') : '#f2509e';
+  context.fillStyle = fillImage ? context.createPattern(fillImage, 'repeat') : '#ffffff';
+  context.strokeText(text, 5, height / 2);
+  context.fillText(text, 5, height / 2);
+}
+
+function renderNativeCanvases() {
+  document.querySelectorAll('.native-bili-canvas').forEach((canvas) => {
+    drawNativeCanvas(canvas, null, null);
+    Promise.all([loadTexture(canvas.dataset.fillUri), loadTexture(canvas.dataset.strokeUri)])
+      .then(([fillImage, strokeImage]) => drawNativeCanvas(canvas, fillImage, strokeImage));
+  });
 }
 
 function renderComment(comment) {
@@ -58,6 +102,7 @@ function renderPayload(payload, { noCommentsResponse = false, source = 'danmu_ap
   const items = Array.isArray(payload.comments) ? payload.comments.slice(0, 10) : [];
   const enhancedCount = items.filter((comment) => comment.danmux?.effects?.some((effect) => effect.type === 'gradient')).length;
   comments.innerHTML = items.length ? items.map(renderComment).join('') : '<p class="hint">没有返回弹幕</p>';
+  renderNativeCanvases();
   rawOutput.textContent = JSON.stringify(payload, null, 2);
   summary.innerHTML = `<span>抓取：<strong>${items.length}</strong> 条</span><span>包含 DanmuX 渐变：<strong>${enhancedCount}</strong> 条</span><span>旧播放器可显示：<strong>${items.every((comment) => typeof comment.p === 'string' && typeof comment.m === 'string') ? '是' : '否'}</strong></span>`;
   if (noCommentsResponse) {
