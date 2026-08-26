@@ -10,7 +10,7 @@ import {
   parseAutoMatchMappingRules,
   resolveAutoMatchMapping,
 } from './utils/auto-match-mapping-util.js';
-import { strictTitleMatch } from './utils/common-util.js';
+import { extractEpisodeNumberFromTitle, strictTitleMatch } from './utils/common-util.js';
 import { resolveLocalTitleMapping } from './utils/title-mapping-url-util.js';
 
 test('标题映射兼容加号、逗号和空格', () => {
@@ -18,6 +18,11 @@ test('标题映射兼容加号、逗号和空格', () => {
   const result = resolveLocalTitleMapping('标题 年份 第一季');
   assert.equal(result.matched, true);
   assert.equal(result.title, '目标作品');
+});
+
+test('剧集标题下划线编号按标题集数解析', () => {
+  assert.equal(extractEpisodeNumberFromTitle('【qq】 花开锦绣_31'), 31);
+  assert.equal(extractEpisodeNumberFromTitle('【qq】 花开锦绣_32'), 32);
 });
 
 test('远程季集规则只能在明确范围内换算', () => {

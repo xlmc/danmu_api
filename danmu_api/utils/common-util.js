@@ -474,8 +474,9 @@ export function extractEpisodeNumberFromTitle(episodeTitle) {
     return parseInt(epMatch[1], 10);
   }
 
-  // 匹配格式：01、1（纯数字，通常在标题开头或结尾）
-  const numberMatch = episodeTitle.match(/(?:^|\s)(\d+)(?:\s|$)/);
+  // 匹配格式：01、1（纯数字，通常在标题开头或结尾）；
+  // 同时兼容“剧名_32”“剧名.32”“剧名-32”等站点常见命名。
+  const numberMatch = episodeTitle.match(/(?:^|[\s._-])(\d{1,3})(?:\s|$)/);
   if (numberMatch) {
     return parseInt(numberMatch[1], 10);
   }
