@@ -727,6 +727,7 @@ export class Envs {
 
       // 弹幕配置
       'BLOCKED_WORDS': { category: 'danmu', type: 'text', description: '屏蔽词列表' },
+      'BLOCK_DOMESTIC_CELEBRITIES': { category: 'danmu', type: 'boolean', description: '中国大陆演员/当前作品角色名屏蔽开关。开启后启用源码内置的 TMDB 中国大陆男/女热门演员各前 100 名，并尝试叠加当前国产/港台作品的中文演员名和角色名；名单不在前台展示、不联网更新。TMDB_API_KEY 仅用于直连 TMDB 的认证，不是开启演员屏蔽的前置条件。' },
       'GROUP_MINUTE': { category: 'danmu', type: 'number', description: '分钟内合并去重（0表示不去重），默认1', min: 0, max: 30 },
       'DANMU_LIMIT': { category: 'danmu', type: 'number', description: '弹幕数量限制，单位为k，即千：默认 0，表示不限制弹幕数', min: 0, max: 100 },
       'DANMU_SIMPLIFIED_TRADITIONAL': { category: 'danmu', type: 'select', options: ['default', 'simplified', 'traditional'], description: '弹幕简繁体转换设置：default（默认不转换）、simplified（繁转简）、traditional（简转繁）' },
@@ -785,6 +786,7 @@ export class Envs {
       episodeTitleFilter: this.resolveEpisodeTitleFilter(), // 剧集标题正则过滤
       titleNoiseFilter: this.resolveTitleNoiseFilter(), // 剧名杂音清理规则
       blockedWords: this.get('BLOCKED_WORDS', '', 'string'), // 屏蔽词列表
+      blockDomesticCelebrities: this.get('BLOCK_DOMESTIC_CELEBRITIES', false, 'boolean'), // 按内置演员库 + 当前作品演员/角色表屏蔽姓名
       groupMinute: Math.min(this.get('GROUP_MINUTE', 1, 'number'), 30), // 分钟内合并去重（默认 1，最大值30，0表示不去重）
       danmuLimit: this.get('DANMU_LIMIT', 0, 'number'), // 等间隔采样限制弹幕总数，单位为k，即千：默认 0，表示不限制弹幕数，若改为5，弹幕总数在超过5000的情况下会将弹幕数控制在5000
       uiTheme: this.get('UI_THEME', 'lavender', 'string').toLowerCase(), // 管理界面主题
