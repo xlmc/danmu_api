@@ -3,8 +3,11 @@ const sampleButton = document.getElementById('sampleButton');
 const fetchButton = document.getElementById('fetchButton');
 const status = document.getElementById('status');
 const summary = document.getElementById('summary');
+const perfSummary = document.getElementById('perfSummary');
 const comments = document.getElementById('comments');
 const rawOutput = document.getElementById('rawOutput');
+const textureCache = new Map();
+let renderMetrics = null;
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/gu, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
@@ -49,17 +52,21 @@ function standardGradientMarkup(effects, text) {
 }
 
 function loadTexture(uri) {
-  return new Promise((resolve) => {
+  if (textureCache.has(uri)) return textureCache.get(uri);
+  const promise = new Promise((resolve) => {
+    const started = performance.now();
     if (!uri) {
-      resolve(null);
+      resolve({ image: null, duration: 0, failed: false });
       return;
     }
     const image = new Image();
     image.crossOrigin = 'anonymous';
-    image.onload = () => resolve(image);
-    image.onerror = () => resolve(null);
+    image.onload = () => resolve({ image, duration: performance.now() - started, failed: false });
+    image.onerror = () => resolve({ image: null, duration: performance.now() - started, failed: true });
     image.src = uri;
   });
+  textureCache.set(uri, promise);
+  return promise;
 }
 
 function measureCanvas(canvas) {
@@ -71,7 +78,16 @@ function measureCanvas(canvas) {
   return { text, font, width: Math.max(80, Math.ceil(measureContext.measureText(text).width + 10)), height: 30 };
 }
 
+function updatePerformanceSummary() {
+  if (!renderMetrics) return;
+  const nativeLoad = renderMetrics.textureLoaded || renderMetrics.textureFailures ? `${renderMetrics.textureLoadMs.toFixed(1)}ms${renderMetrics.textureFailures ? '（失败）' : ''}` : '加载中';
+  const nativeState = renderMetrics.textureFailures ? `失败 ${renderMetrics.textureFailures}，使用回退` : `${renderMetrics.textureLoaded}/${renderMetrics.textureRequests} 已加载`;
+  const warning = renderMetrics.textureFailures ? '<span>注意：原生纹理未下载成功，原生列当前不是有效的真实纹理性能结果</span>' : '';
+  perfSummary.innerHTML = `<span>性能基线：<strong>p/m 单色</strong>（无纹理）</span><span>原生 texture：<strong>${nativeState}</strong>，加载 ${nativeLoad}，绘制 ${renderMetrics.nativeDrawMs.toFixed(2)}ms</span><span>标准 linear：<strong>${renderMetrics.linearStops} stops</strong>，绘制 ${renderMetrics.standardDrawMs.toFixed(2)}ms，无图片下载</span>${warning}`;
+}
+
 function drawNativeCanvas(canvas, fillImage, strokeImage) {
+  const started = performance.now();
   const { text, font, width, height } = measureCanvas(canvas);
   const pixelRatio = window.devicePixelRatio || 1;
   canvas.width = width * pixelRatio;
@@ -92,6 +108,7 @@ function drawNativeCanvas(canvas, fillImage, strokeImage) {
   context.fillStyle = fillImage ? context.createPattern(fillImage, 'repeat') : '#ffffff';
   context.strokeText(text, 5, height / 2);
   context.fillText(text, 5, height / 2);
+  return performance.now() - started;
 }
 
 function addStops(gradient, source) {
@@ -104,6 +121,7 @@ function addStops(gradient, source) {
 }
 
 function drawStandardCanvas(canvas) {
+  const started = performance.now();
   const { text, font, width, height } = measureCanvas(canvas);
   const pixelRatio = window.devicePixelRatio || 1;
   canvas.width = width * pixelRatio;
@@ -126,15 +144,39 @@ function drawStandardCanvas(canvas) {
   context.fillStyle = fillSource ? fillGradient : '#ffffff';
   context.strokeText(text, 5, height / 2);
   context.fillText(text, 5, height / 2);
+  renderMetrics.linearStops += (fillSource?.stops?.length ?? 0) + (strokeSource?.stops?.length ?? 0);
+  return performance.now() - started;
 }
 
 function renderNativeCanvases() {
+  renderMetrics = { nativeDrawMs: 0, standardDrawMs: 0, textureRequests: 0, textureLoaded: 0, textureLoadMs: 0, textureFailures: 0, linearStops: 0, textureSeen: new Set(), textureSettled: new Set() };
   document.querySelectorAll('.native-bili-canvas').forEach((canvas) => {
-    drawNativeCanvas(canvas, null, null);
-    Promise.all([loadTexture(canvas.dataset.fillUri), loadTexture(canvas.dataset.strokeUri)])
-      .then(([fillImage, strokeImage]) => drawNativeCanvas(canvas, fillImage, strokeImage));
+    renderMetrics.nativeDrawMs += drawNativeCanvas(canvas, null, null);
+    const sources = [canvas.dataset.fillUri, canvas.dataset.strokeUri];
+    const newUrls = sources.filter((uri) => uri && !renderMetrics.textureSeen.has(uri));
+    newUrls.forEach((uri) => renderMetrics.textureSeen.add(uri));
+    renderMetrics.textureRequests += newUrls.length;
+    Promise.all(sources.map(loadTexture))
+      .then(([fillResult, strokeResult]) => {
+        sources.forEach((uri, index) => {
+          if (!uri || renderMetrics.textureSettled.has(uri)) return;
+          renderMetrics.textureSettled.add(uri);
+          const result = [fillResult, strokeResult][index];
+          if (result.image) renderMetrics.textureLoaded += 1;
+          if (result.failed) renderMetrics.textureFailures += 1;
+        renderMetrics.textureLoadMs += result.duration;
+        });
+        renderMetrics.nativeDrawMs += drawNativeCanvas(canvas, fillResult.image, strokeResult.image);
+        const label = canvas.closest('.render-box')?.querySelector('.render-label');
+        if (label && (fillResult.failed || strokeResult.failed)) label.textContent = 'texture ⚠ · 下载失败，显示回退';
+        if (label && !fillResult.failed && !strokeResult.failed) label.textContent = 'texture ✓ · 已下载并绘制';
+        updatePerformanceSummary();
+      });
   });
-  document.querySelectorAll('.standard-gradient-canvas').forEach(drawStandardCanvas);
+  document.querySelectorAll('.standard-gradient-canvas').forEach((canvas) => {
+    renderMetrics.standardDrawMs += drawStandardCanvas(canvas);
+  });
+  updatePerformanceSummary();
 }
 
 function renderComment(nativeComment, portableComment = nativeComment) {
