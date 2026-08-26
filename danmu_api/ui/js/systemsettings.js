@@ -620,34 +620,23 @@ function checkAdminToken() {
     const pathParts = urlPath.split('/').filter(part => part !== '');
     const urlToken = pathParts.length > 0 ? pathParts[0] : currentToken; // 如果没有路径段，使用默认token
     
-    // 检查是否配置了ADMIN_TOKEN且URL中的token等于currentAdminToken
-    return currentAdminToken && currentAdminToken.trim() !== '' && urlToken === currentAdminToken;
+    // 配置了 ADMIN_TOKEN 时必须使用它；未配置时，普通 TOKEN（默认值也包括）
+    // 直接承担配置管理权限。
+    if (currentAdminToken && currentAdminToken.trim() !== '') {
+        return urlToken === currentAdminToken;
+    }
+
+    const ordinaryToken = String(originalToken || currentToken || '').trim();
+    if (!ordinaryToken || /^\*+$/.test(ordinaryToken)) return false;
+    return urlToken === ordinaryToken || (ordinaryToken === '87654321' && !urlToken);
 }
 
 // 检查部署平台相关配置
 async function checkDeployPlatformConfig() {
-    // 首先检查是否配置了ADMIN_TOKEN
     if (!checkAdminToken()) {
-        // 获取当前页面的协议、主机和端口
-        const protocol = window.location.protocol;
-        const host = window.location.host;
-        
-        let displayBase;
-        if (customBaseUrl) {
-            displayBase = customBaseUrl.startsWith('http') 
-                ? customBaseUrl 
-                : (protocol + '//' + host + customBaseUrl);
-        } else {
-            displayBase = protocol + '//' + host;
-        }
-
-        if (displayBase.endsWith('/')) {
-            displayBase = displayBase.slice(0, -1);
-        }
-        
-        return { success: false, message: '请先配置ADMIN_TOKEN环境变量并使用正确的token访问以启用系统部署功能！\\n\\n访问方式：' + displayBase + '/{ADMIN_TOKEN}' };
+        return { success: false, message: '请使用有效 TOKEN 访问以启用系统配置管理功能。' };
     }
-    
+
     try {
         const response = await fetch(buildApiUrl('/api/config', true));
         if (!response.ok) {
@@ -657,9 +646,9 @@ async function checkDeployPlatformConfig() {
         const config = await response.json();
         const deployPlatform = config.envs.deployPlatform || 'node';
         
-        // 如果是node部署平台，只需要检查ADMIN_TOKEN
+        // Node 部署无需额外部署参数；是否使用 ADMIN_TOKEN 已在 checkAdminToken 中处理。
         if (deployPlatform.toLowerCase() === 'node') {
-            return { success: true, message: 'Node部署平台，仅需配置ADMIN_TOKEN' };
+            return { success: true, message: 'Node部署平台，配置管理权限验证通过' };
         }
         
         // 对于其他部署平台，收集所有缺失的环境变量
@@ -709,7 +698,7 @@ function checkAndHandleAdminToken() {
         // 禁用系统配置按钮并添加提示
         const envNavBtn = document.getElementById('env-nav-btn');
         if (envNavBtn) {
-            envNavBtn.title = '请先配置ADMIN_TOKEN并使用正确的admin token访问以启用系统管理功能';
+            envNavBtn.title = '请使用有效 TOKEN 访问以启用系统管理功能';
         }
     }
 }
