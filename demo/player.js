@@ -41,6 +41,13 @@ function nativeTextureMarkup(effects, text) {
   return `<span class="native-bili-text"><canvas class="native-bili-canvas" data-fill-uri="${escapeHtml(fillUrl ?? '')}" data-stroke-uri="${escapeHtml(strokeUrl ?? '')}" data-text="${escapeHtml(text)}" aria-label="${escapeHtml(text)}"></canvas></span>`;
 }
 
+function standardGradientMarkup(effects, text) {
+  const fill = effects.find((effect) => effect.target === 'fill' && effect.source?.type === 'linear');
+  const stroke = effects.find((effect) => effect.target === 'stroke' && effect.source?.type === 'linear');
+  if (!fill && !stroke) return null;
+  return `<canvas class="standard-gradient-canvas" data-fill-effect="${escapeHtml(JSON.stringify(fill?.source ?? null))}" data-stroke-effect="${escapeHtml(JSON.stringify(stroke?.source ?? null))}" data-text="${escapeHtml(text)}" aria-label="${escapeHtml(text)}"></canvas>`;
+}
+
 function loadTexture(uri) {
   return new Promise((resolve) => {
     if (!uri) {
@@ -48,20 +55,24 @@ function loadTexture(uri) {
       return;
     }
     const image = new Image();
+    image.crossOrigin = 'anonymous';
     image.onload = () => resolve(image);
     image.onerror = () => resolve(null);
     image.src = uri;
   });
 }
 
-function drawNativeCanvas(canvas, fillImage, strokeImage) {
+function measureCanvas(canvas) {
   const text = canvas.dataset.text ?? '';
   const font = '700 17px Inter, ui-sans-serif, system-ui, sans-serif';
   const measureCanvas = document.createElement('canvas');
   const measureContext = measureCanvas.getContext('2d');
   measureContext.font = font;
-  const width = Math.max(80, Math.ceil(measureContext.measureText(text).width + 10));
-  const height = 30;
+  return { text, font, width: Math.max(80, Math.ceil(measureContext.measureText(text).width + 10)), height: 30 };
+}
+
+function drawNativeCanvas(canvas, fillImage, strokeImage) {
+  const { text, font, width, height } = measureCanvas(canvas);
   const pixelRatio = window.devicePixelRatio || 1;
   canvas.width = width * pixelRatio;
   canvas.height = height * pixelRatio;
@@ -72,15 +83,47 @@ function drawNativeCanvas(canvas, fillImage, strokeImage) {
   context.font = font;
   context.textBaseline = 'middle';
   context.lineJoin = 'round';
-  // B 站原生效果的颜色主要位于描边；调试页放大描边，避免小字号下被白色填充盖住。
-  context.lineWidth = 6;
-  const bilibiliStrokeGradient = context.createLinearGradient(0, 0, width, 0);
-  bilibiliStrokeGradient.addColorStop(0, '#f2509e');
-  bilibiliStrokeGradient.addColorStop(0.5, '#8671b9');
-  bilibiliStrokeGradient.addColorStop(1, '#308bcd');
-  // B 站原生描边资源是同一条粉—紫—蓝色带；用等效渐变绘制，避免远端纹理在小字号下只显示单端颜色。
-  context.strokeStyle = bilibiliStrokeGradient;
-  context.fillStyle = 'rgba(255, 255, 255, 0.84)';
+  const fallbackStroke = context.createLinearGradient(0, 0, width, 0);
+  fallbackStroke.addColorStop(0, '#f2509e');
+  fallbackStroke.addColorStop(0.5, '#8671b9');
+  fallbackStroke.addColorStop(1, '#308bcd');
+  context.lineWidth = 4;
+  context.strokeStyle = strokeImage ? context.createPattern(strokeImage, 'repeat') : fallbackStroke;
+  context.fillStyle = fillImage ? context.createPattern(fillImage, 'repeat') : '#ffffff';
+  context.strokeText(text, 5, height / 2);
+  context.fillText(text, 5, height / 2);
+}
+
+function addStops(gradient, source) {
+  if (!source?.stops?.length) return false;
+  source.stops.forEach((stop) => {
+    const alpha = stop.alpha === undefined || stop.alpha >= 1 ? '' : Math.round(stop.alpha * 255).toString(16).padStart(2, '0');
+    gradient.addColorStop(stop.position, `${stop.color}${alpha}`);
+  });
+  return true;
+}
+
+function drawStandardCanvas(canvas) {
+  const { text, font, width, height } = measureCanvas(canvas);
+  const pixelRatio = window.devicePixelRatio || 1;
+  canvas.width = width * pixelRatio;
+  canvas.height = height * pixelRatio;
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  const context = canvas.getContext('2d');
+  context.scale(pixelRatio, pixelRatio);
+  context.font = font;
+  context.textBaseline = 'middle';
+  context.lineJoin = 'round';
+  const fillSource = JSON.parse(canvas.dataset.fillEffect || 'null');
+  const strokeSource = JSON.parse(canvas.dataset.strokeEffect || 'null');
+  const fillGradient = context.createLinearGradient(0, 0, width, 0);
+  const strokeGradient = context.createLinearGradient(0, 0, width, 0);
+  addStops(fillGradient, fillSource);
+  addStops(strokeGradient, strokeSource);
+  context.lineWidth = 4;
+  context.strokeStyle = strokeSource ? strokeGradient : '#ffffff';
+  context.fillStyle = fillSource ? fillGradient : '#ffffff';
   context.strokeText(text, 5, height / 2);
   context.fillText(text, 5, height / 2);
 }
@@ -91,23 +134,26 @@ function renderNativeCanvases() {
     Promise.all([loadTexture(canvas.dataset.fillUri), loadTexture(canvas.dataset.strokeUri)])
       .then(([fillImage, strokeImage]) => drawNativeCanvas(canvas, fillImage, strokeImage));
   });
+  document.querySelectorAll('.standard-gradient-canvas').forEach(drawStandardCanvas);
 }
 
-function renderComment(comment) {
-  const effects = Array.isArray(comment.danmux?.effects) ? comment.danmux.effects : [];
-  const effect = effects.find((entry) => entry.type === 'gradient' && entry.target === 'fill');
-  const gradient = gradientCss(effect);
-  const text = comment.m ?? '';
-  const nativeMarkup = nativeTextureMarkup(effects, text);
-  const enhancedMarkup = nativeMarkup ?? `<span class="render-text"${gradient ? ` style="background-image:${gradient}"` : ''}>${escapeHtml(text)}</span>`;
-  const effectLabel = nativeMarkup ? 'danmux.effects ✓ · B站原生纹理' : `danmux.effects${gradient ? ' ✓ · 人工 linear' : ' —'}`;
-  return `<article class="comment"><span class="comment-time">${escapeHtml(comment.p?.split(',')[0] ?? '-')}s</span><div class="render-box solid"><span class="render-label">p / m fallback</span><span class="render-text" style="color:${colorFromP(comment.p)}">${escapeHtml(text)}</span></div><div class="render-box enhanced"><span class="render-label">${effectLabel}</span>${enhancedMarkup}</div></article>`;
+function renderComment(nativeComment, portableComment = nativeComment) {
+  const nativeEffects = Array.isArray(nativeComment.danmux?.effects) ? nativeComment.danmux.effects : [];
+  const portableEffects = Array.isArray(portableComment?.danmux?.effects) ? portableComment.danmux.effects : [];
+  const text = nativeComment.m ?? '';
+  const nativeMarkup = nativeTextureMarkup(nativeEffects, text);
+  const standardMarkup = standardGradientMarkup(portableEffects, text);
+  const nativeLabel = nativeMarkup ? 'texture ✓ · 原生纹理' : 'texture —';
+  const standardLabel = standardMarkup ? 'linear ✓ · 上游 stops' : 'linear —';
+  return `<article class="comment"><span class="comment-time">${escapeHtml(nativeComment.p?.split(',')[0] ?? '-')}s</span><div class="render-box solid"><span class="render-label">p / m 单色</span><span class="render-text" style="color:${colorFromP(nativeComment.p)}">${escapeHtml(text)}</span></div><div class="render-box enhanced"><span class="render-label">${nativeLabel}</span>${nativeMarkup ?? '<span class="hint">播放器不支持纹理</span>'}</div><div class="render-box enhanced"><span class="render-label">${standardLabel}</span>${standardMarkup ?? '<span class="hint">上游未提供 stops</span>'}</div></article>`;
 }
 
 function renderPayload(payload, { noCommentsResponse = false, source = 'danmu_api' } = {}) {
   const items = Array.isArray(payload.comments) ? payload.comments.slice(0, 10) : [];
+  const nativeItems = Array.isArray(payload.comparison?.nativeComments) ? payload.comparison.nativeComments.slice(0, 10) : items;
+  const portableItems = Array.isArray(payload.comparison?.portableComments) ? payload.comparison.portableComments.slice(0, 10) : items;
   const enhancedCount = items.filter((comment) => comment.danmux?.effects?.some((effect) => effect.type === 'gradient')).length;
-  comments.innerHTML = items.length ? items.map(renderComment).join('') : '<p class="hint">没有返回弹幕</p>';
+  comments.innerHTML = nativeItems.length ? nativeItems.map((comment, index) => renderComment(comment, portableItems[index])).join('') : '<p class="hint">没有返回弹幕</p>';
   renderNativeCanvases();
   rawOutput.textContent = JSON.stringify(payload, null, 2);
   summary.innerHTML = `<span>抓取：<strong>${items.length}</strong> 条</span><span>包含 DanmuX 渐变：<strong>${enhancedCount}</strong> 条</span><span>旧播放器可显示：<strong>${items.every((comment) => typeof comment.p === 'string' && typeof comment.m === 'string') ? '是' : '否'}</strong></span>`;

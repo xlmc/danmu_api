@@ -30,7 +30,7 @@
     .legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; background: currentColor; }
     .legend .gradient::before { background: linear-gradient(90deg, #f2509e, #308bcd); }
     .comment-list { display: grid; gap: 10px; }
-    .comment { display: grid; grid-template-columns: 72px minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: center; padding: 12px; border: 1px solid #263458; border-radius: 10px; background: #0a1125; }
+    .comment { display: grid; grid-template-columns: 72px repeat(3, minmax(0, 1fr)); gap: 12px; align-items: center; padding: 12px; border: 1px solid #263458; border-radius: 10px; background: #0a1125; }
     .comment-time { color: #90a0c8; font: 0.78rem "Cascadia Code", Consolas, monospace; }
     .render-box { min-width: 0; }
     .render-label { display: block; margin-bottom: 5px; color: #7887ae; font-size: 0.68rem; text-transform: uppercase; letter-spacing: .07em; }
@@ -38,6 +38,7 @@
     .enhanced .render-text { background-clip: text; -webkit-background-clip: text; color: transparent; }
     .native-bili-text { display: inline-block; max-width: 100%; vertical-align: middle; }
     .native-bili-canvas { display: block; max-width: 100%; }
+    .standard-gradient-canvas { display: block; max-width: 100%; }
     .solid .render-text { color: #fff; }
     .raw { margin-top: 16px; }
     pre { max-height: 340px; overflow: auto; margin: 0; padding: 12px; border: 1px solid #2b3964; border-radius: 8px; background: #080d1c; color: #dbe5ff; font: 0.76rem/1.5 "Cascadia Code", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -48,7 +49,7 @@
   <main>
     <header>
       <h1>DanmuX 下游播放器模拟</h1>
-      <p class="subtitle">从 danmu_api 抓取少量弹幕，同时对比“只读 p/m”的旧播放器和“读取 danmux.effects”的增强播放器。</p>
+      <p class="subtitle">从 danmu_api 抓取少量弹幕，同时对比普通单色、B 站原生纹理和上游标准渐变三种播放器方案。</p>
     </header>
 
     <section class="panel">
@@ -69,7 +70,7 @@
 
     <section class="panel">
       <h2>模拟播放器画面</h2>
-      <div class="legend"><span>旧播放器：只读 p/m</span><span class="gradient">增强播放器：读取 danmux.effects（原生纹理或人工渐变）</span></div>
+      <div class="legend"><span>普通播放器：只读 p/m</span><span class="gradient">原生播放器：读取 texture 并下载纹理</span><span class="gradient">标准播放器：读取 linear stops</span></div>
       <div id="comments" class="comment-list"><p class="hint">等待抓取</p></div>
       <div class="raw">
         <h2>当前数据</h2>

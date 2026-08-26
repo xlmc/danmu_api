@@ -21,8 +21,7 @@ function safePath(requestPath) {
 }
 
 function sampleResponse() {
-  const native = convertCommentsToDanmux({
-    comments: [
+  const sourceComments = [
       {
         cid: 'demo-1',
         p: '12,1,25,16777215,0,0,0,100',
@@ -41,8 +40,29 @@ function sampleResponse() {
           stroke_color: 'https://i0.hdslb.com/bfs/dm/716a749b2461e02df0b4dafb59bbaf0ceab79da9.png',
         }),
       },
-    ],
-  }, { sourceLabel: 'bilibili' });
+    ];
+  const textureGradients = {
+    'https://i0.hdslb.com/bfs/dm/9dcd329e617035b45d2041ac889c49cb5edd3e44.png': {
+      angle: 0,
+      stops: [
+        { position: 0, color: '#FFFFFF' },
+        { position: 1, color: '#FFFFFF' },
+      ],
+    },
+    'https://i0.hdslb.com/bfs/dm/716a749b2461e02df0b4dafb59bbaf0ceab79da9.png': {
+      angle: 0,
+      stops: [
+        { position: 0, color: '#F2509E' },
+        { position: 0.5, color: '#8671B9' },
+        { position: 1, color: '#308BCD' },
+      ],
+    },
+  };
+  const native = convertCommentsToDanmux({ comments: sourceComments }, { sourceLabel: 'bilibili' });
+  const portable = convertCommentsToDanmux({ comments: sourceComments }, {
+    sourceLabel: 'bilibili',
+    textureGradients,
+  });
   const fallback = convertCommentsToDanmux({
     comments: [
       { cid: 'demo-3', p: '25,1,25,255,0,0,0,100', m: '本地模拟：兼容单色' },
@@ -54,6 +74,10 @@ function sampleResponse() {
     count: native.count + fallback.count,
     comments: [...native.comments, ...fallback.comments],
     diagnostics: [...native.diagnostics, ...fallback.diagnostics],
+    comparison: {
+      nativeComments: [...native.comments, ...fallback.comments],
+      portableComments: [...portable.comments, ...fallback.comments],
+    },
   };
 }
 
