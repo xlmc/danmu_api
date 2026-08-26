@@ -71,9 +71,15 @@ export function handleConfig(hasPermission = false) {
   const adminToken = globals.adminToken || '';
   const hasAdminToken = adminToken.trim() !== '';
   
-  // 准备原始环境变量，无权限时也需要脱敏
+  // 准备原始环境变量，无权限时也需要脱敏。
+  // 未配置 ADMIN_TOKEN 时，普通 TOKEN 就是配置管理令牌；只有明确配置
+  // ADMIN_TOKEN 后，才要求使用 ADMIN_TOKEN 才能读取完整配置。
   let originalEnvVars = { ...globals.originalEnvVars };
-  if (!hasPermission || globals.currentToken !== globals.adminToken) {
+  const hasAdminTokenConfigured = adminToken.trim() !== '';
+  const hasConfigPermission = hasAdminTokenConfigured
+    ? globals.currentToken === adminToken
+    : globals.currentToken === globals.token;
+  if (!hasPermission || !hasConfigPermission) {
     Object.keys(originalEnvVars).forEach(key => {
       if (globals.currentToken !== globals.token || key !== "TOKEN") {
         if (key in previewEnvVars && /^\*+$/.test(previewEnvVars[key])) {
