@@ -21,26 +21,28 @@ function safePath(requestPath) {
 }
 
 function sampleResponse() {
-  const enhanced = [
-    convertCommentsToDanmux({
-      comments: [{ cid: 'demo-1', p: '12,1,25,16711680,0,0,0,100', m: '本地模拟：红色到黄色' }],
-    }, {
-      sourceLabel: 'player-demo',
-      gradientStops: [
-        { position: 0, color: '#FB7299' },
-        { position: 1, color: '#FFD166' },
-      ],
-    }),
-    convertCommentsToDanmux({
-      comments: [{ cid: 'demo-2', p: '18,1,25,65280,0,0,0,100', m: '本地模拟：绿色到蓝色' }],
-    }, {
-      sourceLabel: 'player-demo',
-      gradientStops: [
-        { position: 0, color: '#00FF00' },
-        { position: 1, color: '#245BFF' },
-      ],
-    }),
-  ];
+  const native = convertCommentsToDanmux({
+    comments: [
+      {
+        cid: 'demo-1',
+        p: '12,1,25,16777215,0,0,0,100',
+        m: 'B站原生：白色填充＋渐变描边',
+        color_v2: JSON.stringify({
+          fill_color: 'https://i0.hdslb.com/bfs/dm/9dcd329e617035b45d2041ac889c49cb5edd3e44.png',
+          stroke_color: 'https://i0.hdslb.com/bfs/dm/716a749b2461e02df0b4dafb59bbaf0ceab79da9.png',
+        }),
+      },
+      {
+        cid: 'demo-2',
+        p: '18,1,25,16777215,0,0,0,100',
+        m: 'B站原生：同一套会员渐变资源',
+        color_v2: JSON.stringify({
+          fill_color: 'https://i0.hdslb.com/bfs/dm/9dcd329e617035b45d2041ac889c49cb5edd3e44.png',
+          stroke_color: 'https://i0.hdslb.com/bfs/dm/716a749b2461e02df0b4dafb59bbaf0ceab79da9.png',
+        }),
+      },
+    ],
+  }, { sourceLabel: 'bilibili' });
   const fallback = convertCommentsToDanmux({
     comments: [
       { cid: 'demo-3', p: '25,1,25,255,0,0,0,100', m: '本地模拟：兼容单色' },
@@ -49,9 +51,9 @@ function sampleResponse() {
   return {
     format: 'danmux',
     schemaVersion: 1,
-    count: enhanced.reduce((total, result) => total + result.count, 0) + fallback.count,
-    comments: [...enhanced.flatMap((result) => result.comments), ...fallback.comments],
-    diagnostics: [...enhanced.flatMap((result) => result.diagnostics), ...fallback.diagnostics],
+    count: native.count + fallback.count,
+    comments: [...native.comments, ...fallback.comments],
+    diagnostics: [...native.diagnostics, ...fallback.diagnostics],
   };
 }
 

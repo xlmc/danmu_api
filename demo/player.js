@@ -16,17 +16,42 @@ function colorFromP(p) {
   return Number.isInteger(value) && value >= 0 && value <= 0xffffff ? `#${value.toString(16).padStart(6, '0')}` : '#ffffff';
 }
 
+function safeTextureUrl(value) {
+  try {
+    const url = new URL(String(value));
+    if (!['http:', 'https:'].includes(url.protocol)) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
 function gradientCss(effect) {
   if (effect?.source?.type !== 'linear') return null;
   const stops = effect.source.stops.map((stop) => `${stop.color}${stop.alpha < 1 ? Math.round(stop.alpha * 255).toString(16).padStart(2, '0') : ''} ${stop.position * 100}%`).join(', ');
   return `linear-gradient(${effect.source.angle}deg, ${stops})`;
 }
 
+function nativeTextureMarkup(effects, text) {
+  const fill = effects.find((effect) => effect.target === 'fill' && effect.source?.type === 'texture');
+  const stroke = effects.find((effect) => effect.target === 'stroke' && effect.source?.type === 'texture');
+  const fillUrl = safeTextureUrl(fill?.source?.uri);
+  const strokeUrl = safeTextureUrl(stroke?.source?.uri);
+  if (!fillUrl && !strokeUrl) return null;
+  const fillStyle = fillUrl ? ` style="background-image:url('${escapeHtml(fillUrl)}')"` : '';
+  const strokeStyle = strokeUrl ? ` style="background-image:url('${escapeHtml(strokeUrl)}')"` : fillStyle;
+  return `<span class="native-bili-text"><span class="native-bili-layer native-bili-stroke"${strokeStyle}>${escapeHtml(text)}</span><span class="native-bili-layer native-bili-fill"${fillStyle}>${escapeHtml(text)}</span></span>`;
+}
+
 function renderComment(comment) {
-  const effect = comment.danmux?.effects?.find((entry) => entry.type === 'gradient' && entry.target === 'fill');
+  const effects = Array.isArray(comment.danmux?.effects) ? comment.danmux.effects : [];
+  const effect = effects.find((entry) => entry.type === 'gradient' && entry.target === 'fill');
   const gradient = gradientCss(effect);
-  const enhancedStyle = gradient ? ` style="background-image:${gradient}"` : '';
-  return `<article class="comment"><span class="comment-time">${escapeHtml(comment.p?.split(',')[0] ?? '-')}s</span><div class="render-box solid"><span class="render-label">p / m fallback</span><span class="render-text" style="color:${colorFromP(comment.p)}">${escapeHtml(comment.m ?? '')}</span></div><div class="render-box enhanced"><span class="render-label">danmux.effects${gradient ? ' ✓' : ' —'}</span><span class="render-text"${enhancedStyle}>${escapeHtml(comment.m ?? '')}</span></div></article>`;
+  const text = comment.m ?? '';
+  const nativeMarkup = nativeTextureMarkup(effects, text);
+  const enhancedMarkup = nativeMarkup ?? `<span class="render-text"${gradient ? ` style="background-image:${gradient}"` : ''}>${escapeHtml(text)}</span>`;
+  const effectLabel = nativeMarkup ? 'danmux.effects ✓ · B站原生纹理' : `danmux.effects${gradient ? ' ✓ · 人工 linear' : ' —'}`;
+  return `<article class="comment"><span class="comment-time">${escapeHtml(comment.p?.split(',')[0] ?? '-')}s</span><div class="render-box solid"><span class="render-label">p / m fallback</span><span class="render-text" style="color:${colorFromP(comment.p)}">${escapeHtml(text)}</span></div><div class="render-box enhanced"><span class="render-label">${effectLabel}</span>${enhancedMarkup}</div></article>`;
 }
 
 function renderPayload(payload, { noCommentsResponse = false, source = 'danmu_api' } = {}) {
