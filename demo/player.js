@@ -80,7 +80,7 @@ function drawNativeCanvas(canvas, fillImage, strokeImage) {
   bilibiliStrokeGradient.addColorStop(1, '#308bcd');
   // B 站原生描边资源是同一条粉—紫—蓝色带；用等效渐变绘制，避免远端纹理在小字号下只显示单端颜色。
   context.strokeStyle = bilibiliStrokeGradient;
-  context.fillStyle = '#ffffff';
+  context.fillStyle = 'rgba(255, 255, 255, 0.84)';
   context.strokeText(text, 5, height / 2);
   context.fillText(text, 5, height / 2);
 }
