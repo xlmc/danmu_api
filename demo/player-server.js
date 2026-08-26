@@ -21,28 +21,37 @@ function safePath(requestPath) {
 }
 
 function sampleResponse() {
-  const enhanced = convertCommentsToDanmux({
-    comments: [
-      { cid: 'demo-1', p: '12,1,25,16711680,0,0,0,100', m: '本地模拟：红色到黄色' },
-      { cid: 'demo-2', p: '18,1,25,65280,0,0,0,100', m: '本地模拟：绿色到蓝色' },
-    ],
-  }, {
-    sourceLabel: 'player-demo',
-    gradientStops: [
-      { position: 0, color: '#FB7299' },
-      { position: 1, color: '#33B8FF' },
-    ],
-  });
+  const enhanced = [
+    convertCommentsToDanmux({
+      comments: [{ cid: 'demo-1', p: '12,1,25,16711680,0,0,0,100', m: '本地模拟：红色到黄色' }],
+    }, {
+      sourceLabel: 'player-demo',
+      gradientStops: [
+        { position: 0, color: '#FB7299' },
+        { position: 1, color: '#FFD166' },
+      ],
+    }),
+    convertCommentsToDanmux({
+      comments: [{ cid: 'demo-2', p: '18,1,25,65280,0,0,0,100', m: '本地模拟：绿色到蓝色' }],
+    }, {
+      sourceLabel: 'player-demo',
+      gradientStops: [
+        { position: 0, color: '#45E0B5' },
+        { position: 1, color: '#33B8FF' },
+      ],
+    }),
+  ];
   const fallback = convertCommentsToDanmux({
     comments: [
       { cid: 'demo-3', p: '25,1,25,255,0,0,0,100', m: '本地模拟：兼容单色' },
     ],
   }, { sourceLabel: 'player-demo' });
   return {
-    ...enhanced,
-    count: enhanced.count + fallback.count,
-    comments: [...enhanced.comments, ...fallback.comments],
-    diagnostics: [...enhanced.diagnostics, ...fallback.diagnostics],
+    format: 'danmux',
+    schemaVersion: 1,
+    count: enhanced.reduce((total, result) => total + result.count, 0) + fallback.count,
+    comments: [...enhanced.flatMap((result) => result.comments), ...fallback.comments],
+    diagnostics: [...enhanced.flatMap((result) => result.diagnostics), ...fallback.diagnostics],
   };
 }
 
