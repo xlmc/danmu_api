@@ -708,6 +708,7 @@ export function formatDanmuResponse(danmuData, queryFormat) {
         gradientStops,
         gradientAngle: globals.danmuxGradientAngle,
         textureGradients,
+        linearOnly: true,
       }));
     } catch (error) {
       log("error", `[system] [danmu] Failed to convert to DanmuX: ${error.message}`);

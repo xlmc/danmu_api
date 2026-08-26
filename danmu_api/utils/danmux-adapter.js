@@ -54,13 +54,26 @@ function textureGradientConfig(source, mappings) {
   return undefined;
 }
 
-function normalizeNativeTextures(item, mappings, diagnostics, index) {
-  if (!mappings || !Array.isArray(item.effects)) return item;
+function normalizeNativeTextures(item, mappings, diagnostics, index, { linearOnly = false } = {}) {
+  if ((!linearOnly && !mappings) || !Array.isArray(item.effects)) return item;
   let changed = false;
-  const effects = item.effects.map((effect) => {
-    if (effect?.type !== 'gradient' || effect.source?.type !== 'texture') return effect;
+  const effects = [];
+  for (const effect of item.effects) {
+    if (effect?.type !== 'gradient' || effect.source?.type !== 'texture') {
+      effects.push(effect);
+      continue;
+    }
+    changed = true;
     const config = textureGradientConfig(effect.source, mappings);
-    if (config === undefined) return effect;
+    if (config === undefined) {
+      diagnostics.push({
+        code: 'native_texture_dropped',
+        message: 'Native texture was omitted because no linear mapping was configured',
+        path: `effects.${effect.target}`,
+        index,
+      });
+      continue;
+    }
     const candidate = {
       ...effect,
       source: { type: 'linear', angle: config?.angle ?? 0, stops: config?.stops },
@@ -72,12 +85,11 @@ function normalizeNativeTextures(item, mappings, diagnostics, index) {
         code: `texture_mapping_${entry.code}`,
         index,
       })));
-      return effect;
+      continue;
     }
     const normalized = canonicalizeGradientEffect(candidate);
-    changed = true;
-    return normalized;
-  });
+    effects.push(normalized);
+  }
   if (!changed) return item;
   const recreated = createDanmuX({ ...item, effects });
   if (!recreated.value) {
@@ -92,6 +104,7 @@ export function convertCommentsToDanmux(danmuData, {
   gradientStops,
   gradientAngle = 0,
   textureGradients,
+  linearOnly = false,
 } = {}) {
   const comments = Array.isArray(danmuData?.comments) ? danmuData.comments : [];
   const diagnostics = [];
@@ -101,7 +114,7 @@ export function convertCommentsToDanmux(danmuData, {
     const parsed = parseComment(comment, String(sourceLabel).slice(0, 64) || 'danmu_api');
     diagnostics.push(...(parsed.diagnostics ?? []).map((entry) => ({ ...entry, index })));
     if (!parsed.value) continue;
-    let item = normalizeNativeTextures(parsed.value, textureGradients, diagnostics, index);
+    let item = normalizeNativeTextures(parsed.value, textureGradients, diagnostics, index, { linearOnly });
     if (gradientStops !== undefined) {
       const generated = applyGradient(item, { angle: gradientAngle, stops: gradientStops });
       diagnostics.push(...(generated.diagnostics ?? []).map((entry) => ({ ...entry, index })));

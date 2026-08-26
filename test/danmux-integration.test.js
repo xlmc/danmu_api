@@ -69,7 +69,7 @@ test('danmu_api converts configured native textures to portable gradients', () =
   assert.equal(effects[1].source.stops[1].color, '#8671B9');
 });
 
-test('unconfigured native textures remain available to texture-capable players', () => {
+test('adapter keeps unconfigured native textures for the native demo path', () => {
   const response = convertCommentsToDanmux({ comments: [{
     p: '2,1,16777215,[bilibili]',
     m: 'native texture',
@@ -78,4 +78,14 @@ test('unconfigured native textures remain available to texture-capable players',
   const effect = response.comments[0].danmux.effects[0];
   assert.equal(effect.origin, 'native');
   assert.equal(effect.source.type, 'texture');
+});
+
+test('linear-only API mode omits unconfigured native textures', () => {
+  const response = convertCommentsToDanmux({ comments: [{
+    p: '2,1,16777215,[bilibili]',
+    m: 'linear only',
+    color_v2: JSON.stringify({ stroke_color: 'https://cdn.example.test/stroke.png' }),
+  }] }, { linearOnly: true });
+  assert.equal(response.comments[0].danmux.effects, undefined);
+  assert.equal(response.diagnostics[0].code, 'native_texture_dropped');
 });
