@@ -39,3 +39,43 @@ test('without explicit stops the adapter keeps legacy fallback only', () => {
   assert.equal(player.enhancedAccepted, false);
   assert.equal(player.renderMode, 'solid');
 });
+
+test('danmu_api converts configured native textures to portable gradients', () => {
+  const fillUri = 'https://cdn.example.test/fill.png';
+  const strokeUri = 'https://cdn.example.test/stroke.png';
+  const response = convertCommentsToDanmux({ comments: [{
+    p: '2,1,16777215,[bilibili]',
+    m: 'portable native',
+    cid: 44,
+    color_v2: JSON.stringify({ fill_color: fillUri, stroke_color: strokeUri }),
+  }] }, {
+    textureGradients: {
+      [fillUri]: { angle: 0, stops: [
+        { position: 0, color: '#FFFFFF' },
+        { position: 1, color: '#FFFFFF' },
+      ] },
+      [strokeUri]: { angle: 0, stops: [
+        { position: 0, color: '#F2509E' },
+        { position: 0.5, color: '#8671B9' },
+        { position: 1, color: '#308BCD' },
+      ] },
+    },
+  });
+  const effects = response.comments[0].danmux.effects;
+  assert.deepEqual(effects.map((effect) => [effect.target, effect.origin, effect.source.type]), [
+    ['fill', 'native', 'linear'],
+    ['stroke', 'native', 'linear'],
+  ]);
+  assert.equal(effects[1].source.stops[1].color, '#8671B9');
+});
+
+test('unconfigured native textures remain available to texture-capable players', () => {
+  const response = convertCommentsToDanmux({ comments: [{
+    p: '2,1,16777215,[bilibili]',
+    m: 'native texture',
+    color_v2: JSON.stringify({ stroke_color: 'https://cdn.example.test/stroke.png' }),
+  }] });
+  const effect = response.comments[0].danmux.effects[0];
+  assert.equal(effect.origin, 'native');
+  assert.equal(effect.source.type, 'texture');
+});

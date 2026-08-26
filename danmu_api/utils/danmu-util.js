@@ -3,7 +3,7 @@ import { log } from './log-util.js'
 import { binResponse, jsonResponse, xmlResponse } from "./http-util.js";
 import { simplized, traditionalized } from './zh-util.js';
 import { convertDanAny } from './dan-any.js';
-import { convertCommentsToDanmux, parseDanmuxGradientStops } from './danmux-adapter.js';
+import { convertCommentsToDanmux, parseDanmuxGradientStops, parseDanmuxTextureGradients } from './danmux-adapter.js';
 
 // =====================
 // danmu处理相关函数
@@ -702,10 +702,12 @@ export function formatDanmuResponse(danmuData, queryFormat) {
   if (format === 'danmux') {
     try {
       const gradientStops = parseDanmuxGradientStops(globals.danmuxGradientStops);
+      const textureGradients = parseDanmuxTextureGradients(globals.danmuxTextureGradients);
       return jsonResponse(convertCommentsToDanmux(danmuData, {
         sourceLabel: 'danmu_api',
         gradientStops,
         gradientAngle: globals.danmuxGradientAngle,
+        textureGradients,
       }));
     } catch (error) {
       log("error", `[system] [danmu] Failed to convert to DanmuX: ${error.message}`);

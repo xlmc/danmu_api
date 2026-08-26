@@ -814,6 +814,7 @@ export class Envs {
       gradientColors: this.get('GRADIENT_COLORS', '16478873,3389695', 'string'), // 旧颜色转换链路使用的渐变色带
       danmuxGradientStops: this.get('DANMUX_GRADIENT_STOPS', '', 'string'), // DanmuX v1 显式 stops JSON；为空时只透传原生效果
       danmuxGradientAngle: this.get('DANMUX_GRADIENT_ANGLE', 0, 'number'), // DanmuX v1 linear angle
+      danmuxTextureGradients: this.get('DANMUX_TEXTURE_GRADIENTS', '', 'string'), // DanmuX v1 原生纹理到标准渐变映射；为空时保留 texture
       danmuOutputFormat: this.get('DANMU_OUTPUT_FORMAT', 'json', 'string'), // 弹幕输出格式配置（默认 json，可选值：json, xml, ...danAnyFormats）
       strictTitleMatch: this.get('STRICT_TITLE_MATCH', false, 'boolean'), // 严格标题匹配模式配置（默认 false，宽松模糊匹配）
       titleToChinese: this.get('TITLE_TO_CHINESE', false, 'boolean'), // 外语标题转换中文开关
