@@ -35,14 +35,20 @@ async function fetchComments() {
   try {
     const response = await fetch(apiUrl.value.trim());
     const payload = await response.json();
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const noCommentsResponse = response.status === 404 && Array.isArray(payload.comments) && payload.comments.length === 0;
+    if (!response.ok && !noCommentsResponse) throw new Error(`HTTP ${response.status}`);
     const items = Array.isArray(payload.comments) ? payload.comments.slice(0, 10) : [];
     const enhancedCount = items.filter((comment) => comment.danmux?.effects?.some((effect) => effect.type === 'gradient')).length;
     comments.innerHTML = items.length ? items.map(renderComment).join('') : '<p class="hint">没有返回弹幕</p>';
     rawOutput.textContent = JSON.stringify(payload, null, 2);
     summary.innerHTML = `<span>抓取：<strong>${items.length}</strong> 条</span><span>包含 DanmuX 渐变：<strong>${enhancedCount}</strong> 条</span><span>旧播放器可显示：<strong>${items.every((comment) => typeof comment.p === 'string' && typeof comment.m === 'string') ? '是' : '否'}</strong></span>`;
-    status.textContent = enhancedCount ? '抓取成功：增强播放器已识别渐变' : '抓取成功：当前数据没有 DanmuX 渐变，请检查 format=danmux 和 stops 配置';
-    if (!enhancedCount) status.className = 'status error';
+    if (noCommentsResponse) {
+      status.textContent = '接口已连接，但这个 commentId 没有弹幕，请换一个真实的 commentId';
+      status.className = 'status error';
+    } else {
+      status.textContent = enhancedCount ? '抓取成功：增强播放器已识别渐变' : '抓取成功：当前数据没有 DanmuX 渐变，请检查 format=danmux 和 stops 配置';
+      if (!enhancedCount) status.className = 'status error';
+    }
   } catch (error) {
     status.className = 'status error';
     status.textContent = `抓取失败：${error.message}。请确认 danmu_api 已启动且允许跨域访问。`;
