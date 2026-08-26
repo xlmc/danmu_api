@@ -627,7 +627,7 @@ function checkAdminToken() {
     }
 
     const ordinaryToken = String(originalToken || currentToken || '').trim();
-    if (!ordinaryToken || /^\*+$/.test(ordinaryToken)) return false;
+    if (!ordinaryToken || /^\\*+$/.test(ordinaryToken)) return false;
     return urlToken === ordinaryToken || (ordinaryToken === '87654321' && !urlToken);
 }
 
@@ -2400,7 +2400,7 @@ function renderRemoteMappingRefreshItem(kind = 'title') {
     return '<div class="env-item">' +
         '<div class="env-info"><strong>' + (isAutoMatch ? '季集映射缓存' : '标题映射缓存') + '</strong>' +
         '<div class="text-gray font-size-12 margin-top-3">手动下载并立即应用远程' + (isAutoMatch ? '季集' : '剧名') + '映射表；失败时保留旧缓存。</div></div>' +
-        '<div class="env-actions remote-refresh-actions"><button class="btn btn-secondary" onclick="refreshRemoteMapping(this, \'' + kind + '\')">立即更新</button>' +
+        '<div class="env-actions remote-refresh-actions"><button class="btn btn-secondary" onclick="refreshRemoteMapping(this, \\'' + kind + '\\')">立即更新</button>' +
         '<span class="remote-refresh-status text-gray font-size-12" style="display:block;margin-top:4px;" aria-live="polite"></span></div></div>';
 }
 
