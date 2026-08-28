@@ -12,7 +12,9 @@ import { handleClearCache } from './apis/system-api.js';
 import { getRedisCaches, getRedisKey, pingRedis, setRedisKey, setRedisKeyWithExpiry, updateRedisCaches } from "./utils/redis-util.js";
 import { getLocalRedisKey, setLocalRedisKey, setLocalRedisKeyWithExpiry } from "./utils/local-redis-util.js";
 import { getImdbepisodes } from "./utils/imdb-util.js";
-import { getTMDBChineseTitle, getTmdbJpDetail, searchTmdbTitles } from "./utils/tmdb-util.js";
+import { extractTmdbChineseCastNames, getTMDBChineseTitle, getTmdbJpDetail, isDomesticTmdbProduction, searchTmdbTitles, selectTmdbActorCandidate } from "./utils/tmdb-util.js";
+import { DOMESTIC_POPULAR_ACTOR_NAMES } from './data/domestic-celebrities.generated.js';
+import { DOMESTIC_REGION_NAMES, DOMESTIC_BUILTIN_BLOCKED_NAMES } from './data/domestic-regions.js';
 import { getDoubanDetail, getDoubanInfoByImdbId, searchDoubanTitles } from "./utils/douban-util.js";
 import AIClient from './utils/ai-util.js';
 import RenrenSource from "./sources/renren.js";
@@ -48,7 +50,7 @@ import { apitestJsContent } from './ui/js/apitest.js';
 import { systemSettingsJsContent } from './ui/js/systemsettings.js';
 import { previewJsContent } from './ui/js/preview.js';
 import { convertToAsciiSum } from "./utils/codec-util.js";
-import { convertToDanmakuJson, handleDanmusLike, splitBlockedWords, parseBlockedWord } from "./utils/danmu-util.js";
+import { buildBlockedNameMatchers, buildBlockedSurnameMatchers, convertToDanmakuJson, filterDanmusByBlockedNames, handleDanmusLike, splitBlockedWords, parseBlockedWord } from "./utils/danmu-util.js";
 import { Segment, SegmentListResponse } from "./models/dandan-model.js"
 import { initBangumiData, searchBangumiData, clearBangumiDataCache, dedupeBangumiSearchResults } from "./utils/bangumi-data-util.js";
 import { generateNipaplaySignature, parseNipaplayRelatedLinks, resolveNipaplayLink, applyShiftToDanmu } from "./utils/nipaplay-util.js";
@@ -671,6 +673,60 @@ test('worker.js API endpoints', async (t) => {
     assert.ok(regexes.every(r => r instanceof RegExp), '所有词条均应解析为正则');
 
     resetSearchState();
+  });
+
+  await t.test('当前作品演员/角色名和明确姓氏指代过滤', () => {
+    const blockedNames = ['赵丽颖', '张·三', '盛明兰', 'Tom Hanks', '王'];
+    const matchers = buildBlockedNameMatchers(blockedNames);
+    assert.deepEqual(matchers.map(item => item.label), ['赵丽颖', '张·三', '盛明兰']);
+
+    const result = filterDanmusByBlockedNames([
+      { m: '赵丽颖演得很好' },
+      { m: '张 三今天状态不错' },
+      { m: '这个角色叫林黛玉' },
+      { m: '盛明兰终于出场了' },
+    ], blockedNames);
+    assert.equal(result.removedCount, 3);
+    assert.deepEqual(result.danmus.map(item => item.m), ['这个角色叫林黛玉']);
+
+    const surnameMatchers = buildBlockedSurnameMatchers(['王一博', '欧阳娜娜']);
+    assert.deepEqual(surnameMatchers.map(item => item.label), ['姓氏:王', '姓氏:欧阳']);
+    const surnameResult = filterDanmusByBlockedNames([
+      { m: '王老师这场演得好' },
+      { m: '欧阳导演太会拍了' },
+      { m: '王者荣耀也太燃了' },
+    ], [], { surnameNames: ['王一博', '欧阳娜娜'] });
+    assert.equal(surnameResult.removedCount, 2);
+    assert.deepEqual(surnameResult.danmus.map(item => item.m), ['王者荣耀也太燃了']);
+
+    Globals.init({ BLOCK_DOMESTIC_CELEBRITIES: 'true' });
+    assert.equal(Globals.envs.blockDomesticCelebrities, true);
+    assert.equal(DOMESTIC_POPULAR_ACTOR_NAMES.length, 200);
+    assert.ok(DOMESTIC_REGION_NAMES.length > 300);
+    assert.ok(DOMESTIC_BUILTIN_BLOCKED_NAMES.includes('北京'));
+    assert.ok(DOMESTIC_BUILTIN_BLOCKED_NAMES.includes('深圳'));
+    resetSearchState();
+  });
+
+  await t.test('TMDB 演员元数据只接受可靠的华语作品和中文演员名', () => {
+    const results = [
+      { id: 1, media_type: 'tv', name: '同名剧场版', original_language: 'ja', origin_country: ['JP'] },
+      { id: 2, media_type: 'tv', name: '同名剧', original_language: 'zh', origin_country: ['CN'] },
+    ];
+    const selected = selectTmdbActorCandidate(results, '同名剧');
+    assert.equal(selected.id, 2);
+    assert.equal(isDomesticTmdbProduction(selected), true);
+    assert.equal(isDomesticTmdbProduction(results[0]), false);
+
+    const castNames = extractTmdbChineseCastNames({
+      cast: [
+        { name: '赵丽颖', original_name: '赵丽颖', character: '盛明兰' },
+        { name: '张·三', original_name: 'Zhang San', character: '顾廷烨（少年） / 顾二叔' },
+        { name: 'Tom Hanks', original_name: 'Tom Hanks', character: '角色名' },
+      ]
+    });
+    assert.deepEqual(castNames.actorNames, ['赵丽颖', '张·三']);
+    assert.deepEqual(castNames.characterNames, ['盛明兰', '顾廷烨(少年)', '顾廷烨', '顾二叔', '角色名']);
   });
 
   await t.test('Upstash Redis persists favorites without storing search or comment caches', async () => {

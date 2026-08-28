@@ -341,6 +341,76 @@ function gradientStopsForDanmux(rawStops) {
   }));
 }
 
+/** 将已确认的中文演员/角色名整理为匹配项。 */
+export function buildBlockedNameMatchers(names) {
+  if (!Array.isArray(names)) return [];
+  const seen = new Set();
+  const matchers = [];
+  for (const rawName of names) {
+    const label = String(rawName || '').normalize('NFKC').trim();
+    const compact = label.replace(/[\s·・•‧·･]+/g, '');
+    if (!/\p{Script=Han}/u.test(compact) || Array.from(compact).length < 2) continue;
+    const key = compact.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    matchers.push({ label, needle: key });
+  }
+  return matchers;
+}
+
+const COMMON_COMPOUND_SURNAMES = new Set([
+  '欧阳', '司马', '上官', '诸葛', '东方', '独孤', '南宫', '慕容', '尉迟', '皇甫',
+  '令狐', '长孙', '宇文', '闻人', '夏侯', '公孙', '轩辕', '百里', '钟离', '澹台'
+]);
+const SURNAME_REFERENCE_SUFFIX = /(?:老师|导演|主演|演员|饰演|扮演|出演|姐姐|哥哥|妹妹|弟弟|大哥|二哥|三哥|大姐|二姐|叔叔|阿姨|公子|姑娘|小姐|先生|娘娘|皇后|皇帝|王爷|殿下|公主|太子|少爷|夫人|老婆|老公|宝宝|本人|同学|好美|好帅|家族|一哥|一姐)/u;
+
+/** 从当前作品元数据中提取带明确称谓/身份上下文的姓氏匹配项。 */
+export function buildBlockedSurnameMatchers(names) {
+  if (!Array.isArray(names)) return [];
+  const seen = new Set();
+  const matchers = [];
+  for (const rawName of names) {
+    const compact = String(rawName || '').normalize('NFKC').replace(/[\s·・•‧·･]+/g, '');
+    if (!/\p{Script=Han}/u.test(compact) || Array.from(compact).length < 2) continue;
+    const chars = Array.from(compact);
+    const surname = COMMON_COMPOUND_SURNAMES.has(compact.slice(0, 2)) ? compact.slice(0, 2) : chars[0];
+    if (seen.has(surname)) continue;
+    seen.add(surname);
+    const escaped = escapeRegExp(surname);
+    const regex = new RegExp(
+      `(?:[@＃#]|^|[^\\p{Script=Han}])${escaped}(?=[^\\p{Script=Han}]|$|${SURNAME_REFERENCE_SUFFIX.source})|${escaped}${SURNAME_REFERENCE_SUFFIX.source}`,
+      'u'
+    );
+    matchers.push({ label: `姓氏:${surname}`, surname, regex });
+  }
+  return matchers;
+}
+
+export function filterDanmusByBlockedNames(danmus, names, options = {}) {
+  if (!Array.isArray(danmus) || danmus.length === 0) {
+    return { danmus: Array.isArray(danmus) ? danmus : [], removedCount: 0, hits: [] };
+  }
+  const matchers = buildBlockedNameMatchers(names);
+  const surnameMatchers = buildBlockedSurnameMatchers(options.surnameNames);
+  if (matchers.length === 0 && surnameMatchers.length === 0) return { danmus, removedCount: 0, hits: [] };
+
+  const hitCounts = new Map();
+  const filtered = danmus.filter(item => {
+    const text = String(item?.m || '').normalize('NFKC').replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
+    const matcher = matchers.find(candidate => text.includes(candidate.needle));
+    const surnameMatcher = matcher ? null : surnameMatchers.find(candidate => candidate.regex.test(text));
+    const hit = matcher || surnameMatcher;
+    if (!hit) return true;
+    hitCounts.set(hit.label, (hitCounts.get(hit.label) || 0) + 1);
+    return false;
+  });
+  return {
+    danmus: filtered,
+    removedCount: danmus.length - filtered.length,
+    hits: [...hitCounts.entries()].map(([name, count]) => ({ name, count }))
+  };
+}
+
 export function convertToDanmakuJson(contents, platform) {
   let danmus = [];
   let cidCounter = 1;

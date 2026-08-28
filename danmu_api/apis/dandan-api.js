@@ -10,7 +10,7 @@ import {
     updateLocalCaches, setLastSearch, getLastSearch, findAnimeTitleById, findIndexById, hasSeasonSpecificPreference
 } from "../utils/cache-util.js";
 import { resolveFavoriteForSearchKeyword } from "../utils/favorite-util.js";
-import { formatDanmuResponse, convertToDanmakuJson } from "../utils/danmu-util.js";
+import { formatDanmuResponse, convertToDanmakuJson, filterDanmusByBlockedNames } from "../utils/danmu-util.js";
 import { resolveOffset, resolveOffsetRule, applyOffset, stripLinkOffset } from "../utils/offset-util.js";
 import { applySearchKeywordMapping, ensureRemoteTitleMapping, ensureCachedRemoteTitleMapping, resolveLocalTitleMapping, resolveCachedRemoteTitleMapping } from "../utils/title-mapping-url-util.js";
 import { filterMappingQualifierCandidates, filterMappingTargetCandidates, resolveAutoMatchMapping } from "../utils/auto-match-mapping-util.js";
@@ -19,7 +19,9 @@ import {
   extractEpisodeTitle, convertChineseNumber, parseFileName, createDynamicPlatformOrder, normalizeSpaces, 
   extractYear, titleMatches, extractAnimeInfo, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle
 } from "../utils/common-util.js";
-import { getTMDBChineseTitle, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
+import { getTMDBChineseTitle, getTmdbDomesticCastNamesForTitle, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
+import { DOMESTIC_POPULAR_ACTOR_NAMES } from "../data/domestic-celebrities.generated.js";
+import { DOMESTIC_REGION_NAMES, DOMESTIC_BUILTIN_BLOCKED_NAMES } from "../data/domestic-regions.js";
 import { applyMergeLogic, mergeDanmakuList, MERGE_DELIMITER, alignSourceTimelines, sanitizeUrl } from "../utils/merge-util.js";
 import { getHanjutvSourceLabel } from "../utils/hanjutv-util.js";
 import AIClient from '../utils/ai-util.js';
@@ -73,6 +75,26 @@ const aiyifanSource = new AiyifanSource();
 const hongguoSource = new HongguoSource();
 const animekoSource = new AnimekoSource();
 const otherSource = new OtherSource();
+
+async function applyDomesticCelebrityFilter(danmus, animeTitle) {
+  if (!globals.blockDomesticCelebrities || !Array.isArray(danmus) || danmus.length === 0) return danmus;
+  let titleCastNames = [];
+  if (animeTitle) {
+    titleCastNames = await getTmdbDomesticCastNamesForTitle(animeTitle);
+  }
+
+  const popularNames = DOMESTIC_POPULAR_ACTOR_NAMES;
+  const blockedNames = [...new Set([...DOMESTIC_BUILTIN_BLOCKED_NAMES, ...titleCastNames])];
+  const result = filterDanmusByBlockedNames(danmus, blockedNames, {
+    surnameNames: titleCastNames
+  });
+  if (result.removedCount > 0) {
+    log('info', `[system] [danmu] [domestic-celebrities] 已按内置演员/地区库${animeTitle ? ' + 当前作品演员/角色表' : ''}拦截 ${result.removedCount}/${danmus.length} 条弹幕，命中 ${result.hits.length} 个屏蔽名`);
+  } else if (blockedNames.length > 0) {
+    log('info', `[system] [danmu] [domestic-celebrities] 已加载 ${blockedNames.length} 个屏蔽名（内置演员库 ${popularNames.length} + 地区 ${DOMESTIC_REGION_NAMES.length} + 当前作品演员/角色 ${titleCastNames.length}），本集无命中`);
+  }
+  return result.danmus;
+}
 const doubanSource = new DoubanSource(tencentSource, iqiyiSource, youkuSource, bilibiliSource, miguSource);
 const tmdbSource = new TmdbSource(doubanSource);
 
@@ -2002,13 +2024,16 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
   const candidatePasses = [];
   if (mapping?.targetYear || mapping?.targetType || mapping?.targetTmdbId) {
     const qualified = filterMappingQualifierCandidates(targetCandidates, mapping);
-    if (qualified.length === 0) return { resAnime: null, resEpisode: null, spilloverMatched: false, title, season, episode };
-    candidatePasses.push({ searchData: { ...searchData, animes: qualified }, year: mapping.targetYear || null, label: 'qualified' });
-  } else {
-    candidatePasses.push({ searchData: targetSearchData, year: mapping ? null : year, label: 'default' });
+    if (qualified.length > 0) {
+      candidatePasses.push({ searchData: { ...searchData, animes: qualified }, year: mapping.targetYear || null, label: 'qualified' });
+    }
   }
+  candidatePasses.push({ searchData: targetSearchData, year: mapping ? null : year, label: mapping ? 'fallback' : 'default' });
 
   for (const pass of candidatePasses) {
+    if (mapping && pass.label === 'fallback' && (mapping.targetYear || mapping.targetType || mapping.targetTmdbId)) {
+      log('info', `[system] [auto-match-mapping] Relaxing target qualifiers for "${mapping.targetDisplayTitle}" while keeping the target title`);
+    }
     const selected = await selectAnimeMatch({
       season,
       episode,
@@ -2761,8 +2786,9 @@ export async function getComment(path, queryFormat, segmentFlag, clientIp, inclu
   const cacheKey = resolveCommentCacheKey(url);
   const cachedComments = getCommentCache(cacheKey);
   if (cachedComments !== null) {
+    const filteredCachedComments = await applyDomesticCelebrityFilter(cachedComments, animeTitle);
     const responseData = buildDanmuResponse(
-      { count: cachedComments.length, comments: cachedComments },
+      { count: filteredCachedComments.length, comments: filteredCachedComments },
       shouldAttachDuration ? await resolveMergedDuration(url) : null
     );
     return formatDanmuResponse(responseData, queryFormat);
@@ -2952,6 +2978,8 @@ export async function getComment(path, queryFormat, segmentFlag, clientIp, inclu
     if (danmus.length > 0) {
         setCommentCache(cacheKey, danmus);
     }
+    // 缓存原始结果，确保关闭演员屏蔽开关后不会继续返回已过滤的旧缓存。
+    danmus = await applyDomesticCelebrityFilter(danmus, animeTitle);
   }
 
   const responseData = buildDanmuResponse(
@@ -2992,12 +3020,13 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
     const cacheKey = resolveCommentCacheKey(url);
     const cachedComments = getCommentCache(cacheKey);
     if (cachedComments !== null) {
+      const filteredCachedComments = await applyDomesticCelebrityFilter(cachedComments, '');
       const responseData = buildDanmuResponse({
         errorCode: 0,
         success: true,
         errorMessage: "",
-        count: cachedComments.length,
-        comments: cachedComments
+        count: filteredCachedComments.length,
+        comments: filteredCachedComments
       }, shouldAttachDuration ? await resolveMergedDuration(url) : null);
       return formatDanmuResponse(responseData, queryFormat);
     }
@@ -3071,6 +3100,7 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
     if (danmus.length > 0) {
       setCommentCache(cacheKey, danmus);
     }
+    danmus = await applyDomesticCelebrityFilter(danmus, '');
 
     const responseData = buildDanmuResponse({
       errorCode: 0,
@@ -3113,12 +3143,13 @@ export async function getSegmentComment(segment, queryFormat) {
     const cacheKey = resolveCommentCacheKey(url);
     const cachedComments = getCommentCache(cacheKey);
     if (cachedComments !== null) {
+      const filteredCachedComments = await applyDomesticCelebrityFilter(cachedComments, '');
       const responseData = {
         errorCode: 0,
         success: true,
         errorMessage: "",
-        count: cachedComments.length,
-        comments: cachedComments
+        count: filteredCachedComments.length,
+        comments: filteredCachedComments
       };
       return formatDanmuResponse(responseData, queryFormat);
     }
@@ -3173,6 +3204,7 @@ export async function getSegmentComment(segment, queryFormat) {
     if (danmus.length > 0) {
       setCommentCache(cacheKey, danmus);
     }
+    danmus = await applyDomesticCelebrityFilter(danmus, '');
 
     const responseData = {
       errorCode: 0,
