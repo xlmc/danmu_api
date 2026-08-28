@@ -14,7 +14,7 @@ import { getLocalRedisKey, setLocalRedisKey, setLocalRedisKeyWithExpiry } from "
 import { getImdbepisodes } from "./utils/imdb-util.js";
 import { extractTmdbChineseCastNames, getTMDBChineseTitle, getTmdbJpDetail, isDomesticTmdbProduction, searchTmdbTitles, selectTmdbActorCandidate } from "./utils/tmdb-util.js";
 import { DOMESTIC_POPULAR_ACTOR_NAMES } from './data/domestic-celebrities.generated.js';
-import { DOMESTIC_REGION_NAMES, DOMESTIC_BUILTIN_BLOCKED_NAMES } from './data/domestic-regions.js';
+import { DOMESTIC_REGION_NAMES } from './data/domestic-regions.js';
 import { getDoubanDetail, getDoubanInfoByImdbId, searchDoubanTitles } from "./utils/douban-util.js";
 import AIClient from './utils/ai-util.js';
 import RenrenSource from "./sources/renren.js";
@@ -675,19 +675,30 @@ test('worker.js API endpoints', async (t) => {
     resetSearchState();
   });
 
-  await t.test('当前作品演员/角色名和明确姓氏指代过滤', () => {
-    const blockedNames = ['赵丽颖', '张·三', '盛明兰', 'Tom Hanks', '王'];
+  await t.test('演员/角色短名称只在人物语境中屏蔽', () => {
+    const blockedNames = ['赵丽颖', '张·三', '盛明兰', '白鹿', 'Tom Hanks', '王'];
     const matchers = buildBlockedNameMatchers(blockedNames);
-    assert.deepEqual(matchers.map(item => item.label), ['赵丽颖', '张·三', '盛明兰']);
+    assert.deepEqual(matchers.map(item => item.label), ['赵丽颖', '张·三', '盛明兰', '白鹿']);
 
     const result = filterDanmusByBlockedNames([
       { m: '赵丽颖演得很好' },
-      { m: '张 三今天状态不错' },
+      { m: '张 三演员今天状态不错' },
+      { m: '白鹿老师演得很好' },
+      { m: '@白鹿' },
+      { m: '喜欢白鹿' },
+      { m: '白鹿原很好看' },
+      { m: '喜欢白鹿原' },
+      { m: '张三丰终于出场了' },
       { m: '这个角色叫林黛玉' },
       { m: '盛明兰终于出场了' },
     ], blockedNames);
-    assert.equal(result.removedCount, 3);
-    assert.deepEqual(result.danmus.map(item => item.m), ['这个角色叫林黛玉']);
+    assert.equal(result.removedCount, 6);
+    assert.deepEqual(result.danmus.map(item => item.m), [
+      '白鹿原很好看',
+      '喜欢白鹿原',
+      '张三丰终于出场了',
+      '这个角色叫林黛玉'
+    ]);
 
     const surnameMatchers = buildBlockedSurnameMatchers(['王一博', '欧阳娜娜']);
     assert.deepEqual(surnameMatchers.map(item => item.label), ['姓氏:王', '姓氏:欧阳']);
@@ -699,12 +710,40 @@ test('worker.js API endpoints', async (t) => {
     assert.equal(surnameResult.removedCount, 2);
     assert.deepEqual(surnameResult.danmus.map(item => item.m), ['王者荣耀也太燃了']);
 
-    Globals.init({ BLOCK_DOMESTIC_CELEBRITIES: 'true' });
+    Globals.init({ BLOCK_DOMESTIC_CELEBRITIES: 'true', BLOCK_DOMESTIC_REGIONS: 'false' });
     assert.equal(Globals.envs.blockDomesticCelebrities, true);
+    assert.equal(Globals.envs.blockDomesticRegions, false);
     assert.equal(DOMESTIC_POPULAR_ACTOR_NAMES.length, 200);
     assert.ok(DOMESTIC_REGION_NAMES.length > 300);
-    assert.ok(DOMESTIC_BUILTIN_BLOCKED_NAMES.includes('北京'));
-    assert.ok(DOMESTIC_BUILTIN_BLOCKED_NAMES.includes('深圳'));
+    resetSearchState();
+  });
+
+  await t.test('地区过滤默认关闭且只匹配明确地区语境', () => {
+    Globals.init({});
+    assert.equal(Globals.envs.blockDomesticRegions, false);
+    Globals.init({ BLOCK_DOMESTIC_REGIONS: 'true' });
+    assert.equal(Globals.envs.blockDomesticRegions, true);
+
+    const result = filterDanmusByBlockedNames([
+      { m: '来自海南的朋友' },
+      { m: '海南网友来了' },
+      { m: '朝阳区天气不错' },
+      { m: '安康市欢迎你' },
+      { m: '海南鸡饭真好吃' },
+      { m: '来自海南鸡饭的厨师' },
+      { m: '朝阳升起来了' },
+      { m: '祝大家身体安康' },
+      { m: '白鹿原很好看' },
+    ], [], { regionNames: DOMESTIC_REGION_NAMES });
+
+    assert.equal(result.removedCount, 4);
+    assert.deepEqual(result.danmus.map(item => item.m), [
+      '海南鸡饭真好吃',
+      '来自海南鸡饭的厨师',
+      '朝阳升起来了',
+      '祝大家身体安康',
+      '白鹿原很好看'
+    ]);
     resetSearchState();
   });
 

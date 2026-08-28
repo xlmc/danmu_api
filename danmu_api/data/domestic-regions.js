@@ -1,7 +1,5 @@
 // 中国大陆省级行政区、地级市及常用地区名内置名单。
 // 仅供后端弹幕过滤使用，不会展示在设置页或 API 响应中。
-import { DOMESTIC_POPULAR_ACTOR_NAMES } from './domestic-celebrities.generated.js';
-
 const DOMESTIC_REGION_NAME_LIST = [
   // 省级行政区（不含港澳台）
   '北京', '天津', '河北', '山西', '内蒙古', '辽宁', '吉林', '黑龙江',
@@ -68,7 +66,3 @@ const DOMESTIC_REGION_NAME_LIST = [
 ];
 
 export const DOMESTIC_REGION_NAMES = Object.freeze([...new Set(DOMESTIC_REGION_NAME_LIST)]);
-
-export const DOMESTIC_BUILTIN_BLOCKED_NAMES = Object.freeze([
-  ...new Set([...DOMESTIC_POPULAR_ACTOR_NAMES, ...DOMESTIC_REGION_NAMES])
-]);
