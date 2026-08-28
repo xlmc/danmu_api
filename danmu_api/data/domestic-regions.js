@@ -2,7 +2,7 @@
 // 仅供后端弹幕过滤使用，不会展示在设置页或 API 响应中。
 import { DOMESTIC_POPULAR_ACTOR_NAMES } from './domestic-celebrities.generated.js';
 
-export const DOMESTIC_REGION_NAMES = Object.freeze([
+const DOMESTIC_REGION_NAME_LIST = [
   // 省级行政区（不含港澳台）
   '北京', '天津', '河北', '山西', '内蒙古', '辽宁', '吉林', '黑龙江',
   '上海', '江苏', '浙江', '安徽', '福建', '江西', '山东', '河南',
@@ -65,7 +65,9 @@ export const DOMESTIC_REGION_NAMES = Object.freeze([
   '乌鲁木齐', '克拉玛依', '吐鲁番', '哈密', '昌吉', '博尔塔拉', '巴音郭楞', '阿克苏', '克孜勒苏', '喀什', '和田', '伊犁', '塔城', '阿勒泰',
   // 直辖市及常用地区补充
   '新疆生产建设兵团'
-]);
+];
+
+export const DOMESTIC_REGION_NAMES = Object.freeze([...new Set(DOMESTIC_REGION_NAME_LIST)]);
 
 export const DOMESTIC_BUILTIN_BLOCKED_NAMES = Object.freeze([
   ...new Set([...DOMESTIC_POPULAR_ACTOR_NAMES, ...DOMESTIC_REGION_NAMES])
