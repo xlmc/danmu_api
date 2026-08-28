@@ -20,6 +20,7 @@ import {
 } from "../utils/common-util.js";
 import { getTMDBChineseTitle, getTmdbDomesticCastNamesForTitle, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
 import { DOMESTIC_POPULAR_ACTOR_NAMES } from "../data/domestic-celebrities.generated.js";
+import { DOMESTIC_REGION_NAMES, DOMESTIC_BUILTIN_BLOCKED_NAMES } from "../data/domestic-regions.js";
 import { applyMergeLogic, mergeDanmakuList, MERGE_DELIMITER, alignSourceTimelines } from "../utils/merge-util.js";
 import { getHanjutvSourceLabel } from "../utils/hanjutv-util.js";
 import AIClient from '../utils/ai-util.js';
@@ -82,14 +83,14 @@ async function applyDomesticCelebrityFilter(danmus, animeTitle) {
   }
 
   const popularNames = DOMESTIC_POPULAR_ACTOR_NAMES;
-  const celebrityNames = [...new Set([...popularNames, ...titleCastNames])];
+  const celebrityNames = [...new Set([...DOMESTIC_BUILTIN_BLOCKED_NAMES, ...titleCastNames])];
   const result = filterDanmusByBlockedNames(danmus, celebrityNames, {
     surnameNames: titleCastNames
   });
   if (result.removedCount > 0) {
-    log('info', `[system] [danmu] [domestic-celebrities] 已按内置演员库${animeTitle ? ` + 当前作品演员/角色表` : ''}拦截 ${result.removedCount}/${danmus.length} 条弹幕，命中 ${result.hits.length} 个屏蔽名`);
+    log('info', `[system] [danmu] [domestic-celebrities] 已按内置演员/地区库${animeTitle ? ` + 当前作品演员/角色表` : ''}拦截 ${result.removedCount}/${danmus.length} 条弹幕，命中 ${result.hits.length} 个屏蔽名`);
   } else if (celebrityNames.length > 0) {
-    log('info', `[system] [danmu] [domestic-celebrities] 已加载 ${celebrityNames.length} 个屏蔽名（内置演员库 ${popularNames.length} + 当前作品演员/角色 ${titleCastNames.length}），本集无命中`);
+    log('info', `[system] [danmu] [domestic-celebrities] 已加载 ${celebrityNames.length} 个屏蔽名（内置演员库 ${popularNames.length} + 地区 ${DOMESTIC_REGION_NAMES.length} + 当前作品演员/角色 ${titleCastNames.length}），本集无命中`);
   }
   return result.danmus;
 }
