@@ -372,6 +372,32 @@ export function buildBlockedNameMatchers(names) {
   return matchers;
 }
 
+const REGION_CONTEXT_PREFIX = /(?:来自|人在|身在|坐标|定位|住在|回到|去过|前往|老家(?:在|是)?|IP(?:在|属地)?)/u;
+const REGION_CONTEXT_SUFFIX = /(?:省|市|区|县|州|盟|旗|人|网友|观众|口音|方言|地区|本地|那边|这边|的朋友)/u;
+const REGION_CONTEXT_TAIL = /(?:$|[^\p{Script=Han}]|的|这边|那边|工作|生活|上学|旅游|出差)/u;
+const REGION_MATCHER_CACHE = new WeakMap();
+
+/** 地区名称仅在明确地区语境中匹配，避免“安康”“朝阳”等普通词误伤。 */
+export function buildBlockedRegionMatchers(names) {
+  if (!Array.isArray(names)) return [];
+  if (Object.isFrozen(names) && REGION_MATCHER_CACHE.has(names)) return REGION_MATCHER_CACHE.get(names);
+  const seen = new Set();
+  const matchers = [];
+  for (const rawName of names) {
+    const label = String(rawName || '').normalize('NFKC').trim();
+    const compact = label.replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
+    if (!/\p{Script=Han}/u.test(compact) || Array.from(compact).length < 2 || seen.has(compact)) continue;
+    seen.add(compact);
+    const escaped = escapeRegExp(compact);
+    matchers.push({
+      label: `地区:${label}`,
+      regex: new RegExp(`(?:${REGION_CONTEXT_PREFIX.source}${escaped}(?=${REGION_CONTEXT_TAIL.source})|${escaped}${REGION_CONTEXT_SUFFIX.source})`, 'u')
+    });
+  }
+  if (Object.isFrozen(names)) REGION_MATCHER_CACHE.set(names, matchers);
+  return matchers;
+}
+
 const COMMON_COMPOUND_SURNAMES = new Set([
   '欧阳', '司马', '上官', '诸葛', '东方', '独孤', '南宫', '慕容', '尉迟', '皇甫',
   '令狐', '长孙', '宇文', '闻人', '夏侯', '公孙', '轩辕', '百里', '钟离', '澹台'
@@ -406,14 +432,18 @@ export function filterDanmusByBlockedNames(danmus, names, options = {}) {
   }
   const matchers = buildBlockedNameMatchers(names);
   const surnameMatchers = buildBlockedSurnameMatchers(options.surnameNames);
-  if (matchers.length === 0 && surnameMatchers.length === 0) return { danmus, removedCount: 0, hits: [] };
+  const regionMatchers = buildBlockedRegionMatchers(options.regionNames);
+  if (matchers.length === 0 && surnameMatchers.length === 0 && regionMatchers.length === 0) {
+    return { danmus, removedCount: 0, hits: [] };
+  }
 
   const hitCounts = new Map();
   const filtered = danmus.filter(item => {
     const text = String(item?.m || '').normalize('NFKC').replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
     const matcher = matchers.find(candidate => candidate.regex ? candidate.regex.test(text) : text.includes(candidate.needle));
     const surnameMatcher = matcher ? null : surnameMatchers.find(candidate => candidate.regex.test(text));
-    const hit = matcher || surnameMatcher;
+    const regionMatcher = matcher || surnameMatcher ? null : regionMatchers.find(candidate => candidate.regex.test(text));
+    const hit = matcher || surnameMatcher || regionMatcher;
     if (!hit) return true;
     hitCounts.set(hit.label, (hitCounts.get(hit.label) || 0) + 1);
     return false;

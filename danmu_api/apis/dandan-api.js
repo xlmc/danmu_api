@@ -21,7 +21,7 @@ import {
 } from "../utils/common-util.js";
 import { getTMDBChineseTitle, getTmdbDomesticCastNamesForTitle, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
 import { DOMESTIC_POPULAR_ACTOR_NAMES } from "../data/domestic-celebrities.generated.js";
-import { DOMESTIC_REGION_NAMES, DOMESTIC_BUILTIN_BLOCKED_NAMES } from "../data/domestic-regions.js";
+import { DOMESTIC_REGION_NAMES } from "../data/domestic-regions.js";
 import { applyMergeLogic, mergeDanmakuList, MERGE_DELIMITER, alignSourceTimelines, sanitizeUrl } from "../utils/merge-util.js";
 import { getHanjutvSourceLabel } from "../utils/hanjutv-util.js";
 import AIClient from '../utils/ai-util.js';
@@ -77,21 +77,24 @@ const animekoSource = new AnimekoSource();
 const otherSource = new OtherSource();
 
 async function applyDomesticCelebrityFilter(danmus, animeTitle) {
-  if (!globals.blockDomesticCelebrities || !Array.isArray(danmus) || danmus.length === 0) return danmus;
+  const blockCelebrities = globals.blockDomesticCelebrities;
+  const blockRegions = globals.blockDomesticRegions;
+  if ((!blockCelebrities && !blockRegions) || !Array.isArray(danmus) || danmus.length === 0) return danmus;
   let titleCastNames = [];
-  if (animeTitle) {
+  if (blockCelebrities && animeTitle) {
     titleCastNames = await getTmdbDomesticCastNamesForTitle(animeTitle);
   }
 
   const popularNames = DOMESTIC_POPULAR_ACTOR_NAMES;
-  const blockedNames = [...new Set([...DOMESTIC_BUILTIN_BLOCKED_NAMES, ...titleCastNames])];
+  const blockedNames = blockCelebrities ? [...new Set([...popularNames, ...titleCastNames])] : [];
   const result = filterDanmusByBlockedNames(danmus, blockedNames, {
-    surnameNames: titleCastNames
+    surnameNames: blockCelebrities ? titleCastNames : [],
+    regionNames: blockRegions ? DOMESTIC_REGION_NAMES : []
   });
   if (result.removedCount > 0) {
-    log('info', `[system] [danmu] [domestic-celebrities] 已按内置演员/地区库${animeTitle ? ' + 当前作品演员/角色表' : ''}拦截 ${result.removedCount}/${danmus.length} 条弹幕，命中 ${result.hits.length} 个屏蔽名`);
-  } else if (blockedNames.length > 0) {
-    log('info', `[system] [danmu] [domestic-celebrities] 已加载 ${blockedNames.length} 个屏蔽名（内置演员库 ${popularNames.length} + 地区 ${DOMESTIC_REGION_NAMES.length} + 当前作品演员/角色 ${titleCastNames.length}），本集无命中`);
+    log('info', `[system] [danmu] [domestic-filter] 已拦截 ${result.removedCount}/${danmus.length} 条弹幕，命中 ${result.hits.length} 条规则`);
+  } else {
+    log('info', `[system] [danmu] [domestic-filter] 已加载演员/角色 ${blockedNames.length} 个、地区 ${blockRegions ? DOMESTIC_REGION_NAMES.length : 0} 个，本集无命中`);
   }
   return result.danmus;
 }
