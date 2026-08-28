@@ -341,7 +341,13 @@ function gradientStopsForDanmux(rawStops) {
   }));
 }
 
-/** 将已确认的中文演员/角色名整理为匹配项。 */
+const SHORT_PERSON_CONTEXT_PREFIX = /(?:喜欢|讨厌|支持|心疼|粉上|夸夸|安利|看好|想看|期待|欢迎|呼叫)/u;
+const SHORT_PERSON_CONTEXT_SUFFIX = /(?:老师|演员|主演|导演|演技|出演|饰演|扮演|演得|演的|出场|登场|上线|下线|本人|粉丝|好美|好帅|老婆|老公|姐姐|哥哥|妹妹|弟弟)/u;
+
+/**
+ * 将已确认的中文演员/角色名整理为匹配项。
+ * 三字及以上名称按完整名称匹配；二字名称必须带明确人物语境，避免“白鹿”误伤“白鹿原”。
+ */
 export function buildBlockedNameMatchers(names) {
   if (!Array.isArray(names)) return [];
   const seen = new Set();
@@ -353,7 +359,15 @@ export function buildBlockedNameMatchers(names) {
     const key = compact.toLocaleLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    matchers.push({ label, needle: key });
+    const length = Array.from(compact).length;
+    const escaped = escapeRegExp(key);
+    const regex = length === 2
+      ? new RegExp(
+        `(?:[@＃#]${escaped}(?=$|[^\\p{Script=Han}])|${SHORT_PERSON_CONTEXT_PREFIX.source}${escaped}(?=$|[^\\p{Script=Han}])|${escaped}${SHORT_PERSON_CONTEXT_SUFFIX.source})`,
+        'u'
+      )
+      : null;
+    matchers.push({ label, needle: key, regex });
   }
   return matchers;
 }
@@ -397,7 +411,7 @@ export function filterDanmusByBlockedNames(danmus, names, options = {}) {
   const hitCounts = new Map();
   const filtered = danmus.filter(item => {
     const text = String(item?.m || '').normalize('NFKC').replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
-    const matcher = matchers.find(candidate => text.includes(candidate.needle));
+    const matcher = matchers.find(candidate => candidate.regex ? candidate.regex.test(text) : text.includes(candidate.needle));
     const surnameMatcher = matcher ? null : surnameMatchers.find(candidate => candidate.regex.test(text));
     const hit = matcher || surnameMatcher;
     if (!hit) return true;

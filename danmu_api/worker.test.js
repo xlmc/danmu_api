@@ -675,19 +675,30 @@ test('worker.js API endpoints', async (t) => {
     resetSearchState();
   });
 
-  await t.test('当前作品演员/角色名和明确姓氏指代过滤', () => {
-    const blockedNames = ['赵丽颖', '张·三', '盛明兰', 'Tom Hanks', '王'];
+  await t.test('演员/角色短名称只在人物语境中屏蔽', () => {
+    const blockedNames = ['赵丽颖', '张·三', '盛明兰', '白鹿', 'Tom Hanks', '王'];
     const matchers = buildBlockedNameMatchers(blockedNames);
-    assert.deepEqual(matchers.map(item => item.label), ['赵丽颖', '张·三', '盛明兰']);
+    assert.deepEqual(matchers.map(item => item.label), ['赵丽颖', '张·三', '盛明兰', '白鹿']);
 
     const result = filterDanmusByBlockedNames([
       { m: '赵丽颖演得很好' },
-      { m: '张 三今天状态不错' },
+      { m: '张 三演员今天状态不错' },
+      { m: '白鹿老师演得很好' },
+      { m: '@白鹿' },
+      { m: '喜欢白鹿' },
+      { m: '白鹿原很好看' },
+      { m: '喜欢白鹿原' },
+      { m: '张三丰终于出场了' },
       { m: '这个角色叫林黛玉' },
       { m: '盛明兰终于出场了' },
     ], blockedNames);
-    assert.equal(result.removedCount, 3);
-    assert.deepEqual(result.danmus.map(item => item.m), ['这个角色叫林黛玉']);
+    assert.equal(result.removedCount, 6);
+    assert.deepEqual(result.danmus.map(item => item.m), [
+      '白鹿原很好看',
+      '喜欢白鹿原',
+      '张三丰终于出场了',
+      '这个角色叫林黛玉'
+    ]);
 
     const surnameMatchers = buildBlockedSurnameMatchers(['王一博', '欧阳娜娜']);
     assert.deepEqual(surnameMatchers.map(item => item.label), ['姓氏:王', '姓氏:欧阳']);
