@@ -13,6 +13,7 @@ import { getLocalRedisKey, setLocalRedisKey, setLocalRedisKeyWithExpiry } from "
 import { getImdbepisodes } from "./utils/imdb-util.js";
 import { extractTmdbChineseCastNames, getTMDBChineseTitle, getTmdbJpDetail, isDomesticTmdbProduction, searchTmdbTitles, selectTmdbActorCandidate } from "./utils/tmdb-util.js";
 import { DOMESTIC_POPULAR_ACTOR_NAMES } from './data/domestic-celebrities.generated.js';
+import { DOMESTIC_REGION_NAMES, DOMESTIC_BUILTIN_BLOCKED_NAMES } from './data/domestic-regions.js';
 import { getDoubanDetail, getDoubanInfoByImdbId, searchDoubanTitles } from "./utils/douban-util.js";
 import AIClient from './utils/ai-util.js';
 import RenrenSource from "./sources/renren.js";
@@ -714,6 +715,10 @@ test('worker.js API endpoints', async (t) => {
     Globals.init({ BLOCK_DOMESTIC_CELEBRITIES: 'true' });
     assert.equal(Globals.envs.blockDomesticCelebrities, true);
     assert.equal(DOMESTIC_POPULAR_ACTOR_NAMES.length, 200);
+    assert.ok(DOMESTIC_REGION_NAMES.length > 300);
+    assert.ok(DOMESTIC_BUILTIN_BLOCKED_NAMES.includes('北京'));
+    assert.ok(DOMESTIC_BUILTIN_BLOCKED_NAMES.includes('深圳'));
+    assert.ok(DOMESTIC_BUILTIN_BLOCKED_NAMES.includes('赵丽颖'));
     resetSearchState();
   });
 
