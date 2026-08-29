@@ -8,7 +8,7 @@ import AIClient from './utils/ai-util.js';
 import { getBangumi, getComment, getCommentByUrl, getSegmentComment, matchAnime, searchAnime, searchEpisodes } from "./apis/dandan-api.js";
 import { handleFavoriteAdd, handleFavoriteList, handleFavoriteRefresh, handleFavoriteRemove, handleFavoriteSchedule } from "./apis/favorite-api.js";
 import { getFongmiDanmaku } from "./apis/clients/fongmi-api.js";
-import { handleConfig, handleUI, handleLogs, handleClearLogs, handleDeploy, handleClearCache, handleReqRecords, handleCacheAnimes } from "./apis/system-api.js";
+import { handleConfig, handleUI, handleLogs, handleClearLogs, handleDeploy, handleClearCache, handleReqRecords, handleCacheAnimes, handleRemoteMappingLogs, handleRemoteMappingRefresh, handleRemoteAutoMatchMappingRefresh } from "./apis/system-api.js";
 import { handleForwardTrace } from "./apis/forward-trace-api.js";
 import { handleSetEnv, handleAddEnv, handleDelEnv, handleAiVerify } from "./apis/env-api.js";
 import { extendBangumiDownloadLifecycle } from "./utils/bangumi-data-util.js";
@@ -74,17 +74,18 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   const knownApiPaths = ["api", "v1", "v2", "search", "match", "favorite", "bangumi", "comment", "danmaku"];
 
   const firstPart = parts[0] || "";
+  const tokenAuthDisabled = globals.tokenAuthDisabled === true;
   const isDefaultToken = globals.token === "87654321";
-  const isValidToken = firstPart === globals.token || firstPart === globals.adminToken;
-  const explicitToken = firstPart === globals.token || (globals.adminToken && firstPart === globals.adminToken)
+  const isValidToken = tokenAuthDisabled || firstPart === globals.token || firstPart === globals.adminToken;
+  const explicitToken = tokenAuthDisabled ? "" : (firstPart === globals.token || (globals.adminToken && firstPart === globals.adminToken)
     ? firstPart
-    : "";
+    : "");
 
-  globals.currentToken = 
+  globals.currentToken = tokenAuthDisabled ? "" : (
     isValidToken ? firstPart :
     isDefaultToken && (firstPart === "87654321" || knownApiPaths.includes(firstPart)) ? 
       (firstPart === "87654321" ? firstPart : "87654321") :
-    "";
+    "");
 
   // 自定义 TOKEN 时收藏接口必须显式携带 token；默认 TOKEN=87654321 时保持无 token 兼容。
   // FAVORITE_REQUIRE_ADMIN 开启后，无论 TOKEN 是否为默认值，都只能使用 ADMIN_TOKEN。
@@ -93,7 +94,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   const isFavoriteListRequest = method === "GET"
     && /^\/(?:api\/v2\/|api\/|v2\/)?favorite\/list$/.test(tokenlessPath);
   if (method !== "OPTIONS" && isFavoriteRequest && !isFavoriteListRequest) {
-    if (!explicitToken && !isDefaultToken) {
+    if (!tokenAuthDisabled && !explicitToken && !isDefaultToken) {
       return jsonResponse(
         { errorCode: 401, success: false, errorMessage: "Favorite API requires an explicit token" },
         401
@@ -219,8 +220,13 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     });
   }
 
+  // 关闭 TOKEN 鉴权时允许直接访问所有路径；仍兼容携带 token 的旧入口。
+  if (tokenAuthDisabled) {
+    if (firstPart === globals.token || (globals.adminToken && firstPart === globals.adminToken)) {
+      path = "/" + parts.slice(1).join("/");
+    }
   // 如果 token 是默认值 87654321
-  if (globals.token === "87654321") {
+  } else if (globals.token === "87654321") {
     if (parts.length > 0) {
       // 如果第一段是正确的默认 token
       if (parts[0] === "87654321" || parts[0] === globals.adminToken) {
@@ -286,7 +292,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     && !path.startsWith('/api/deploy') && !path.startsWith('/api/cache')
     && !path.startsWith('/api/cookie') && !path.startsWith('/api/config')
     && !path.startsWith('/api/favorite')
-    && !path.startsWith('/api/ai') && !path.startsWith('/api/debug')) {
+    && !path.startsWith('/api/ai') && !path.startsWith('/api/debug') && !path.startsWith('/api/title-mapping')) {
       log("info", `[system] [path check] Starting path normalization for: "${path}"`);
       const pathBeforeCleanup = path; // 保存清理前的路径检查是否修改
 
@@ -311,7 +317,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
         && !path.startsWith('/api/env') && !path.startsWith('/api/cache')
         && !path.startsWith('/api/cookie') && !path.startsWith('/api/config')
         && !path.startsWith('/api/favorite')
-        && !path.startsWith('/api/ai') && !path.startsWith('/api/debug')) {
+        && !path.startsWith('/api/ai') && !path.startsWith('/api/debug') && !path.startsWith('/api/title-mapping')) {
           if (path.startsWith('/v2/') || path === '/v2') {
               log("info", `[system] [path check] Path is missing /api prefix. Adding /api...`);
               path = '/api' + path;
@@ -389,7 +395,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   // GET /api/v2/bangumi/:animeId
   if (path.startsWith("/api/v2/bangumi/") && method === "GET") {
-    return getBangumi(path);
+    return getBangumi(path, null, url.searchParams.get('source'));
   }
 
   // GET /api/v2/comment/:commentId or /api/v2/comment?url=xxx or /api/v2/extcomment?url=xxx
@@ -542,6 +548,33 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   // GET /api/logs
   if (path === "/api/logs" && method === "GET") {
     return handleLogs();
+  }
+
+  // GET /api/logs/remote-mapping - 远程映射表专用日志（独立缓冲区，不被源站日志冲掉）
+  if (path === "/api/logs/remote-mapping" && method === "GET") {
+    return handleRemoteMappingLogs();
+  }
+
+  // POST /api/title-mapping/refresh - 管理员手动刷新远程映射表
+  if (path === "/api/title-mapping/refresh" && method === "POST") {
+    const configAdmin = tokenAuthDisabled || (globals.adminToken
+      ? explicitToken === globals.adminToken
+      : (explicitToken === globals.token || (isDefaultToken && knownApiPaths.includes(firstPart))));
+    if (!configAdmin) {
+      return jsonResponse({ success: false, errorMessage: "需要 ADMIN_TOKEN 权限" }, 403);
+    }
+    return handleRemoteMappingRefresh();
+  }
+
+  // POST /api/auto-match-mapping/refresh - 管理员手动刷新远程季集映射表
+  if (path === "/api/auto-match-mapping/refresh" && method === "POST") {
+    const configAdmin = tokenAuthDisabled || (globals.adminToken
+      ? explicitToken === globals.adminToken
+      : (explicitToken === globals.token || (isDefaultToken && knownApiPaths.includes(firstPart))));
+    if (!configAdmin) {
+      return jsonResponse({ success: false, errorMessage: "需要 ADMIN_TOKEN 权限" }, 403);
+    }
+    return handleRemoteAutoMatchMappingRefresh();
   }
 
   if (path === '/api/debug/forward-trace') {

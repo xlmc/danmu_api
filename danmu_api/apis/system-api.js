@@ -2,6 +2,8 @@ import { globals } from "../configs/globals.js";
 import { jsonResponse } from "../utils/http-util.js";
 import { HTML_TEMPLATE } from "../ui/template.js";
 import { formatLogMessage, log } from "../utils/log-util.js";
+import { getRemoteMappingLogText, refreshRemoteTitleMappingNow } from "../utils/title-mapping-url-util.js";
+import { refreshRemoteAutoMatchMappingNow } from "../utils/auto-match-mapping-url-util.js";
 import { HandlerFactory } from "../configs/handlers/handler-factory.js";
 import { clearBangumiDataCache, initBangumiData } from "../utils/bangumi-data-util.js";
 
@@ -69,9 +71,17 @@ export function handleConfig(hasPermission = false) {
   const adminToken = globals.adminToken || '';
   const hasAdminToken = adminToken.trim() !== '';
   
-  // 准备原始环境变量，无权限时也需要脱敏
+  // 准备原始环境变量，无权限时也需要脱敏。
+  // 未配置 ADMIN_TOKEN 时，普通 TOKEN 就是配置管理令牌；只有明确配置
+  // ADMIN_TOKEN 后，才要求使用 ADMIN_TOKEN 才能读取完整配置。
   let originalEnvVars = { ...globals.originalEnvVars };
-  if (!hasPermission || globals.currentToken !== globals.adminToken) {
+  const hasAdminTokenConfigured = adminToken.trim() !== '';
+  const hasConfigPermission = globals.tokenAuthDisabled
+    ? true
+    : hasAdminTokenConfigured
+    ? globals.currentToken === adminToken
+    : globals.currentToken === globals.token;
+  if (!hasPermission || !hasConfigPermission) {
     Object.keys(originalEnvVars).forEach(key => {
       if (globals.currentToken !== globals.token || key !== "TOKEN") {
         if (key in previewEnvVars && /^\*+$/.test(previewEnvVars[key])) {
@@ -156,6 +166,26 @@ export function handleLogs() {
   }
   
   return new Response(processedLogText, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+}
+
+/**
+ * 处理远程映射表日志请求：独立缓冲区（最近 5000 条），不被源站日志冲掉
+ * @returns {Response} 远程映射日志文本
+ */
+export function handleRemoteMappingLogs() {
+  return new Response(getRemoteMappingLogText(), { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+}
+
+/** 管理员手动刷新远程映射表 */
+export async function handleRemoteMappingRefresh() {
+  const result = await refreshRemoteTitleMappingNow();
+  return jsonResponse(result, result.success ? 200 : 502);
+}
+
+/** 管理员手动刷新远程季集映射表 */
+export async function handleRemoteAutoMatchMappingRefresh() {
+  const result = await refreshRemoteAutoMatchMappingNow();
+  return jsonResponse(result, result.success ? 200 : 502);
 }
 
 /**

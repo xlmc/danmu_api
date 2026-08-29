@@ -351,6 +351,120 @@ function gradientStopsForDanmux(rawStops) {
   }));
 }
 
+const SHORT_PERSON_CONTEXT_PREFIX = /(?:喜欢|讨厌|支持|心疼|粉上|夸夸|安利|看好|想看|期待|欢迎|呼叫)/u;
+const SHORT_PERSON_CONTEXT_SUFFIX = /(?:老师|演员|主演|导演|演技|出演|饰演|扮演|演得|演的|出场|登场|上线|下线|本人|粉丝|好美|好帅|老婆|老公|姐姐|哥哥|妹妹|弟弟)/u;
+
+/**
+ * 将已确认的中文演员/角色名整理为匹配项。
+ * 三字及以上名称按完整名称匹配；二字名称必须带明确人物语境，避免“白鹿”误伤“白鹿原”。
+ */
+export function buildBlockedNameMatchers(names) {
+  if (!Array.isArray(names)) return [];
+  const seen = new Set();
+  const matchers = [];
+  for (const rawName of names) {
+    const label = String(rawName || '').normalize('NFKC').trim();
+    const compact = label.replace(/[\s·・•‧·･]+/g, '');
+    if (!/\p{Script=Han}/u.test(compact) || Array.from(compact).length < 2) continue;
+    const key = compact.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const length = Array.from(compact).length;
+    const escaped = escapeRegExp(key);
+    const regex = length === 2
+      ? new RegExp(
+        `(?:[@＃#]${escaped}(?=$|[^\\p{Script=Han}])|${SHORT_PERSON_CONTEXT_PREFIX.source}${escaped}(?=$|[^\\p{Script=Han}])|${escaped}${SHORT_PERSON_CONTEXT_SUFFIX.source})`,
+        'u'
+      )
+      : null;
+    matchers.push({ label, needle: key, regex });
+  }
+  return matchers;
+}
+
+const REGION_CONTEXT_PREFIX = /(?:来自|人在|身在|坐标|定位|住在|回到|去过|前往|老家(?:在|是)?|IP(?:在|属地)?)/u;
+const REGION_CONTEXT_SUFFIX = /(?:省|市|区|县|州|盟|旗|人|网友|观众|口音|方言|地区|本地|那边|这边|的朋友)/u;
+const REGION_CONTEXT_TAIL = /(?:$|[^\p{Script=Han}]|的|这边|那边|工作|生活|上学|旅游|出差)/u;
+const REGION_MATCHER_CACHE = new WeakMap();
+
+/** 地区名称仅在明确地区语境中匹配，避免“安康”“朝阳”等普通词误伤。 */
+export function buildBlockedRegionMatchers(names) {
+  if (!Array.isArray(names)) return [];
+  if (Object.isFrozen(names) && REGION_MATCHER_CACHE.has(names)) return REGION_MATCHER_CACHE.get(names);
+  const seen = new Set();
+  const matchers = [];
+  for (const rawName of names) {
+    const label = String(rawName || '').normalize('NFKC').trim();
+    const compact = label.replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
+    if (!/\p{Script=Han}/u.test(compact) || Array.from(compact).length < 2 || seen.has(compact)) continue;
+    seen.add(compact);
+    const escaped = escapeRegExp(compact);
+    matchers.push({
+      label: `地区:${label}`,
+      regex: new RegExp(`(?:${REGION_CONTEXT_PREFIX.source}${escaped}(?=${REGION_CONTEXT_TAIL.source})|${escaped}${REGION_CONTEXT_SUFFIX.source})`, 'u')
+    });
+  }
+  if (Object.isFrozen(names)) REGION_MATCHER_CACHE.set(names, matchers);
+  return matchers;
+}
+
+const COMMON_COMPOUND_SURNAMES = new Set([
+  '欧阳', '司马', '上官', '诸葛', '东方', '独孤', '南宫', '慕容', '尉迟', '皇甫',
+  '令狐', '长孙', '宇文', '闻人', '夏侯', '公孙', '轩辕', '百里', '钟离', '澹台'
+]);
+const SURNAME_REFERENCE_SUFFIX = /(?:老师|导演|主演|演员|饰演|扮演|出演|姐姐|哥哥|妹妹|弟弟|大哥|二哥|三哥|大姐|二姐|叔叔|阿姨|公子|姑娘|小姐|先生|娘娘|皇后|皇帝|王爷|殿下|公主|太子|少爷|夫人|老婆|老公|宝宝|本人|同学|好美|好帅|家族|一哥|一姐)/u;
+
+/** 从当前作品元数据中提取带明确称谓/身份上下文的姓氏匹配项。 */
+export function buildBlockedSurnameMatchers(names) {
+  if (!Array.isArray(names)) return [];
+  const seen = new Set();
+  const matchers = [];
+  for (const rawName of names) {
+    const compact = String(rawName || '').normalize('NFKC').replace(/[\s·・•‧·･]+/g, '');
+    if (!/\p{Script=Han}/u.test(compact) || Array.from(compact).length < 2) continue;
+    const chars = Array.from(compact);
+    const surname = COMMON_COMPOUND_SURNAMES.has(compact.slice(0, 2)) ? compact.slice(0, 2) : chars[0];
+    if (seen.has(surname)) continue;
+    seen.add(surname);
+    const escaped = escapeRegExp(surname);
+    const regex = new RegExp(
+      `(?:[@＃#]|^|[^\\p{Script=Han}])${escaped}(?=[^\\p{Script=Han}]|$|${SURNAME_REFERENCE_SUFFIX.source})|${escaped}${SURNAME_REFERENCE_SUFFIX.source}`,
+      'u'
+    );
+    matchers.push({ label: `姓氏:${surname}`, surname, regex });
+  }
+  return matchers;
+}
+
+export function filterDanmusByBlockedNames(danmus, names, options = {}) {
+  if (!Array.isArray(danmus) || danmus.length === 0) {
+    return { danmus: Array.isArray(danmus) ? danmus : [], removedCount: 0, hits: [] };
+  }
+  const matchers = buildBlockedNameMatchers(names);
+  const surnameMatchers = buildBlockedSurnameMatchers(options.surnameNames);
+  const regionMatchers = buildBlockedRegionMatchers(options.regionNames);
+  if (matchers.length === 0 && surnameMatchers.length === 0 && regionMatchers.length === 0) {
+    return { danmus, removedCount: 0, hits: [] };
+  }
+
+  const hitCounts = new Map();
+  const filtered = danmus.filter(item => {
+    const text = String(item?.m || '').normalize('NFKC').replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
+    const matcher = matchers.find(candidate => candidate.regex ? candidate.regex.test(text) : text.includes(candidate.needle));
+    const surnameMatcher = matcher ? null : surnameMatchers.find(candidate => candidate.regex.test(text));
+    const regionMatcher = matcher || surnameMatcher ? null : regionMatchers.find(candidate => candidate.regex.test(text));
+    const hit = matcher || surnameMatcher || regionMatcher;
+    if (!hit) return true;
+    hitCounts.set(hit.label, (hitCounts.get(hit.label) || 0) + 1);
+    return false;
+  });
+  return {
+    danmus: filtered,
+    removedCount: danmus.length - filtered.length,
+    hits: [...hitCounts.entries()].map(([name, count]) => ({ name, count }))
+  };
+}
+
 export function convertToDanmakuJson(contents, platform) {
   let danmus = [];
   let cidCounter = 1;

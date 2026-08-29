@@ -7,8 +7,10 @@ WORKDIR /app
 # 复制 package.json 和 package-lock.json（如果存在）
 COPY package*.json ./
 
-# 安装项目依赖
-RUN npm install
+# 安装项目依赖。danmux 通过 GitHub 固定提交安装，Alpine 默认没有 git。
+RUN apk add --no-cache git \
+    && npm install \
+    && apk del git
 
 # 复制所有源代码
 COPY danmu_api/ ./danmu_api/

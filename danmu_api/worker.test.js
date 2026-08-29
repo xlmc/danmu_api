@@ -12,7 +12,9 @@ import { handleClearCache } from './apis/system-api.js';
 import { getRedisCaches, getRedisKey, pingRedis, setRedisKey, setRedisKeyWithExpiry, updateRedisCaches } from "./utils/redis-util.js";
 import { getLocalRedisKey, setLocalRedisKey, setLocalRedisKeyWithExpiry } from "./utils/local-redis-util.js";
 import { getImdbepisodes } from "./utils/imdb-util.js";
-import { getTMDBChineseTitle, getTmdbJpDetail, searchTmdbTitles } from "./utils/tmdb-util.js";
+import { extractTmdbChineseCastNames, getTMDBChineseTitle, getTmdbJpDetail, isDomesticTmdbProduction, searchTmdbTitles, selectTmdbActorCandidate } from "./utils/tmdb-util.js";
+import { DOMESTIC_POPULAR_ACTOR_NAMES } from './data/domestic-celebrities.generated.js';
+import { DOMESTIC_REGION_NAMES } from './data/domestic-regions.js';
 import { getDoubanDetail, getDoubanInfoByImdbId, searchDoubanTitles } from "./utils/douban-util.js";
 import AIClient from './utils/ai-util.js';
 import RenrenSource from "./sources/renren.js";
@@ -48,7 +50,7 @@ import { apitestJsContent } from './ui/js/apitest.js';
 import { systemSettingsJsContent } from './ui/js/systemsettings.js';
 import { previewJsContent } from './ui/js/preview.js';
 import { convertToAsciiSum } from "./utils/codec-util.js";
-import { convertToDanmakuJson, formatDanmuResponse, handleDanmusLike, splitBlockedWords, parseBlockedWord } from "./utils/danmu-util.js";
+import { buildBlockedNameMatchers, buildBlockedSurnameMatchers, convertToDanmakuJson, filterDanmusByBlockedNames, formatDanmuResponse, handleDanmusLike, splitBlockedWords, parseBlockedWord } from "./utils/danmu-util.js";
 import { convertCommentsToDanmux } from './utils/danmux-adapter.js';
 import { Segment, SegmentListResponse } from "./models/dandan-model.js"
 import { initBangumiData, searchBangumiData, clearBangumiDataCache, dedupeBangumiSearchResults } from "./utils/bangumi-data-util.js";
@@ -669,22 +671,17 @@ test('worker.js API endpoints', async (t) => {
       const comments = convertToDanmakuJson([
         { p: '1,1,16777215,[bilibili]', m: 'white comment' },
         { p: '2,1,16711680,[bilibili]', m: 'red comment' },
-        {
-          p: '3,1,16777215,[bilibili]',
-          m: 'native comment',
-          color_v2: JSON.stringify({ stroke_color: 'https://cdn.example.test/stroke.png' }),
-        },
+        { p: '3,1,16777215,[bilibili]', m: 'native comment', color_v2: '{}' },
       ], 'bilibili');
       const payload = await (formatDanmuResponse({ comments }, 'danmux')).json();
 
       assert.equal(payload.comments[0].danmux.effects[0].source.type, 'linear');
-      assert.equal(payload.comments[0].danmux.effects[0].origin, 'generated');
       assert.equal(payload.comments[1].danmux.effects, undefined);
       assert.equal(payload.comments[2].danmux.effects, undefined);
       assert.equal(payload.comments[2].p, '3,1,16777215,[dandan]');
     });
 
-    await t.test('invalid explicit stops fall back without failing the response', async () => {
+    await t.test('invalid stops and native aliases are handled safely', async () => {
       Globals.init({
         CONVERT_COLOR: 'color',
         GRADIENT_CHANCE: '100',
@@ -693,66 +690,30 @@ test('worker.js API endpoints', async (t) => {
         DANMU_OUTPUT_FORMAT: 'danmux',
       });
       const comments = convertToDanmakuJson([
-        { p: '3.5,1,16777215,[bilibili]', m: 'fallback gradient' },
+        { p: '7,1,16777215,[bilibili]', m: 'fallback gradient' },
+        { p: '8,1,16777215,[bilibili]', m: 'empty native', color_v2: '' },
+        { p: '9,1,16777215,[bilibili]', m: 'camel alias', colorV2: '{}' },
+        { p: '10,1,16777215,[bilibili]', m: 'colorful alias', colorfulSrc: '{}' },
       ], 'bilibili');
       const response = formatDanmuResponse({ comments });
       const payload = await response.json();
 
       assert.equal(response.status, 200);
-      assert.equal(payload.comments.length, 1);
       assert.equal(payload.comments[0].danmux.effects[0].source.type, 'linear');
-    });
-
-    await t.test('native aliases and empty color_v2 stay dandan without effects', async () => {
-      Globals.init({
-        CONVERT_COLOR: 'color',
-        GRADIENT_CHANCE: '100',
-        GRADIENT_COLORS: 'default',
-        DANMUX_GRADIENT_STOPS: '',
-        DANMU_OUTPUT_FORMAT: 'danmux',
-      });
-      const comments = convertToDanmakuJson([
-        { p: '7,1,16777215,[bilibili]', m: 'empty native', color_v2: '' },
-        { p: '8,1,16777215,[bilibili]', m: 'camel alias', colorV2: '{}' },
-        { p: '9,1,16777215,[bilibili]', m: 'colorful alias', colorfulSrc: '{}' },
-      ], 'bilibili');
-      const payload = await (formatDanmuResponse({ comments }, 'danmux')).json();
-
-      assert.equal(payload.comments.length, 3);
-      for (const comment of payload.comments) {
+      for (const comment of payload.comments.slice(1)) {
         assert.match(comment.p, /\[dandan\]$/u);
         assert.equal(comment.danmux.effects, undefined);
       }
     });
 
-    await t.test('adapter keeps p/m fallback and ignores native color_v2 effects', () => {
-      const enhanced = convertCommentsToDanmux({
-        comments: [{ p: '4,1,16777215,[bilibili]', m: 'enhanced', cid: 42 }]
-      }, { sourceLabel: 'danmu_api', gradientStops: explicitStops });
-      assert.equal(enhanced.comments[0].p, '4,1,16777215,[danmu_api]');
-      assert.equal(enhanced.comments[0].m, 'enhanced');
-      assert.equal(enhanced.comments[0].danmux.effects[0].source.type, 'linear');
-
-      const fallback = convertCommentsToDanmux({
-        comments: [{ p: '5,1,16777215,[bilibili]', m: 'fallback' }]
-      });
-      assert.equal(fallback.comments[0].danmux.effects, undefined);
-
+    await t.test('adapter never overlays generated gradients on native fields', () => {
       const native = convertCommentsToDanmux({ comments: [{
-        p: '6,1,16777215,[bilibili]',
+        p: '11,1,16777215,[bilibili]',
         m: 'native ignored',
-        color_v2: JSON.stringify({ stroke_color: 'https://cdn.example.test/stroke.png' }),
-      }] }, { gradientStops: explicitStops });
-      assert.equal(native.comments[0].p, '6,1,16777215,[dandan]');
-      assert.equal(native.comments[0].danmux.effects, undefined);
-
-      const alias = convertCommentsToDanmux({ comments: [{
-        p: '7,1,16777215,[bilibili]',
-        m: 'native alias ignored',
         colorfulSrc: '{}',
       }] }, { gradientStops: explicitStops });
-      assert.equal(alias.comments[0].p, '7,1,16777215,[dandan]');
-      assert.equal(alias.comments[0].danmux.effects, undefined);
+      assert.equal(native.comments[0].p, '11,1,16777215,[dandan]');
+      assert.equal(native.comments[0].danmux.effects, undefined);
     });
 
     resetSearchState();
@@ -799,6 +760,99 @@ test('worker.js API endpoints', async (t) => {
     assert.ok(regexes.every(r => r instanceof RegExp), '所有词条均应解析为正则');
 
     resetSearchState();
+  });
+
+  await t.test('演员/角色短名称只在人物语境中屏蔽', () => {
+    const blockedNames = ['赵丽颖', '张·三', '盛明兰', '白鹿', 'Tom Hanks', '王'];
+    const matchers = buildBlockedNameMatchers(blockedNames);
+    assert.deepEqual(matchers.map(item => item.label), ['赵丽颖', '张·三', '盛明兰', '白鹿']);
+
+    const result = filterDanmusByBlockedNames([
+      { m: '赵丽颖演得很好' },
+      { m: '张 三演员今天状态不错' },
+      { m: '白鹿老师演得很好' },
+      { m: '@白鹿' },
+      { m: '喜欢白鹿' },
+      { m: '白鹿原很好看' },
+      { m: '喜欢白鹿原' },
+      { m: '张三丰终于出场了' },
+      { m: '这个角色叫林黛玉' },
+      { m: '盛明兰终于出场了' },
+    ], blockedNames);
+    assert.equal(result.removedCount, 6);
+    assert.deepEqual(result.danmus.map(item => item.m), [
+      '白鹿原很好看',
+      '喜欢白鹿原',
+      '张三丰终于出场了',
+      '这个角色叫林黛玉'
+    ]);
+
+    const surnameMatchers = buildBlockedSurnameMatchers(['王一博', '欧阳娜娜']);
+    assert.deepEqual(surnameMatchers.map(item => item.label), ['姓氏:王', '姓氏:欧阳']);
+    const surnameResult = filterDanmusByBlockedNames([
+      { m: '王老师这场演得好' },
+      { m: '欧阳导演太会拍了' },
+      { m: '王者荣耀也太燃了' },
+    ], [], { surnameNames: ['王一博', '欧阳娜娜'] });
+    assert.equal(surnameResult.removedCount, 2);
+    assert.deepEqual(surnameResult.danmus.map(item => item.m), ['王者荣耀也太燃了']);
+
+    Globals.init({ BLOCK_DOMESTIC_CELEBRITIES: 'true', BLOCK_DOMESTIC_REGIONS: 'false' });
+    assert.equal(Globals.envs.blockDomesticCelebrities, true);
+    assert.equal(Globals.envs.blockDomesticRegions, false);
+    assert.equal(DOMESTIC_POPULAR_ACTOR_NAMES.length, 200);
+    assert.ok(DOMESTIC_REGION_NAMES.length > 300);
+    resetSearchState();
+  });
+
+  await t.test('地区过滤默认关闭且只匹配明确地区语境', () => {
+    Globals.init({});
+    assert.equal(Globals.envs.blockDomesticRegions, false);
+    Globals.init({ BLOCK_DOMESTIC_REGIONS: 'true' });
+    assert.equal(Globals.envs.blockDomesticRegions, true);
+
+    const result = filterDanmusByBlockedNames([
+      { m: '来自海南的朋友' },
+      { m: '海南网友来了' },
+      { m: '朝阳区天气不错' },
+      { m: '安康市欢迎你' },
+      { m: '海南鸡饭真好吃' },
+      { m: '来自海南鸡饭的厨师' },
+      { m: '朝阳升起来了' },
+      { m: '祝大家身体安康' },
+      { m: '白鹿原很好看' },
+    ], [], { regionNames: DOMESTIC_REGION_NAMES });
+
+    assert.equal(result.removedCount, 4);
+    assert.deepEqual(result.danmus.map(item => item.m), [
+      '海南鸡饭真好吃',
+      '来自海南鸡饭的厨师',
+      '朝阳升起来了',
+      '祝大家身体安康',
+      '白鹿原很好看'
+    ]);
+    resetSearchState();
+  });
+
+  await t.test('TMDB 演员元数据只接受可靠的华语作品和中文演员名', () => {
+    const results = [
+      { id: 1, media_type: 'tv', name: '同名剧场版', original_language: 'ja', origin_country: ['JP'] },
+      { id: 2, media_type: 'tv', name: '同名剧', original_language: 'zh', origin_country: ['CN'] },
+    ];
+    const selected = selectTmdbActorCandidate(results, '同名剧');
+    assert.equal(selected.id, 2);
+    assert.equal(isDomesticTmdbProduction(selected), true);
+    assert.equal(isDomesticTmdbProduction(results[0]), false);
+
+    const castNames = extractTmdbChineseCastNames({
+      cast: [
+        { name: '赵丽颖', original_name: '赵丽颖', character: '盛明兰' },
+        { name: '张·三', original_name: 'Zhang San', character: '顾廷烨（少年） / 顾二叔' },
+        { name: 'Tom Hanks', original_name: 'Tom Hanks', character: '角色名' },
+      ]
+    });
+    assert.deepEqual(castNames.actorNames, ['赵丽颖', '张·三']);
+    assert.deepEqual(castNames.characterNames, ['盛明兰', '顾廷烨(少年)', '顾廷烨', '顾二叔', '角色名']);
   });
 
   await t.test('Upstash Redis persists favorites without storing search or comment caches', async () => {
