@@ -13,7 +13,6 @@ import { getRedisCaches, getRedisKey, pingRedis, setRedisKey, setRedisKeyWithExp
 import { getLocalRedisKey, setLocalRedisKey, setLocalRedisKeyWithExpiry } from "./utils/local-redis-util.js";
 import { getImdbepisodes } from "./utils/imdb-util.js";
 import { extractTmdbChineseCastNames, getTMDBChineseTitle, getTmdbJpDetail, isDomesticTmdbProduction, searchTmdbTitles, selectTmdbActorCandidate } from "./utils/tmdb-util.js";
-import { DOMESTIC_POPULAR_ACTOR_NAMES } from './data/domestic-celebrities.generated.js';
 import { DOMESTIC_REGION_NAMES } from './data/domestic-regions.js';
 import { getDoubanDetail, getDoubanInfoByImdbId, searchDoubanTitles } from "./utils/douban-util.js";
 import AIClient from './utils/ai-util.js';
@@ -50,7 +49,7 @@ import { apitestJsContent } from './ui/js/apitest.js';
 import { systemSettingsJsContent } from './ui/js/systemsettings.js';
 import { previewJsContent } from './ui/js/preview.js';
 import { convertToAsciiSum } from "./utils/codec-util.js";
-import { buildBlockedNameMatchers, buildBlockedSurnameMatchers, convertToDanmakuJson, filterDanmusByBlockedNames, formatDanmuResponse, handleDanmusLike, splitBlockedWords, parseBlockedWord } from "./utils/danmu-util.js";
+import { buildBlockedNameMatchers, buildBlockedSurnameMatchers, convertToDanmakuJson, filterDanmusByBlockedNames, formatDanmuResponse, handleDanmusLike, isBlockedNameEntry, parseBlockedNameEntry, splitBlockedWords, parseBlockedWord } from "./utils/danmu-util.js";
 import { convertCommentsToDanmux } from './utils/danmux-adapter.js';
 import { Segment, SegmentListResponse } from "./models/dandan-model.js"
 import { initBangumiData, searchBangumiData, clearBangumiDataCache, dedupeBangumiSearchResults } from "./utils/bangumi-data-util.js";
@@ -762,6 +761,63 @@ test('worker.js API endpoints', async (t) => {
     resetSearchState();
   });
 
+  await t.test('BLOCKED_WORDS 支持 @人名 条目并按语境匹配', () => {
+    const raw = '@白鹿, @盛明兰, 打卡, /广告/';
+    const segments = splitBlockedWords(raw);
+    assert.deepEqual(segments, ['@白鹿', '@盛明兰', '打卡', '/广告/']);
+    assert.deepEqual(segments.filter(isBlockedNameEntry).map(parseBlockedNameEntry), ['白鹿', '盛明兰']);
+    // 普通词条不受 @ 前缀判断影响
+    assert.equal(isBlockedNameEntry('打卡'), false);
+    assert.equal(isBlockedNameEntry('/@白鹿/'), false);
+
+    Globals.init({
+      BLOCKED_WORDS: raw,
+      GROUP_MINUTE: '0',
+      DANMU_LIMIT: '0',
+      CONVERT_COLOR: 'default'
+    });
+    const out = convertToDanmakuJson([
+      { p: '1,1,16777215,[test]', m: '喜欢白鹿' },          // 二字人名 + 喜好语境 → 拦截
+      { p: '2,1,16777215,[test]', m: '@白鹿 演技真好' },     // @ 指代 → 拦截
+      { p: '3,1,16777215,[test]', m: '白鹿老师出场了' },      // 称谓后缀 → 拦截
+      { p: '4,1,16777215,[test]', m: '白鹿原很好看' },        // 普通词 → 保留
+      { p: '5,1,16777215,[test]', m: '盛明兰终于出场了' },    // 三字人名按全名匹配 → 拦截
+      { p: '6,1,16777215,[test]', m: '今天打卡第三天' },      // 纯文本词条保持字面匹配 → 拦截
+      { p: '7,1,16777215,[test]', m: '这条广告真多' },        // 正则词条 → 拦截
+      { p: '8,1,16777215,[test]', m: 'normal text' },      // 保留
+    ], 'test');
+    assert.deepEqual(out.map(item => item.m), [
+      '白鹿原很好看',
+      'normal text'
+    ]);
+
+    resetSearchState();
+  });
+
+  await t.test('@人名 条目启用严格版姓氏指代匹配', () => {
+    Globals.init({
+      BLOCKED_WORDS: '@杨幂,@欧阳娜娜',
+      GROUP_MINUTE: '0',
+      DANMU_LIMIT: '0',
+      CONVERT_COLOR: 'default'
+    });
+    const out = convertToDanmakuJson([
+      { p: '1,1,16777215,[test]', m: '杨幂演得真好' },      // 二字人名 + 称谓后缀 → 拦截
+      { p: '2,1,16777215,[test]', m: '杨老师演得不错' },     // 姓氏 + 称谓 → 拦截
+      { p: '3,1,16777215,[test]', m: '欧阳导演太会拍了' },   // 复姓 + 称谓 → 拦截
+      { p: '4,1,16777215,[test]', m: '@杨' },               // @姓氏 指代 → 拦截
+      { p: '5,1,16777215,[test]', m: '我是杨' },            // 裸姓氏无称谓 → 保留
+      { p: '6,1,16777215,[test]', m: '杨树很高' },           // 姓氏后接汉字 → 保留
+      { p: '7,1,16777215,[test]', m: '欧阳娜娜出场了' },     // 全名 → 拦截
+    ], 'test');
+    assert.deepEqual(out.map(item => item.m), [
+      '我是杨',
+      '杨树很高'
+    ]);
+
+    resetSearchState();
+  });
+
   await t.test('演员/角色短名称只在人物语境中屏蔽', () => {
     const blockedNames = ['赵丽颖', '张·三', '盛明兰', '白鹿', 'Tom Hanks', '王'];
     const matchers = buildBlockedNameMatchers(blockedNames);
@@ -800,7 +856,6 @@ test('worker.js API endpoints', async (t) => {
     Globals.init({ BLOCK_DOMESTIC_CELEBRITIES: 'true', BLOCK_DOMESTIC_REGIONS: 'false' });
     assert.equal(Globals.envs.blockDomesticCelebrities, true);
     assert.equal(Globals.envs.blockDomesticRegions, false);
-    assert.equal(DOMESTIC_POPULAR_ACTOR_NAMES.length, 200);
     assert.ok(DOMESTIC_REGION_NAMES.length > 300);
     resetSearchState();
   });

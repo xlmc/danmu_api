@@ -20,7 +20,6 @@ import {
   extractYear, titleMatches, extractAnimeInfo, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle
 } from "../utils/common-util.js";
 import { getTMDBChineseTitle, getTmdbDomesticCastNamesForTitle, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
-import { DOMESTIC_POPULAR_ACTOR_NAMES } from "../data/domestic-celebrities.generated.js";
 import { DOMESTIC_REGION_NAMES } from "../data/domestic-regions.js";
 import { applyMergeLogic, mergeDanmakuList, MERGE_DELIMITER, alignSourceTimelines, sanitizeUrl } from "../utils/merge-util.js";
 import { getHanjutvSourceLabel } from "../utils/hanjutv-util.js";
@@ -85,8 +84,7 @@ async function applyDomesticCelebrityFilter(danmus, animeTitle) {
     titleCastNames = await getTmdbDomesticCastNamesForTitle(animeTitle);
   }
 
-  const popularNames = DOMESTIC_POPULAR_ACTOR_NAMES;
-  const blockedNames = blockCelebrities ? [...new Set([...popularNames, ...titleCastNames])] : [];
+  const blockedNames = blockCelebrities ? titleCastNames : [];
   const result = filterDanmusByBlockedNames(danmus, blockedNames, {
     surnameNames: blockCelebrities ? titleCastNames : [],
     regionNames: blockRegions ? DOMESTIC_REGION_NAMES : []

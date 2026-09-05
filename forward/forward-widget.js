@@ -274,7 +274,7 @@ WidgetMetadata = {
     // 弹幕配置
     {
       name: "blockedWords",
-      title: "屏蔽词列表",
+      title: "屏蔽词列表（支持 /正则/、纯文本词、@人名 语境匹配）",
       type: "input",
       placeholders: [
         {
@@ -285,7 +285,7 @@ WidgetMetadata = {
     },
     {
       name: "blockDomesticCelebrities",
-      title: "屏蔽内置中国大陆男/女热门演员各前100名；配置 TMDB Key 后叠加当前作品演员/角色名",
+      title: "通过 TMDB 屏蔽当前华语作品演员/角色名（需要 TMDB_API_KEY 或 TMDB 反代）",
       type: "input",
       placeholders: [
         { title: "关闭（默认）", value: "false" },

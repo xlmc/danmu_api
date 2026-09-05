@@ -728,8 +728,8 @@ export class Envs {
       'USE_BANGUMI_DATA': { category: 'match', type: 'boolean', description: 'Bangumi Data 加速匹配开关，开启后将动画元数据缓存至本地或内存中给源调用，提升动画源的检索与匹配速度并解锁隐藏/区域番剧。\n本地和Docker部署使用时请先挂载.cache目录获得最佳体验，云部署使用时会将数据缓存至临时内存中如果体验不佳请关闭。' },
 
       // 弹幕配置
-      'BLOCKED_WORDS': { category: 'danmu', type: 'text', description: '屏蔽词列表' },
-      'BLOCK_DOMESTIC_CELEBRITIES': { category: 'danmu', type: 'boolean', description: '中国大陆演员/当前作品角色名屏蔽开关，默认关闭。二字名称仅在明确人物语境中匹配；三字及以上按完整名称匹配。TMDB_API_KEY 仅用于直连 TMDB 的认证，不是开启演员屏蔽的前置条件。' },
+      'BLOCKED_WORDS': { category: 'danmu', type: 'text', description: '屏蔽词列表：支持 /正则/flags、纯文本词及 @人名（按语境分析匹配：二字人名仅在明确人物语境中命中，避免误伤同名词；姓氏仅在被称谓指代时命中，如"杨老师"）' },
+      'BLOCK_DOMESTIC_CELEBRITIES': { category: 'danmu', type: 'boolean', description: '当前华语作品演员/角色名屏蔽开关，默认关闭。开启后通过 TMDB 获取当前国产/港台作品的中文演员名和角色名；二字名称仅在明确人物语境中匹配，三字及以上按完整名称匹配。需要可用的 TMDB_API_KEY，或能够代为认证的 TMDB 反代；查询失败时不执行该项过滤。' },
       'BLOCK_DOMESTIC_REGIONS': { category: 'danmu', type: 'boolean', description: '中国大陆地区名屏蔽开关，默认关闭。仅匹配“来自海南”“海南网友”“朝阳区”等明确地区语境，不屏蔽“海南鸡饭”“朝阳升起”“身体安康”等无关内容。' },
       'GROUP_MINUTE': { category: 'danmu', type: 'number', description: '分钟内合并去重（0表示不去重），默认1', min: 0, max: 30 },
       'DANMU_LIMIT': { category: 'danmu', type: 'number', description: '弹幕数量限制，单位为k，即千：默认 0，表示不限制弹幕数', min: 0, max: 100 },
@@ -794,7 +794,7 @@ export class Envs {
       episodeTitleFilter: this.resolveEpisodeTitleFilter(), // 剧集标题正则过滤
       titleNoiseFilter: this.resolveTitleNoiseFilter(), // 剧名杂音清理规则
       blockedWords: this.get('BLOCKED_WORDS', '', 'string'), // 屏蔽词列表
-      blockDomesticCelebrities: this.get('BLOCK_DOMESTIC_CELEBRITIES', false, 'boolean'), // 按内置演员库 + 当前作品演员/角色表屏蔽姓名
+      blockDomesticCelebrities: this.get('BLOCK_DOMESTIC_CELEBRITIES', false, 'boolean'), // 按当前作品演员/角色表屏蔽姓名
       blockDomesticRegions: this.get('BLOCK_DOMESTIC_REGIONS', false, 'boolean'), // 仅按明确地区语境屏蔽地区名称
       groupMinute: Math.min(this.get('GROUP_MINUTE', 1, 'number'), 30), // 分钟内合并去重（默认 1，最大值30，0表示不去重）
       danmuLimit: this.get('DANMU_LIMIT', 0, 'number'), // 等间隔采样限制弹幕总数，单位为k，即千：默认 0，表示不限制弹幕数，若改为5，弹幕总数在超过5000的情况下会将弹幕数控制在5000
