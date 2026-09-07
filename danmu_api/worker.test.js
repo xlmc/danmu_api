@@ -687,6 +687,10 @@ test('worker.js API endpoints', async (t) => {
       assert.equal(response.status, 200);
       assert.equal(payload.comments.length, 1);
       assert.equal(payload.comments[0].danmux.effects[0].source.type, 'linear');
+      assert.deepEqual(
+        payload.comments[0].danmux.effects[0].source.stops.map((stop) => stop.color),
+        ['#FF6B8B', '#A259FF'],
+      );
     });
 
     await t.test('empty decoded color_v2 stays dandan without effects', async () => {
@@ -729,6 +733,22 @@ test('worker.js API endpoints', async (t) => {
       }] }, { gradientStops: explicitStops });
       assert.equal(native.comments[0].p, '6,1,16777215,[dandan]');
       assert.equal(native.comments[0].danmux.effects, undefined);
+
+      const generic = convertCommentsToDanmux({ comments: [{
+        p: '7,1,16777215,[other]',
+        m: 'generic gradient field',
+        gradient: JSON.stringify({ fill: 'https://cdn.example.test/gradient.png' }),
+      }] }, { gradientStops: explicitStops });
+      assert.equal(generic.comments[0].p, '7,1,16777215,[danmu_api]');
+      assert.equal(generic.comments[0].danmux.effects[0].source.type, 'linear');
+
+      const malformed = convertCommentsToDanmux({ comments: [
+        { p: '8,1,not-a-color,[bilibili]', m: 'bad color' },
+        { p: '9,1,16777215,[bilibili]', m: 'still present' },
+      ] }, { sourceLabel: 'bilibili', gradientStops: explicitStops });
+      assert.equal(malformed.comments.length, 2);
+      assert.equal(malformed.comments[0].m, 'bad color');
+      assert.equal(malformed.comments[1].m, 'still present');
 
     });
 

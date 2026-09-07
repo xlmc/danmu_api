@@ -3,15 +3,8 @@ import { log } from './log-util.js'
 import { binResponse, jsonResponse, xmlResponse } from "./http-util.js";
 import { simplized, traditionalized } from './zh-util.js';
 import { convertDanAny } from './dan-any.js';
-import { convertCommentsToDanmux, parseDanmuxGradientStops } from './danmux-adapter.js';
+import { convertCommentsToDanmux, getNativeGradientValue, parseDanmuxGradientStops } from './danmux-adapter.js';
 import { DANMUX_GRADIENT_META } from './danmux-meta.js';
-
-function getNativeGradientValue(item) {
-  if (!item || typeof item !== 'object' || item.color_v2 === undefined) {
-    return { present: false, value: undefined };
-  }
-  return { present: true, value: item.color_v2 };
-}
 
 // =====================
 // danmu处理相关函数
@@ -389,7 +382,10 @@ export function convertToDanmakuJson(contents, platform) {
   for (const item of items) {
     let attributes, m;
     let time, mode, color;
-    const nativeGradient = getNativeGradientValue(item);
+    // 只按当前弹幕的真实来源识别 Bilibili 原生字段，避免其它来源的扩展字段
+    // 被误当成需要 dandan 兼容的原生渐变。
+    const sourceLabel = item?._sourceLabel || platform;
+    const nativeGradient = getNativeGradientValue(item, sourceLabel);
 
     // 新增：处理新格式的弹幕数据
     if ("progress" in item && "mode" in item && "content" in item) {
@@ -431,7 +427,7 @@ export function convertToDanmakuJson(contents, platform) {
     }
 
     // 优先使用弹幕自带的 _sourceLabel（应对合并工具），其次是外部传入的宏观 platform
-    let currentPlatform = item._sourceLabel || platform;
+    let currentPlatform = sourceLabel;
     // 原生 color_v2 由 dandan 兼容链路接管：不参与本项目渐变规则。
     if (nativeGradient.present) currentPlatform = 'dandan';
 
@@ -743,7 +739,8 @@ export function formatDanmuResponse(danmuData, queryFormat) {
     try {
       // DanmuX 响应保留 p/m，并只为服务端已选中的弹幕附加 effects。
       // 下层播放器应优先读取 gradient/linear；不认识增强层时可安全忽略并继续显示 p/m。
-      const gradientStops = parseDanmuxGradientStops(globals.danmuxGradientStops);
+      const fallbackStops = gradientStopsForDanmux(resolveGradientSkin(globals.gradientColors));
+      const gradientStops = parseDanmuxGradientStops(globals.danmuxGradientStops, fallbackStops);
       return jsonResponse(convertCommentsToDanmux(danmuData, {
         sourceLabel: 'danmu_api',
         gradientStops,
