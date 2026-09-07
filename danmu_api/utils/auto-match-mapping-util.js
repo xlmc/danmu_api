@@ -17,18 +17,49 @@ function normalizeRuleTitle(value) {
 const ruleIndexCache = new WeakMap();
 
 function getRuleIndex(rules) {
-  if (!Array.isArray(rules)) return new Map();
+  if (!Array.isArray(rules)) return { generic: new Map(), grouped: new Map() };
   const cached = ruleIndexCache.get(rules);
   if (cached) return cached;
-  const index = new Map();
+  // Keep the hot path O(1): a generic bucket is indexed separately from
+  // group-qualified buckets so a filename carrying a release group can try
+  // the exact rule first without scanning every rule for the title/season.
+  const index = { generic: new Map(), grouped: new Map() };
   for (const rule of rules) {
     const key = `${rule.sourceTitleKey}\u0000${rule.sourceSeason}`;
-    const bucket = index.get(key) || [];
-    bucket.push(rule);
-    index.set(key, bucket);
+    const groupKeys = releaseGroupValues(rule.sourceReleaseGroups?.length
+      ? rule.sourceReleaseGroups
+      : (rule.sourceReleaseGroup || rule.releaseGroup));
+    if (groupKeys.length === 0) {
+      const bucket = index.generic.get(key) || [];
+      bucket.push(rule);
+      index.generic.set(key, bucket);
+      continue;
+    }
+    for (const groupKey of groupKeys) {
+      const fullKey = `${key}\u0000${groupKey}`;
+      const bucket = index.grouped.get(fullKey) || [];
+      bucket.push(rule);
+      index.grouped.set(fullKey, bucket);
+    }
   }
   ruleIndexCache.set(rules, index);
   return index;
+}
+
+/**
+ * Release groups are identifiers, not title words. Use the same Unicode
+ * folding as title keys so case/NFKC variants resolve to the same bucket.
+ */
+function normalizeReleaseGroup(value) {
+  return normalizeRuleTitle(value);
+}
+
+function releaseGroupValues(value) {
+  const values = Array.isArray(value) ? value : [value];
+  return [...new Set(values
+    .flatMap(item => String(item || '').split(/[|,;]/))
+    .map(normalizeReleaseGroup)
+    .filter(Boolean))];
 }
 
 function splitRuleEntries(value) {
@@ -55,9 +86,8 @@ function splitRuleEntries(value) {
 
 function parseIdentityMarker(value) {
   const text = String(value || '');
-  const marker = text.match(/\{\[([^\]]+)\]\}/);
   const fields = {};
-  if (marker) {
+  for (const marker of text.matchAll(/\{\[([^\]]+)\]\}/g)) {
     for (const item of marker[1].split(';')) {
       const eq = item.indexOf('=');
       if (eq === -1) continue;
@@ -65,15 +95,26 @@ function parseIdentityMarker(value) {
     }
   }
   const tmdbId = Number(fields.tmdbid || fields.tmdb || 0);
+  const releaseGroup = fields.group || fields.releasegroup || fields.fansub || fields.fansubgroup || fields.subtitle || '';
   return {
     cleanText: text.replace(/\{\[[^\]]+\]\}/g, '').replace(/\s+/g, ' ').trim(),
     tmdbId: Number.isInteger(tmdbId) && tmdbId > 0 ? tmdbId : null,
-    mediaType: fields.type || ''
+    mediaType: fields.type || '',
+    releaseGroup: String(releaseGroup || '').trim(),
+    releaseGroups: releaseGroupValues(releaseGroup)
   };
 }
 
-function parseEpisodeSide(value, { allowPlatform = false } = {}) {
+function parseEpisodeSide(value, { allowPlatform = false, allowReleaseGroup = false } = {}) {
+  const identity = parseIdentityMarker(value);
   let text = String(value || '').trim();
+  if (allowReleaseGroup) {
+    // Remove only source-condition markers here.  TMDB/type markers on the
+    // target must remain in `title` so parseTargetTitle can retain their
+    // candidate qualifiers.
+    text = text.replace(/\{\[\s*(?:group|releasegroup|fansub|fansubgroup|subtitle)\s*=\s*[^\]}]+\]\}/gi, '');
+  }
+  text = text.replace(/\s+/g, ' ').trim();
   let platform = '';
 
   if (allowPlatform) {
@@ -93,7 +134,18 @@ function parseEpisodeSide(value, { allowPlatform = false } = {}) {
   const endEpisode = match[4] === undefined ? null : Number(match[4]);
   if (!title || season < 1 || startEpisode < 1 || (endEpisode !== null && endEpisode < startEpisode)) return null;
 
-  return { title, season, startEpisode, endEpisode, platform };
+  return {
+    title,
+    season,
+    startEpisode,
+    endEpisode,
+    platform,
+    // Group markers are meaningful on the source side. We still parse them
+    // on the target side for tolerant input handling, but the resolver only
+    // indexes sourceReleaseGroup.
+    releaseGroup: allowReleaseGroup ? identity.releaseGroup : '',
+    releaseGroups: allowReleaseGroup ? identity.releaseGroups : []
+  };
 }
 
 function parseTargetTitle(value) {
@@ -136,8 +188,8 @@ export function parseAutoMatchMappingRules(value, allowedPlatforms = []) {
       continue;
     }
 
-    const source = parseEpisodeSide(text.slice(0, arrowIndex));
-    const targetSide = parseEpisodeSide(text.slice(arrowIndex + 2), { allowPlatform: true });
+    const source = parseEpisodeSide(text.slice(0, arrowIndex), { allowReleaseGroup: true });
+    const targetSide = parseEpisodeSide(text.slice(arrowIndex + 2), { allowPlatform: true, allowReleaseGroup: true });
     if (!source || !targetSide) {
       warnings.push(`规则 ${index + 1} 的季集格式无效: ${text}`);
       continue;
@@ -172,6 +224,13 @@ export function parseAutoMatchMappingRules(value, allowedPlatforms = []) {
       sourceSeason: source.season,
       sourceStartEpisode: source.startEpisode,
       sourceEndEpisode: source.endEpisode,
+      sourceReleaseGroup: source.releaseGroup,
+      sourceReleaseGroups: source.releaseGroups,
+      sourceReleaseGroupKey: source.releaseGroups[0] || '',
+      // Alias retained for callers that consume the structured field
+      // directly. The source-prefixed name is used internally to make the
+      // direction explicit.
+      releaseGroup: source.releaseGroup,
       targetTitle: targetTitle.title,
       targetDisplayTitle: targetTitle.displayTitle,
       targetYear: targetTitle.year,
@@ -187,32 +246,55 @@ export function parseAutoMatchMappingRules(value, allowedPlatforms = []) {
   return { rules, warnings };
 }
 
-export function resolveAutoMatchMapping(rules, { title, season, episode }) {
+export function resolveAutoMatchMapping(rules, { title, season, episode, releaseGroups = [], releaseGroup = '' } = {}) {
   const titleKey = normalizeRuleTitle(title);
   const seasonNumber = Number(season);
   const episodeNumber = Number(episode);
   if (!titleKey || !Number.isInteger(seasonNumber) || !Number.isInteger(episodeNumber)) return null;
 
-  const matches = (getRuleIndex(rules).get(`${titleKey}\u0000${seasonNumber}`) || []).filter(rule => {
+  const index = getRuleIndex(rules);
+  const baseKey = `${titleKey}\u0000${seasonNumber}`;
+  const requestedGroups = Array.isArray(releaseGroups)
+    ? releaseGroups
+    : (releaseGroups ? [releaseGroups] : []);
+  const groups = releaseGroupValues(requestedGroups.length ? requestedGroups : releaseGroup);
+
+  const inEpisodeRange = rule => {
     if (episodeNumber < rule.sourceStartEpisode) return false;
     return rule.sourceEndEpisode === null || episodeNumber <= rule.sourceEndEpisode;
-  });
+  };
+
+  // A group-qualified rule is more specific than a generic rule. If a
+  // filename contains several release-group tokens, any exact token is
+  // eligible; only when none is in range do we fall back to generic rules.
+  const exactMatches = [];
+  for (const groupKey of groups) {
+    exactMatches.push(...(index.grouped.get(`${baseKey}\u0000${groupKey}`) || []).filter(inEpisodeRange));
+  }
+  const matches = exactMatches.length
+    ? exactMatches.map(rule => ({ rule, groupSpecificity: 1 }))
+    : (index.generic.get(baseKey) || []).filter(inEpisodeRange).map(rule => ({ rule, groupSpecificity: 0 }));
   // Open rules describe a mapping from their source start episode onward.
   // When several such rules share a source title/season, the latest start
   // episode is the most specific transition point. Keep declaration order
   // only as the tie-breaker for rules with the same specificity.
   matches.sort((left, right) => {
-    const originOrder = Number(right.originPriority || 0) - Number(left.originPriority || 0);
+    const groupOrder = right.groupSpecificity - left.groupSpecificity;
+    if (groupOrder !== 0) return groupOrder;
+    const leftRule = left.rule;
+    const rightRule = right.rule;
+    const originOrder = Number(rightRule.originPriority || 0) - Number(leftRule.originPriority || 0);
     if (originOrder !== 0) return originOrder;
-    const boundedOrder = Number(right.bounded) - Number(left.bounded);
+    const boundedOrder = Number(rightRule.bounded) - Number(leftRule.bounded);
     if (boundedOrder !== 0) return boundedOrder;
-    if (!left.bounded && left.sourceStartEpisode !== right.sourceStartEpisode) {
-      return right.sourceStartEpisode - left.sourceStartEpisode;
+    if (!leftRule.bounded && leftRule.sourceStartEpisode !== rightRule.sourceStartEpisode) {
+      return rightRule.sourceStartEpisode - leftRule.sourceStartEpisode;
     }
-    return left.order - right.order;
+    return leftRule.order - rightRule.order;
   });
 
-  const rule = matches[0];
+  const selected = matches[0];
+  const rule = selected?.rule;
   if (!rule) return null;
   return {
     ...rule,

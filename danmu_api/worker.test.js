@@ -54,6 +54,7 @@ import { convertCommentsToDanmux } from './utils/danmux-adapter.js';
 import { Segment, SegmentListResponse } from "./models/dandan-model.js"
 import { initBangumiData, searchBangumiData, clearBangumiDataCache, dedupeBangumiSearchResults } from "./utils/bangumi-data-util.js";
 import { generateNipaplaySignature, parseNipaplayRelatedLinks, resolveNipaplayLink, applyShiftToDanmu } from "./utils/nipaplay-util.js";
+import { parseFileName, extractReleaseGroups } from "./utils/common-util.js";
 
 // Mock Request class for testing
 class MockRequest {
@@ -301,6 +302,35 @@ test('worker.js API endpoints', async (t) => {
   });
 
   await t.test('auto match mapping table', async t => {
+    await t.test('prefers a release-group rule and falls back to generic rules', () => {
+      const parsed = parseAutoMatchMappingRules([
+        '作品 S01E01 {[group=ANi]} -> 组专用目标 S02E03',
+        '作品 S01E01 -> 通用目标 S01E04'
+      ].join(';'));
+      assert.deepEqual(parsed.warnings, []);
+      assert.equal(resolveAutoMatchMapping(parsed.rules, {
+        title: '作品', season: 1, episode: 1, releaseGroups: ['ANi']
+      }).targetTitle, '组专用目标');
+      assert.equal(resolveAutoMatchMapping(parsed.rules, {
+        title: '作品', season: 1, episode: 1
+      }).targetTitle, '通用目标');
+      assert.equal(resolveAutoMatchMapping(parsed.rules, {
+        title: '作品', season: 1, episode: 1, releaseGroups: ['Other']
+      }).targetTitle, '通用目标');
+    });
+
+    await t.test('extracts release groups without polluting the title', () => {
+      assert.deepEqual(extractReleaseGroups('[ANi] Foo.S01E01.1080p.WEB-DL.H264-ADWeb.mkv'), ['ANi', 'ADWeb']);
+      const parsed = parseFileName('[ANi] Foo.S01E01.1080p.WEB-DL.H264-ADWeb.mkv');
+      assert.deepEqual(parsed.releaseGroups, ['ANi', 'ADWeb']);
+      assert.equal(parsed.cleanFileName.startsWith('Foo.'), true);
+
+      const platformParsed = parseFileName('[ANi] Foo.S01E01@qq');
+      assert.deepEqual(platformParsed.releaseGroups, ['ANi']);
+      assert.equal(platformParsed.preferredPlatform, 'qq');
+      assert.deepEqual(extractReleaseGroups('Spider-Man.mkv'), []);
+    });
+
     await t.test('falls back when Unicode property escapes are unavailable', async () => {
       const NativeRegExp = globalThis.RegExp;
       globalThis.RegExp = function (pattern, flags) {
@@ -414,6 +444,7 @@ test('worker.js API endpoints', async (t) => {
           details.set(String(anime.animeId), anime);
         };
         if (scenario === 'fallback' && title === '缺失目标') return;
+        if (scenario === 'group-fallback' && title === '组专用目标') return;
         if (scenario === 'qualified' && title === '航海王') {
           add(createFavoriteAnime('无关动漫(1999)【动漫】from tencent', 70, 930000));
           add(createFavoriteAnime('航海王(2000)【动漫】from tencent', 70, 930001));
@@ -575,6 +606,14 @@ test('worker.js API endpoints', async (t) => {
         body = await runMatch({ AUTO_MATCH_MAPPING_TABLE: '原始剧 S01E01->缺失目标 S01E01' }, '原始剧 S01E01');
         assert.equal(body.matches[0].animeTitle, '原始剧');
         assert.deepEqual(searchKeywords, ['缺失目标', '原始剧']);
+
+        searchKeywords = [];
+        scenario = 'group-fallback';
+        body = await runMatch({
+          AUTO_MATCH_MAPPING_TABLE: '原始剧 S01E01 {[group=ANi]} -> 组专用目标 S01E01;原始剧 S01E01 -> 通用目标 S01E01'
+        }, '[ANi] 原始剧 S01E01');
+        assert.equal(body.matches[0].animeTitle, '通用目标');
+        assert.deepEqual(searchKeywords, ['组专用目标', '通用目标']);
       } finally {
         TencentSource.prototype.search = originalSearch;
         TencentSource.prototype.handleAnimes = originalHandleAnimes;
