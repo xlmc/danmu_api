@@ -7,7 +7,7 @@ WORKDIR /app
 # 复制 package.json 和 package-lock.json（如果存在）
 COPY package*.json ./
 
-# 安装项目依赖。danmux 使用固定提交的 GitHub 源码压缩包，不依赖 git。
+# 安装项目依赖。danmux 从 npm registry 安装，不依赖 git。
 RUN npm install
 
 # 复制所有源代码
