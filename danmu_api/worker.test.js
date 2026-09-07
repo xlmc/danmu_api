@@ -29,6 +29,7 @@ import { Globals } from "./configs/globals.js";
 import { addAnime, addEpisode, getSearchCache, hasSeasonSpecificPreference, isSearchCacheValid, setSearchCache } from "./utils/cache-util.js";
 import { addFavorite, listFavorites, loadFavorites, removeFavorite, resolveFavoriteForKeyword, saveFavorites } from './utils/favorite-util.js';
 import { candidateMatchesMappingQualifiers, candidateMatchesMappingTitle, parseAutoMatchMappingRules, resolveAutoMatchMapping } from './utils/auto-match-mapping-util.js';
+import { extractReleaseGroups, parseFileName } from './utils/common-util.js';
 import { HTML_TEMPLATE } from './ui/template.js';
 import { apitestJsContent } from './ui/js/apitest.js';
 import { systemSettingsJsContent } from './ui/js/systemsettings.js';
@@ -285,6 +286,32 @@ test('worker.js API endpoints', async (t) => {
   });
 
   await t.test('auto match mapping table', async t => {
+    await t.test('prefers exact release-group rules and falls back to generic rules', () => {
+      const parsed = parseAutoMatchMappingRules([
+        '示例 {[group=ANi]} S01E01->ANi目标 S01E01',
+        '示例 S01E01->通用目标 S01E01'
+      ].join(';'));
+
+      assert.deepEqual(parsed.warnings, []);
+      assert.equal(parsed.rules[0].sourceReleaseGroup, 'ANi');
+      assert.equal(resolveAutoMatchMapping(parsed.rules, {
+        title: '示例', season: 1, episode: 1, releaseGroups: ['ani']
+      }).targetTitle, 'ANi目标');
+      assert.equal(resolveAutoMatchMapping(parsed.rules, {
+        title: '示例', season: 1, episode: 1, releaseGroups: ['Other']
+      }).targetTitle, '通用目标');
+      assert.equal(resolveAutoMatchMapping(parsed.rules, {
+        title: '示例', season: 1, episode: 1
+      }).targetTitle, '通用目标');
+    });
+
+    await t.test('extracts release groups without treating quality or platform tags as groups', () => {
+      const parsed = parseFileName('[ADWeb] 示例.S01E01.1080p.WEB-DL.H264-ADWeb.mkv');
+      assert.deepEqual(parsed.releaseGroups, ['ADWeb']);
+      assert.deepEqual(extractReleaseGroups('[Baha] 示例.S01E01.1080p.mkv'), []);
+      assert.deepEqual(extractReleaseGroups('Spider-Man'), []);
+    });
+
     await t.test('falls back when Unicode property escapes are unavailable', async () => {
       const NativeRegExp = globalThis.RegExp;
       globalThis.RegExp = function (pattern, flags) {
@@ -419,6 +446,13 @@ test('worker.js API endpoints', async (t) => {
           details.set(String(anime.animeId), anime);
         };
         if (scenario === 'fallback' && title === '缺失目标') return;
+        if (scenario === 'group-fallback') {
+          if (title === '组目标') return;
+          if (title === '通用目标') {
+            add(createFavoriteAnime('通用目标', 70, 930008));
+            return;
+          }
+        }
         if (scenario === 'qualified' && title === '航海王') {
           add(createFavoriteAnime('无关动漫(1999)【动漫】from tencent', 70, 930000));
           add(createFavoriteAnime('航海王(2000)【动漫】from tencent', 70, 930001));
@@ -580,6 +614,14 @@ test('worker.js API endpoints', async (t) => {
         body = await runMatch({ AUTO_MATCH_MAPPING_TABLE: '原始剧 S01E01->缺失目标 S01E01' }, '原始剧 S01E01');
         assert.equal(body.matches[0].animeTitle, '原始剧');
         assert.deepEqual(searchKeywords, ['缺失目标', '原始剧']);
+
+        searchKeywords = [];
+        scenario = 'group-fallback';
+        body = await runMatch({
+          AUTO_MATCH_MAPPING_TABLE: '原始组剧 {[group=ADWeb]} S01E01->组目标 S01E01;原始组剧 S01E01->通用目标 S01E01'
+        }, '[ADWeb] 原始组剧 S01E01');
+        assert.equal(body.matches[0].animeId, 930008);
+        assert.deepEqual(searchKeywords, ['组目标', '通用目标']);
       } finally {
         tencentSource.search = originalSearch;
         tencentSource.handleAnimes = originalHandleAnimes;
