@@ -418,7 +418,7 @@ test('worker.js API endpoints', async (t) => {
       assert.equal(parsed.rules[0].targetDisplayTitle, '目标作品');
       assert.equal(parsed.rules[1].targetType, '电影');
       assert.equal(resolveAutoMatchMapping(parsed.rules, { title: '作品', season: 1, episode: 2 }).targetEpisode, 12);
-      assert.equal(resolveAutoMatchMapping(parsed.rules, { title: '作品', season: 1, episode: 2 }).targetEpisode, 12);
+
 
       const anime = Anime.fromJson({ animeTitle: '官方标题', aliases: ['目标作品'], links: [] });
       assert.deepEqual(anime.aliases, ['目标作品']);
