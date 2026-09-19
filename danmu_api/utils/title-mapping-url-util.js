@@ -455,6 +455,10 @@ export async function ensureRemoteTitleMapping() {
   resetForConfiguredUrl(url);
   if (!url) return;
 
+  // Serverless invocations must not wait on an external mapping download during
+  // cold start. The admin refresh endpoint is the explicit loading path there.
+  if (!isLongRunningRuntime()) return;
+
   await loadDiskRemoteMapping(url);
   scheduleRemoteRefresh(url);
 

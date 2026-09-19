@@ -2943,6 +2943,7 @@ test('worker.js API endpoints', async (t) => {
   // });
 
   await t.test('remote title mapping table', async (t) => {
+    Globals.deployPlatform = 'node';
     await t.test('normalizes supported source URLs', () => {
       assert.equal(
         normalizeMappingSourceUrl('https://github.com/alice/danmu-maps/blob/main/mappings.txt'),
@@ -3085,6 +3086,19 @@ test('worker.js API endpoints', async (t) => {
         await ensureRemoteTitleMapping();
       });
       assert.equal(requests, 1);
+    });
+
+    await t.test('does not download during serverless cold start', async () => {
+      Globals.init({ TITLE_MAPPING_TABLE_URL: 'https://maps.example.test/serverless.txt' });
+      Globals.deployPlatform = 'vercel';
+      let requests = 0;
+      await withMockFetch(async () => {
+        requests++;
+        return new Response('冷启动剧->不应等待', { status: 200 });
+      }, () => ensureRemoteTitleMapping());
+      assert.equal(requests, 0);
+      assert.equal(applyTitleMappingWithLog('冷启动剧'), '冷启动剧');
+      Globals.deployPlatform = 'node';
     });
 
     await t.test('normalizes release tags and applies only one mapping step', () => {
