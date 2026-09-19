@@ -927,6 +927,7 @@ function renderValueInput(item) {
         const isColorPool = currentKey === 'COLOR_POOL';
         const isDanmuOffset = currentKey === 'DANMU_OFFSET';
 		const isCustomMergeRules = currentKey === 'CUSTOM_MERGE_RULES';
+        const isRemoteMappingUrl = currentKey === 'TITLE_MAPPING_TABLE_URL';
         const offsetSources = item && item.sources ? item.sources : [];
         const isTitleFilter = currentKey === 'ANIME_TITLE_FILTER' || currentKey === 'EPISODE_TITLE_FILTER' || currentKey === 'TITLE_NOISE_FILTER';
         const recentDataBlock = isTitleFilter ? \`<div style="margin-top: 8px; display: flex; justify-content: flex-end;">\${renderRecentDataButton()}</div>\${renderRecentDataPanel()}\` : '';
@@ -1130,6 +1131,16 @@ function renderValueInput(item) {
                         <button type="button" class="btn btn-sm" onclick="toggleMergeRulePanel()">取消</button>
                         <button type="button" class="btn btn-primary btn-sm" onclick="appendMergeRule()">确认添加</button>
                     </div>
+                </div>
+            \`;
+        } else if (isRemoteMappingUrl) {
+            container.innerHTML = \`
+                <label>变量值</label>
+                <input type="url" id="text-value" placeholder="https://example.com/title-mapping.txt" value="\${escapeHtml(value || '')}">
+                <div class="form-help">修改地址后请先保存；再次打开本页面即可手动下载并立即应用，失败时保留旧缓存。</div>
+                <div style="margin-top: 10px; display: flex; align-items: center; gap: 10px;">
+                    <button type="button" class="btn btn-secondary" onclick="refreshRemoteMapping(this)">立即更新</button>
+                    <span class="remote-refresh-status text-gray font-size-12" aria-live="polite"></span>
                 </div>
             \`;
         } else if (value && value.length > 50) {
@@ -2389,14 +2400,6 @@ function envItemMatchesSearch(item, category, normalizedQuery) {
     ].join(' ').toLocaleLowerCase().includes(normalizedQuery);
 }
 
-function renderRemoteMappingRefreshItem() {
-    return '<div class="env-item">' +
-        '<div class="env-info"><strong>Remote Mapping Update</strong>' +
-        '<div class="text-gray font-size-12 margin-top-3">手动下载并立即应用远程剧名映射表；失败时保留旧缓存。</div></div>' +
-        '<div class="env-actions"><button class="btn btn-secondary" onclick="refreshRemoteMapping(this)">立即更新</button>' +
-        '<span class="remote-refresh-status text-gray font-size-12" aria-live="polite"></span></div></div>';
-}
-
 function renderEnvItem(item, category, originalIndex) {
     const typeLabel = getEnvTypeLabel(item.type);
     const badgeClass = item.type === 'multi-select' ? 'multi' : '';
@@ -2453,7 +2456,7 @@ function renderEnvList() {
         if (themeSettings) themeSettings.hidden = currentCategory !== 'system';
         if (status) status.textContent = previewCategoryMeta[currentCategory].label + ' · ' + categoryItems.length + ' 项';
         list.innerHTML = items.length
-            ? items.map(({ item, originalIndex }) => renderEnvItem(item, currentCategory, originalIndex) + (item.key === 'TITLE_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem() : '')).join('')
+            ? items.map(({ item, originalIndex }) => renderEnvItem(item, currentCategory, originalIndex)).join('')
             : '<p class="text-gray padding-20 text-center">暂无配置项</p>';
         return;
     }
@@ -2480,7 +2483,7 @@ function renderEnvList() {
                     <span>\${regularMatches.length} 项</span>
                 </div>
                 <div>
-                    \${regularMatches.map(({ item, originalIndex }) => renderEnvItem(item, category, originalIndex) + (item.key === 'TITLE_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem() : '')).join('')}
+                    \${regularMatches.map(({ item, originalIndex }) => renderEnvItem(item, category, originalIndex)).join('')}
                 </div>
             </section>
         \`;
