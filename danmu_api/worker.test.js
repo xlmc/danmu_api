@@ -400,9 +400,9 @@ test('worker.js API endpoints', async (t) => {
     });
 
     await t.test('maps match input, honors qualifiers and manual season preference, then falls back to original', async () => {
-      const originalSearch = tencentSource.search;
-      const originalHandleAnimes = tencentSource.handleAnimes;
-      const originalGetComments = tencentSource.getComments;
+      const originalSearch = TencentSource.prototype.search;
+      const originalHandleAnimes = TencentSource.prototype.handleAnimes;
+      const originalGetComments = TencentSource.prototype.getComments;
       const originalAiAsk = AIClient.prototype.ask;
       const originalOrder = Globals.envs.sourceOrderArr;
       const originalAiValid = Globals.aiValid;
@@ -410,11 +410,11 @@ test('worker.js API endpoints', async (t) => {
       let aiMatchInput = null;
       let scenario = 'open';
 
-      tencentSource.search = async keyword => {
+      TencentSource.prototype.search = async keyword => {
         searchKeywords.push(keyword);
         return [{ keyword }];
       };
-      tencentSource.handleAnimes = async (_source, title, results, details) => {
+      TencentSource.prototype.handleAnimes = async (_source, title, results, details) => {
         const add = anime => {
           results.push(anime);
           details.set(String(anime.animeId), anime);
@@ -445,7 +445,7 @@ test('worker.js API endpoints', async (t) => {
         }
         add(createFavoriteAnime(title, 70, 930003));
       };
-      tencentSource.getComments = async () => [{ p: '1,1,16777215,test', m: 'mapping-test' }];
+      TencentSource.prototype.getComments = async () => [{ p: '1,1,16777215,test', m: 'mapping-test' }];
       Globals.envs.sourceOrderArr = ['tencent'];
 
       const runMatch = async (env, fileName, useAi = false) => {
@@ -582,9 +582,9 @@ test('worker.js API endpoints', async (t) => {
         assert.equal(body.matches[0].animeTitle, '原始剧');
         assert.deepEqual(searchKeywords, ['缺失目标', '原始剧']);
       } finally {
-        tencentSource.search = originalSearch;
-        tencentSource.handleAnimes = originalHandleAnimes;
-        tencentSource.getComments = originalGetComments;
+        TencentSource.prototype.search = originalSearch;
+        TencentSource.prototype.handleAnimes = originalHandleAnimes;
+        TencentSource.prototype.getComments = originalGetComments;
         AIClient.prototype.ask = originalAiAsk;
         Globals.envs.sourceOrderArr = originalOrder;
         Globals.aiValid = originalAiValid;
@@ -999,15 +999,15 @@ test('worker.js API endpoints', async (t) => {
       favorite.timestamp = originalTimestamp;
       favorite.lastRefreshAt = originalTimestamp;
 
-      const originalSearch = tencentSource.search;
-      const originalHandleAnimes = tencentSource.handleAnimes;
+      const originalSearch = TencentSource.prototype.search;
+      const originalHandleAnimes = TencentSource.prototype.handleAnimes;
       const originalOrder = Globals.envs.sourceOrderArr;
       let searchCount = 0;
-      tencentSource.search = async () => {
+      TencentSource.prototype.search = async () => {
         searchCount++;
         return [{}];
       };
-      tencentSource.handleAnimes = async (_source, _title, results, details) => {
+      TencentSource.prototype.handleAnimes = async (_source, _title, results, details) => {
         results.push(refreshedAnime);
         details.set(String(refreshedAnime.animeId), refreshedAnime);
       };
@@ -1028,8 +1028,8 @@ test('worker.js API endpoints', async (t) => {
         assert.ok(resolveFavoriteForKeyword('刷新测试').entry.lastRefreshAt > originalTimestamp);
         assert.equal(listFavorites()[0].lastRefreshAt, resolveFavoriteForKeyword('刷新测试').entry.lastRefreshAt);
       } finally {
-        tencentSource.search = originalSearch;
-        tencentSource.handleAnimes = originalHandleAnimes;
+        TencentSource.prototype.search = originalSearch;
+        TencentSource.prototype.handleAnimes = originalHandleAnimes;
         Globals.envs.sourceOrderArr = originalOrder;
       }
     });
@@ -2956,6 +2956,8 @@ test('worker.js API endpoints', async (t) => {
         normalizeMappingSourceUrl('https://cdn.jsdelivr.net/gh/a/b@main/m.txt'),
         'https://cdn.jsdelivr.net/gh/a/b@main/m.txt'
       );
+      assert.throws(() => normalizeMappingSourceUrl('file:///tmp/mappings.txt'), /HTTP\/HTTPS/);
+      assert.throws(() => normalizeMappingSourceUrl('not-a-url'), /有效的 HTTP\/HTTPS/);
     });
 
     await t.test('parses relaxed and single-line mapping formats', () => {
@@ -2991,15 +2993,19 @@ test('worker.js API endpoints', async (t) => {
         '本地剧A->远程覆盖A;远程剧X->远程映射X;远程剧Y->远程映射Y'
       );
 
-      assert.equal(globals.titleMappingTable.get('远程剧X'), '远程映射X');
-      assert.equal(globals.titleMappingTable.get('远程剧Y'), '远程映射Y');
-      assert.equal(globals.titleMappingTable.get('本地剧A'), '本地映射A');
-      assert.equal(globals.titleMappingTable.get('本地剧B'), '本地映射B');
+      assert.equal(globals.titleMappingTable.has('远程剧X'), false);
+      assert.equal(applyTitleMappingWithLog('远程剧X'), '远程映射X');
+      assert.equal(applyTitleMappingWithLog('远程剧Y'), '远程映射Y');
+      assert.equal(applyTitleMappingWithLog('本地剧A'), '本地映射A');
+      assert.equal(applyTitleMappingWithLog('本地剧B'), '本地映射B');
 
       await ensureRemoteTitleMapping();
-      assert.equal(globals.titleMappingTable.get('远程剧X'), '远程映射X');
-      assert.throws(() => applyRemoteTitleMappingText('u', '# 只有注释'));
-      assert.equal(globals.titleMappingTable.get('远程剧X'), '远程映射X');
+      assert.equal(applyTitleMappingWithLog('远程剧X'), '远程映射X');
+      assert.throws(() => applyRemoteTitleMappingText(
+        'https://raw.githubusercontent.com/user/repo/main/mappings.txt',
+        '# 只有注释'
+      ));
+      assert.equal(applyTitleMappingWithLog('远程剧X'), '远程映射X');
     });
 
     await t.test('manual refresh downloads, parses, merges, and caches the configured table', async () => {
@@ -3021,10 +3027,11 @@ test('worker.js API endpoints', async (t) => {
           });
         }, () => refreshRemoteTitleMappingNow());
 
-        assert.deepEqual(result, { success: true, count: 2 });
+        assert.deepEqual(result, { success: true, count: 2, status: 200 });
         assert.equal(requestedUrl, sourceUrl);
-        assert.equal(globals.titleMappingTable.get('本地剧'), '本地优先');
-        assert.equal(globals.titleMappingTable.get('下载剧'), '下载映射');
+        assert.equal(applyTitleMappingWithLog('本地剧'), '本地优先');
+        assert.equal(applyTitleMappingWithLog('下载剧'), '下载映射');
+        assert.match(await fs.readFile(path.join(cacheRoot, '.cache', 'title-mapping-remote.txt'), 'utf8'), /下载剧->下载映射/);
       } finally {
         process.chdir(originalCwd);
         await fs.rm(cacheRoot, { recursive: true, force: true });
@@ -3047,7 +3054,64 @@ test('worker.js API endpoints', async (t) => {
       assert.equal(applyTitleMappingWithLog('Moving', 'favorite', null), '搬家(通用错误目标)');
     });
 
+    await t.test('clears stale remote rules when the URL is disabled or changed', async () => {
+      const firstUrl = 'https://maps.example.test/first.txt';
+      Globals.init({ TITLE_MAPPING_TABLE_URL: firstUrl });
+      applyRemoteTitleMappingText(firstUrl, '旧剧->旧映射');
+      assert.equal(applyTitleMappingWithLog('旧剧'), '旧映射');
+
+      Globals.init({});
+      await ensureRemoteTitleMapping();
+      assert.equal(applyTitleMappingWithLog('旧剧'), '旧剧');
+
+      Globals.init({ TITLE_MAPPING_TABLE_URL: 'https://maps.example.test/second.txt' });
+      let requests = 0;
+      await withMockFetch(async () => {
+        requests++;
+        return new Response('unavailable', { status: 503 });
+      }, () => ensureRemoteTitleMapping());
+      assert.equal(requests, 1);
+      assert.equal(applyTitleMappingWithLog('旧剧'), '旧剧');
+    });
+
+    await t.test('deduplicates initial downloads and backs off after one failed attempt', async () => {
+      Globals.init({ TITLE_MAPPING_TABLE_URL: 'https://maps.example.test/unavailable.txt' });
+      let requests = 0;
+      await withMockFetch(async () => {
+        requests++;
+        return new Response('unavailable', { status: 503 });
+      }, async () => {
+        await Promise.all([ensureRemoteTitleMapping(), ensureRemoteTitleMapping()]);
+        await ensureRemoteTitleMapping();
+      });
+      assert.equal(requests, 1);
+    });
+
+    await t.test('normalizes release tags and applies only one mapping step', () => {
+      Globals.init({
+        TITLE_MAPPING_TABLE: 'Show S01->节目;A->B;B->C'
+      });
+      assert.equal(applyTitleMappingWithLog('[WEB-DL] Show', 'match', 1), '节目');
+      assert.equal(applyTitleMappingWithLog('A', 'match'), 'B');
+    });
+
+    await t.test('manual refresh reports configuration errors without downloading', async () => {
+      Globals.init({});
+      assert.deepEqual(await refreshRemoteTitleMappingNow(), {
+        success: false,
+        count: 0,
+        errorMessage: '未配置 TITLE_MAPPING_TABLE_URL',
+        status: 400,
+      });
+
+      Globals.init({ TITLE_MAPPING_TABLE_URL: 'file:///tmp/mappings.txt' });
+      const invalid = await refreshRemoteTitleMappingNow();
+      assert.equal(invalid.success, false);
+      assert.equal(invalid.status, 400);
+    });
+
     Globals.init({});
+    await ensureRemoteTitleMapping();
   });
 
 });

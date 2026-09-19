@@ -2,7 +2,7 @@ import { globals } from "../configs/globals.js";
 import { jsonResponse } from "../utils/http-util.js";
 import { HTML_TEMPLATE } from "../ui/template.js";
 import { formatLogMessage, log } from "../utils/log-util.js";
-import { getRemoteMappingLogText, refreshRemoteTitleMappingNow } from "../utils/title-mapping-url-util.js";
+import { refreshRemoteTitleMappingNow } from "../utils/title-mapping-url-util.js";
 import { HandlerFactory } from "../configs/handlers/handler-factory.js";
 import { clearBangumiDataCache, initBangumiData } from "../utils/bangumi-data-util.js";
 
@@ -164,18 +164,11 @@ export function handleLogs() {
   return new Response(processedLogText, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
 }
 
-/**
- * 处理远程映射表日志请求：独立缓冲区（最近 5000 条），不被源站日志冲掉
- * @returns {Response} 远程映射日志文本
- */
-export function handleRemoteMappingLogs() {
-  return new Response(getRemoteMappingLogText(), { headers: { "Content-Type": "text/plain; charset=utf-8" } });
-}
-
 /** 管理员手动刷新远程映射表 */
 export async function handleRemoteMappingRefresh() {
   const result = await refreshRemoteTitleMappingNow();
-  return jsonResponse(result, result.success ? 200 : 502);
+  const { status = result.success ? 200 : 502, ...body } = result;
+  return jsonResponse(body, status);
 }
 
 /**

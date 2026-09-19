@@ -396,7 +396,7 @@ export async function getFongmiDanmaku(url, req) {
   }
   // 确保远程映射表已加载后，经本地+远程合并的映射表转换剧名
   await ensureRemoteTitleMapping();
-  name = applyTitleMappingWithLog(name, 'fongmi');
+  name = applyTitleMappingWithLog(name, 'fongmi', extractFongmiSeasonNumber(episode));
   const searchUrl = new URL(url.toString());
   const detailStore = new Map();
   const keywords = buildFongmiSearchKeywords(name);
@@ -404,7 +404,7 @@ export async function getFongmiDanmaku(url, req) {
 
   for (const keyword of keywords) {
     searchUrl.searchParams.set("keyword", keyword);
-    const searchRes = await searchAnime(searchUrl, null, null, detailStore);
+    const searchRes = await searchAnime(searchUrl, null, null, detailStore, null, false, true);
     const searchData = await searchRes.json();
     animes = Array.isArray(searchData?.animes) ? searchData.animes : [];
     if (animes.length) {

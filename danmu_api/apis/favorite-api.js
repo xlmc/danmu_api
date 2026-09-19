@@ -73,7 +73,7 @@ async function findSearchEntry(cacheKey, title, season, episode, url) {
   }
 
   const searchUrl = buildFavoriteSearchUrl(url, title, season, episode);
-  const searchResponse = await searchAnime(searchUrl, null, null, detailsMap);
+  const searchResponse = await searchAnime(searchUrl, null, null, detailsMap, null, false, true);
   const searchData = await searchResponse.json();
   if (!searchData?.success || !Array.isArray(searchData.animes) || searchData.animes.length === 0) return null;
 
@@ -97,7 +97,8 @@ export async function handleFavoriteAdd(req, url) {
     let season = null;
     let episode = null;
     if (requestedKeyword) {
-      title = requestedKeyword;
+      await ensureRemoteTitleMapping();
+      title = applyTitleMappingWithLog(requestedKeyword, 'favorite');
       if (globals.animeTitleSimplified) title = simplized(title);
       if (globals.titleNoiseFilter) title = title.replace(globals.titleNoiseFilter, '').trim();
     } else {
@@ -213,7 +214,8 @@ async function refreshFavoriteResolved(fileName, requestedKeyword, url) {
     } else {
       const resolved = resolveFavoriteForKeyword(requestedKeyword);
       cacheKey = resolved?.keyword || requestedKeyword;
-      title = stripSeasonSuffix(cacheKey);
+      await ensureRemoteTitleMapping();
+      title = applyTitleMappingWithLog(stripSeasonSuffix(cacheKey), 'favorite');
     }
 
     if (!resolveFavoriteForKeyword(cacheKey)) {
@@ -224,7 +226,7 @@ async function refreshFavoriteResolved(fileName, requestedKeyword, url) {
 
     const detailsMap = new Map();
     const searchUrl = buildFavoriteSearchUrl(url, title, season, episode);
-    const searchResponse = await searchAnime(searchUrl, null, null, detailsMap, null, true);
+    const searchResponse = await searchAnime(searchUrl, null, null, detailsMap, null, true, true);
     const searchData = await searchResponse.json();
     if (!searchData?.success || !Array.isArray(searchData.animes) || searchData.animes.length === 0) {
       const error = new Error('刷新失败：未找到该剧集搜索结果');

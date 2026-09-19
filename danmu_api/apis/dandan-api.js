@@ -430,59 +430,32 @@ async function executeSourceHandlers(resultData, queryTitle, targetAnimesList, r
 }
 
 // Extracted function for GET /api/v2/search/anime
-export async function searchAnime(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false) {
+export async function searchAnime(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, skipTitleMapping = false) {
   // 单次搜索请求内启用 HTTP 响应复用缓存: 作为各源通用的请求级复用安全网, 借助 AsyncLocalStorage 做请求级隔离
   if (httpCacheContext.getStore()) {
-    return searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh);
+    return searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, skipTitleMapping);
   }
-  return runWithHttpCache(() => searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh));
+  return runWithHttpCache(() => searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, skipTitleMapping));
 }
 
-async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false) {
+async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, skipTitleMapping = false) {
   let queryTitle = url.searchParams.get("keyword");
 
-  // 确保远程剧名映射表已加载（缓存有效期内为纯内存操作），再做关键词映射
-  await ensureRemoteTitleMapping();
-  const originalSearchKeyword = queryTitle;
-  queryTitle = applySearchKeywordMapping(queryTitle);
-  const keywordWasMapped = queryTitle !== originalSearchKeyword;
+  let querySeason = url.searchParams.get("season");
+  querySeason = querySeason ? parseInt(querySeason, 10) : null;
+  let queryEpisode = url.searchParams.get("episode");
+  queryEpisode = queryEpisode ? parseInt(queryEpisode, 10) : null;
 
-  // 识别信息：随搜索响应一并返回，便于调试界面直接查看
-  const recognitionInfo = {
-    originalKeyword: String(originalSearchKeyword ?? ""),
-    finalKeyword: queryTitle,
-    mappingApplied: keywordWasMapped,
-  };
-
-  // 诊断回显：每次搜索都把「识别结果 + 各源命中情况」写回 [title-mapping] 日志分类
-  const logMappingSearchOutcome = (animes, viaCache = false) => {
-    const count = Array.isArray(animes) ? animes.length : 0;
-    const kwDesc = keywordWasMapped
-      ? `「${originalSearchKeyword}」映射为「${queryTitle}」`
-      : `「${queryTitle}」（未触发映射）`;
-    if (count === 0) {
-      log("warn", `[system] [title-mapping] [search] 🔎 搜索 ${kwDesc} 结果: 0 条（各源均未找到${viaCache ? "，来自缓存" : ""}）`);
-      return;
-    }
-    const bySource = {};
-    for (const a of animes) {
-      const src = a.source || "unknown";
-      bySource[src] = (bySource[src] || 0) + 1;
-    }
-    const sourceSummary = Object.entries(bySource).map(([s, n]) => `${s}×${n}`).join(", ");
-    const topTitles = animes.slice(0, 5).map((a, i) => `${i + 1}. ${a.animeTitle}`).join("；");
-    log("info", `[system] [title-mapping] [search] 🔎 搜索 ${kwDesc} 结果: ${count} 条（${sourceSummary}${viaCache ? "，来自缓存" : ""}）→ ${topTitles}${count > 5 ? ` …等共 ${count} 条` : ""}`);
-  };
+  if (!skipTitleMapping) {
+    await ensureRemoteTitleMapping();
+    queryTitle = applySearchKeywordMapping(queryTitle, querySeason);
+  }
 
   // 搜索词杂音清理：移除画质/配音/版本等杂音词后再提交源站搜索
   if (globals.titleNoiseFilter) {
     queryTitle = queryTitle.replace(globals.titleNoiseFilter, '').trim();
   }
 
-  let querySeason = url.searchParams.get("season");
-  querySeason = querySeason ? parseInt(querySeason, 10) : null;
-  let queryEpisode = url.searchParams.get("episode");
-  queryEpisode = queryEpisode ? parseInt(queryEpisode, 10) : null;
   let tmdbSeasonBoundaries = null;
   log("info", `[system] [searchAnime] Search anime with keyword: ${queryTitle}, target season: ${querySeason}, target episode: ${queryEpisode}`);
 
@@ -509,7 +482,6 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
   // 收藏缓存命中后必须直接返回，不能因目标集数判断继续请求外部源。
   if (!forceRefresh && resolveFavoriteForSearchKeyword(cacheKey)) {
     const favoriteResults = getSearchCache(cacheKey, requestAnimeDetailsMap) || [];
-    logMappingSearchOutcome(favoriteResults, true);
     return jsonResponse({
       errorCode: 0,
       success: true,
@@ -533,13 +505,11 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
   if (cachedResults !== null) {
     let satisfied = checkEpisodeSatisfied(cachedResults, querySeason, queryEpisode, requestAnimeDetailsMap, targetPlatform);
     if (satisfied) {
-      logMappingSearchOutcome(cachedResults, true);
       return jsonResponse({
         errorCode: 0,
         success: true,
         errorMessage: "",
         animes: cachedResults,
-        titleMappingInfo: recognitionInfo,
       });
     } else {
       // 当前季度缓存未能满足目标集数，尝试顺延加载后续季度的缓存拼接
@@ -561,7 +531,6 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
       
       if (satisfied) {
         log("info", `[system] [LogVar-API] Episode ${queryEpisode} satisfied by combining cached seasons S${querySeason} to S${currentS - 1}`);
-        logMappingSearchOutcome(combinedCachedResults, true);
         return jsonResponse({
           errorCode: 0,
           success: true,
@@ -947,15 +916,12 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
       setSearchCache(cacheKey, responseAnimes, requestAnimeDetailsMap);
     }
 
-    logMappingSearchOutcome(responseAnimes, false);
-
     return jsonResponse({
       errorCode: 0,
       success: true,
       errorMessage: "",
       animes: responseAnimes,
       tmdbSeasonBoundaries,
-      titleMappingInfo: recognitionInfo,
     });
 
 }
@@ -1704,45 +1670,21 @@ function detectPlatformFromUrl(url) {
   return 'unknown';
 }
 
-/**
- * 【从文件名里提取出：剧名 / 季数 / 集数 / 年份】——自动匹配的“第一步”
- *
- * 用户传进来的是一整个文件路径/文件名，例如：
- *   "[WEB-DL] 宝可梦 地平线 烈空坐飞升.2024.S01E01.1080p.x264.mkv"
- *
- * 而我们要做的是把里面的“真正的剧名”抠出来，并解析出：
- *   剧名   -> "宝可梦 地平线 烈空坐飞升"
- *   季数   -> 1
- *   集数   -> 1
- *   年份   -> 2024
- *
- * 抠出来的剧名会交给剧名映射表处理（见 title-mapping-url-util.js）。
- * 所以这里必须先清掉文件名里那些“不是剧名”的杂质，
- * 否则 "[WEB-DL]"、"1080p"、".mkv" 这些会污染剧名，导致映射永远命不中。
- */
 export async function extractTitleSeasonEpisode(cleanFileName) {
-  // 第一步：清理文件名最前面的「发布标签」。
-  // 这些方括号标签（如 [WEB-DL]、[1080p]、[字幕组名]）不是剧名，全部剥掉；
-  // 同时去掉结尾的视频扩展名（.mkv/.mp4 等）。
-  const normalizedFileName = String(cleanFileName || '')
-    .replace(/^(?:\s*\[(?:WEB[- ]?DL|WEB[- ]?Rip|Blu[- ]?Ray|HDTV|DVDRip|BDRip|2160p|1080p|720p|4K|HDR|DV|x26[45]|H\.?26[45]|AAC|AC3|DDP|TrueHD|DTS|10bit|中字|字幕|国配|中配|日配|粤语|原声|无修|未删减|完整版|臻彩|真彩|Group|[A-Za-z0-9_-]{2,20})[^\]]*\]\s*)+/i, '')
-    .replace(/\.(?:mkv|mp4|avi|mov|wmv)$/i, '');
-  // 第二步：用正则找“剧名 + S季E集”模式。
-  // 例："宝可梦 地平线.S01E01" → 前面是剧名，S01=季1，E01=集1
   const regex = /^(.+?)[.\s]+S(\d+)E(\d+)/i;
-  const match = normalizedFileName.match(regex);
+  const match = cleanFileName.match(regex);
 
   let title, season, episode, year;
 
   if (match) {
-    // ----- 情况 A：文件名里带 S##E##（最标准、最常见的格式） -----
-    title = match[1].trim();    // 剧名 = S 前面那段
-    season = parseInt(match[2], 10);  // 季数 = S 后面的数字
-    episode = parseInt(match[3], 10); // 集数 = E 后面的数字
+    // 匹配到 S##E## 格式
+    title = match[1].trim();
+    season = parseInt(match[2], 10);
+    episode = parseInt(match[3], 10);
 
     // ============ 提取年份 =============
     // 从文件名中提取年份（支持多种格式：.2009、.2024、(2009)、(2024) 等）
-    const yearMatch = normalizedFileName.match(/(?:\.|\(|（)((?:19|20)\d{2})(?:\)|）|\.|$)/);
+    const yearMatch = cleanFileName.match(/(?:\.|\(|（)((?:19|20)\d{2})(?:\)|）|\.|$)/);
     if (yearMatch) {
       year = parseInt(yearMatch[1], 10);
     }
@@ -1778,20 +1720,17 @@ export async function extractTitleSeasonEpisode(cleanFileName) {
     // 最后再保险清理一次常见的年份尾巴（防止漏网）
     title = title.replace(/\.\d{4}$/i, '').trim();
   } else {
-    // ----- 情况 B：文件名里没有 S##E##（比如只有年份/分辨率）-----
-    // 这时只能尽力“在技术参数出现之前”截取剧名。
-    // 正则里的关键部分：(?:\d{4}|\d{3,4}p|S\d+|WEB|x264|...) 表示“技术字段”，
-    // 遇到它们就停，把前面那段当剧名。
+    // 没有 S##E## 格式，尝试提取第一个片段作为标题
+    // 匹配第一个中文/英文标题部分（在年份、分辨率等技术信息之前）
     const titleRegex = /^([^.\s]+(?:[.\s][^.\s]+)*?)(?:[.\s](?:\d{4}|(?:19|20)\d{2}|\d{3,4}p|S\d+|E\d+|WEB|BluRay|Blu-ray|HDTV|DVDRip|BDRip|x264|x265|H\.?264|H\.?265|AAC|AC3|DDP|TrueHD|DTS|10bit|HDR|60FPS))/i;
-    const titleMatch = normalizedFileName.match(titleRegex);
+    const titleMatch = cleanFileName.match(titleRegex);
 
-    // 找到就以空格分隔（点号转为空格）；找不到就整串当剧名（至少不会更糟）
-    title = titleMatch ? titleMatch[1].replace(/[._]/g, ' ').trim() : normalizedFileName;
+    title = titleMatch ? titleMatch[1].replace(/[._]/g, ' ').trim() : cleanFileName;
     season = null;
     episode = null;
     
     // 从文件名中提取年份
-    const yearMatch = normalizedFileName.match(/(?:\.|\(|（)((?:19|20)\d{2})(?:\)|）|\.|$)/);
+    const yearMatch = cleanFileName.match(/(?:\.|\(|（)((?:19|20)\d{2})(?:\)|）|\.|$)/);
     if (yearMatch) {
       year = parseInt(yearMatch[1], 10);
     }
@@ -1875,7 +1814,7 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
   const targetPlatform = dynamicPlatformOrder.length > 0 ? dynamicPlatformOrder[0] : null;
   const detailStore = new Map();
   const searchUrl = buildSearchAnimeUrl(req.url, title, season, episode);
-  const searchRes = await searchAnime(searchUrl, preferAnimeId, preferSource, detailStore, targetPlatform);
+  const searchRes = await searchAnime(searchUrl, preferAnimeId, preferSource, detailStore, targetPlatform, false, true);
   const searchData = await searchRes.json();
   log("info", `[system] [match] searchData: ${searchData.animes}`);
   log("info", `[system] [match] Dynamic platformOrder: ${dynamicPlatformOrder}`);

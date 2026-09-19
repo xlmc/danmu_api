@@ -2393,8 +2393,8 @@ function renderRemoteMappingRefreshItem() {
     return '<div class="env-item">' +
         '<div class="env-info"><strong>Remote Mapping Update</strong>' +
         '<div class="text-gray font-size-12 margin-top-3">手动下载并立即应用远程剧名映射表；失败时保留旧缓存。</div></div>' +
-        '<div class="env-actions remote-refresh-actions"><button class="btn btn-secondary" onclick="refreshRemoteMapping(this)">立即更新</button>' +
-        '<span class="remote-refresh-status text-gray font-size-12" style="display:block;margin-top:4px;" aria-live="polite"></span></div></div>';
+        '<div class="env-actions"><button class="btn btn-secondary" onclick="refreshRemoteMapping(this)">立即更新</button>' +
+        '<span class="remote-refresh-status text-gray font-size-12" aria-live="polite"></span></div></div>';
 }
 
 function renderEnvItem(item, category, originalIndex) {
@@ -2516,7 +2516,7 @@ async function refreshRemoteMapping(button) {
         }
         const result = await response.json();
         if (!response.ok || !result.success) {
-            throw new Error(result.error || result.errorMessage || '远程映射表更新失败');
+            throw new Error(result.errorMessage || '远程映射表更新失败');
         }
         button.textContent = '更新成功';
         setStatus('成功更新' + (result.count || 0) + '条规则');
@@ -2524,8 +2524,7 @@ async function refreshRemoteMapping(button) {
     } catch (error) {
         button.textContent = originalText;
         button.disabled = false;
-        // 界面只显示简短状态，详细原因由服务端写入 remote-mapping 日志
-        setStatus('失败', true);
+        setStatus(error.message || '失败', true);
     }
 }
 
