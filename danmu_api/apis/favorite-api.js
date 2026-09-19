@@ -38,6 +38,7 @@ function buildFavoriteSearchUrl(baseUrl, keyword, season, episode) {
   searchUrl.searchParams.set('keyword', keyword || '');
   if (season !== undefined && season !== null) searchUrl.searchParams.set('season', String(season));
   if (episode !== undefined && episode !== null) searchUrl.searchParams.set('episode', String(episode));
+  searchUrl.searchParams.set('_titleMappingApplied', '1');
   return searchUrl;
 }
 
@@ -73,7 +74,7 @@ async function findSearchEntry(cacheKey, title, season, episode, url) {
   }
 
   const searchUrl = buildFavoriteSearchUrl(url, title, season, episode);
-  const searchResponse = await searchAnime(searchUrl, null, null, detailsMap, null, false, true);
+  const searchResponse = await searchAnime(searchUrl, null, null, detailsMap);
   const searchData = await searchResponse.json();
   if (!searchData?.success || !Array.isArray(searchData.animes) || searchData.animes.length === 0) return null;
 
@@ -226,7 +227,7 @@ async function refreshFavoriteResolved(fileName, requestedKeyword, url) {
 
     const detailsMap = new Map();
     const searchUrl = buildFavoriteSearchUrl(url, title, season, episode);
-    const searchResponse = await searchAnime(searchUrl, null, null, detailsMap, null, true, true);
+    const searchResponse = await searchAnime(searchUrl, null, null, detailsMap, null, true);
     const searchData = await searchResponse.json();
     if (!searchData?.success || !Array.isArray(searchData.animes) || searchData.animes.length === 0) {
       const error = new Error('刷新失败：未找到该剧集搜索结果');

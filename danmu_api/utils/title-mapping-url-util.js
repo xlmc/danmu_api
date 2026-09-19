@@ -18,13 +18,14 @@ const remoteState = {
   configuredUrl: '',
   activeUrl: '',
   mappings: new Map(),
-  index: emptyIndex(),
   fetchedAt: 0,
   diskAttempted: false,
   nextInitialRetryAt: 0,
   schedulerTimer: null,
   scheduledUrl: '',
   fetches: new Map(),
+  mergedTable: null,
+  mergedKeys: new Set(),
 };
 
 const localIndexCache = new WeakMap();
@@ -65,19 +66,46 @@ function buildMappingIndex(table) {
   return index;
 }
 
-function getLocalMappingTable() {
+function getTitleMappingTable() {
   if (globals.envs?.titleMappingTable instanceof Map) return globals.envs.titleMappingTable;
   if (globals.titleMappingTable instanceof Map) return globals.titleMappingTable;
   return new Map();
 }
 
-function getLocalMappingIndex(table) {
+function getMappingIndex(table) {
   let index = localIndexCache.get(table);
   if (!index) {
     index = buildMappingIndex(table);
     localIndexCache.set(table, index);
   }
   return index;
+}
+
+function removeMergedRemoteMappings() {
+  const table = remoteState.mergedTable;
+  if (table instanceof Map) {
+    for (const key of remoteState.mergedKeys) table.delete(key);
+    localIndexCache.delete(table);
+  }
+  remoteState.mergedTable = null;
+  remoteState.mergedKeys = new Set();
+}
+
+function mergeRemoteMappingsIntoTitleTable() {
+  const table = getTitleMappingTable();
+  if (remoteState.mergedTable === table) return table;
+
+  remoteState.mergedTable = table;
+  remoteState.mergedKeys = new Set();
+  if (remoteState.mappings instanceof Map) {
+    for (const [key, value] of remoteState.mappings) {
+      if (table.has(key)) continue;
+      table.set(key, value);
+      remoteState.mergedKeys.add(key);
+    }
+  }
+  localIndexCache.delete(table);
+  return table;
 }
 
 function lookupMapping(index, candidateKeys) {
@@ -99,10 +127,10 @@ function cancelScheduler() {
 function resetForConfiguredUrl(url) {
   if (remoteState.configuredUrl === url) return;
   cancelScheduler();
+  removeMergedRemoteMappings();
   remoteState.configuredUrl = url;
   remoteState.activeUrl = '';
   remoteState.mappings = new Map();
-  remoteState.index = emptyIndex();
   remoteState.fetchedAt = 0;
   remoteState.diskAttempted = false;
   remoteState.nextInitialRetryAt = 0;
@@ -114,11 +142,12 @@ function currentConfiguredUrl() {
 
 function activateRemoteMappings(url, mappings, fetchedAt = Date.now()) {
   if (remoteState.configuredUrl && remoteState.configuredUrl !== url) return false;
+  removeMergedRemoteMappings();
   remoteState.activeUrl = url;
   remoteState.mappings = mappings;
-  remoteState.index = buildMappingIndex(mappings);
   remoteState.fetchedAt = fetchedAt;
   remoteState.nextInitialRetryAt = 0;
+  mergeRemoteMappingsIntoTitleTable();
   return true;
 }
 
@@ -288,10 +317,6 @@ export function applyTitleMappingWithLog(rawTitle, source = 'system', season = n
   const candidateKeys = buildMappingCandidateKeys(rawTitle, season, year);
   if (!candidateKeys.length) return rawTitle;
 
-  const localTable = getLocalMappingTable();
-  const localMatch = lookupMapping(getLocalMappingIndex(localTable), candidateKeys);
-  if (localMatch) return localMatch.mapped;
-
   let configuredUrl = '';
   try {
     configuredUrl = currentConfiguredUrl();
@@ -300,12 +325,13 @@ export function applyTitleMappingWithLog(rawTitle, source = 'system', season = n
     return rawTitle;
   }
   resetForConfiguredUrl(configuredUrl);
-  if (!configuredUrl || remoteState.activeUrl !== configuredUrl || !remoteState.mappings.size) return rawTitle;
-
-  const remoteMatch = lookupMapping(remoteState.index, candidateKeys);
-  if (!remoteMatch) return rawTitle;
-  remoteLog('info', `[${source}] 匹配成功: 「${remoteMatch.key}」→「${remoteMatch.mapped}」`);
-  return remoteMatch.mapped;
+  const table = mergeRemoteMappingsIntoTitleTable();
+  const match = lookupMapping(getMappingIndex(table), candidateKeys);
+  if (!match) return rawTitle;
+  if (remoteState.mergedKeys.has(match.key)) {
+    remoteLog('info', `[${source}] 匹配成功: 「${match.key}」→「${match.mapped}」`);
+  }
+  return match.mapped;
 }
 
 export function applySearchKeywordMapping(keyword, season = null, year = null) {
@@ -454,6 +480,7 @@ export async function ensureRemoteTitleMapping() {
 
   resetForConfiguredUrl(url);
   if (!url) return;
+  mergeRemoteMappingsIntoTitleTable();
 
   // Serverless invocations must not wait on an external mapping download during
   // cold start. The admin refresh endpoint is the explicit loading path there.

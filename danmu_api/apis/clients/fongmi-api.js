@@ -398,13 +398,16 @@ export async function getFongmiDanmaku(url, req) {
   await ensureRemoteTitleMapping();
   name = applyTitleMappingWithLog(name, 'fongmi', extractFongmiSeasonNumber(episode));
   const searchUrl = new URL(url.toString());
+  const mappingSeason = extractFongmiSeasonNumber(episode);
+  if (mappingSeason) searchUrl.searchParams.set('season', String(mappingSeason));
+  searchUrl.searchParams.set('_titleMappingApplied', '1');
   const detailStore = new Map();
   const keywords = buildFongmiSearchKeywords(name);
   let animes = [];
 
   for (const keyword of keywords) {
     searchUrl.searchParams.set("keyword", keyword);
-    const searchRes = await searchAnime(searchUrl, null, null, detailStore, null, false, true);
+    const searchRes = await searchAnime(searchUrl, null, null, detailStore);
     const searchData = await searchRes.json();
     animes = Array.isArray(searchData?.animes) ? searchData.animes : [];
     if (animes.length) {

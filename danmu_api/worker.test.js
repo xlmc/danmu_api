@@ -2994,7 +2994,7 @@ test('worker.js API endpoints', async (t) => {
         '本地剧A->远程覆盖A;远程剧X->远程映射X;远程剧Y->远程映射Y'
       );
 
-      assert.equal(globals.titleMappingTable.has('远程剧X'), false);
+      assert.equal(globals.titleMappingTable.get('远程剧X'), '远程映射X');
       assert.equal(applyTitleMappingWithLog('远程剧X'), '远程映射X');
       assert.equal(applyTitleMappingWithLog('远程剧Y'), '远程映射Y');
       assert.equal(applyTitleMappingWithLog('本地剧A'), '本地映射A');
@@ -3061,11 +3061,12 @@ test('worker.js API endpoints', async (t) => {
       applyRemoteTitleMappingText(firstUrl, '旧剧->旧映射');
       assert.equal(applyTitleMappingWithLog('旧剧'), '旧映射');
 
-      Globals.init({});
+      Globals.envs.titleMappingTableUrl = '';
       await ensureRemoteTitleMapping();
+      assert.equal(globals.titleMappingTable.has('旧剧'), false);
       assert.equal(applyTitleMappingWithLog('旧剧'), '旧剧');
 
-      Globals.init({ TITLE_MAPPING_TABLE_URL: 'https://maps.example.test/second.txt' });
+      Globals.envs.titleMappingTableUrl = 'https://maps.example.test/second.txt';
       let requests = 0;
       await withMockFetch(async () => {
         requests++;

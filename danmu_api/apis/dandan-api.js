@@ -430,25 +430,27 @@ async function executeSourceHandlers(resultData, queryTitle, targetAnimesList, r
 }
 
 // Extracted function for GET /api/v2/search/anime
-export async function searchAnime(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, skipTitleMapping = false) {
+export async function searchAnime(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false) {
   // 单次搜索请求内启用 HTTP 响应复用缓存: 作为各源通用的请求级复用安全网, 借助 AsyncLocalStorage 做请求级隔离
   if (httpCacheContext.getStore()) {
-    return searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, skipTitleMapping);
+    return searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh);
   }
-  return runWithHttpCache(() => searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, skipTitleMapping));
+  return runWithHttpCache(() => searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh));
 }
 
-async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, skipTitleMapping = false) {
+async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false) {
   let queryTitle = url.searchParams.get("keyword");
 
   let querySeason = url.searchParams.get("season");
   querySeason = querySeason ? parseInt(querySeason, 10) : null;
   let queryEpisode = url.searchParams.get("episode");
   queryEpisode = queryEpisode ? parseInt(queryEpisode, 10) : null;
+  let queryYear = url.searchParams.get("year");
+  queryYear = queryYear ? parseInt(queryYear, 10) : null;
 
-  if (!skipTitleMapping) {
+  if (url.searchParams.get('_titleMappingApplied') !== '1') {
     await ensureRemoteTitleMapping();
-    queryTitle = applySearchKeywordMapping(queryTitle, querySeason);
+    queryTitle = applySearchKeywordMapping(queryTitle, querySeason, queryYear);
   }
 
   // 搜索词杂音清理：移除画质/配音/版本等杂音词后再提交源站搜索
@@ -1814,7 +1816,9 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
   const targetPlatform = dynamicPlatformOrder.length > 0 ? dynamicPlatformOrder[0] : null;
   const detailStore = new Map();
   const searchUrl = buildSearchAnimeUrl(req.url, title, season, episode);
-  const searchRes = await searchAnime(searchUrl, preferAnimeId, preferSource, detailStore, targetPlatform, false, true);
+  if (year) searchUrl.searchParams.set('year', String(year));
+  searchUrl.searchParams.set('_titleMappingApplied', '1');
+  const searchRes = await searchAnime(searchUrl, preferAnimeId, preferSource, detailStore, targetPlatform);
   const searchData = await searchRes.json();
   log("info", `[system] [match] searchData: ${searchData.animes}`);
   log("info", `[system] [match] Dynamic platformOrder: ${dynamicPlatformOrder}`);
