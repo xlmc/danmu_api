@@ -12,7 +12,6 @@ import {
 import { resolveFavoriteForSearchKeyword } from "../utils/favorite-util.js";
 import { formatDanmuResponse, convertToDanmakuJson } from "../utils/danmu-util.js";
 import { resolveOffset, resolveOffsetRule, applyOffset, stripLinkOffset } from "../utils/offset-util.js";
-import { applyTitleMappingWithLog, applySearchKeywordMapping, ensureRemoteTitleMapping } from "../utils/title-mapping-url-util.js";
 import { filterMappingQualifierCandidates, filterMappingTargetCandidates, resolveAutoMatchMapping } from "../utils/auto-match-mapping-util.js";
 import { 
   extractEpisodeTitle, convertChineseNumber, parseFileName, createDynamicPlatformOrder, normalizeSpaces, 
@@ -441,23 +440,15 @@ export async function searchAnime(url, preferAnimeId = null, preferSource = null
 async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false) {
   let queryTitle = url.searchParams.get("keyword");
 
-  let querySeason = url.searchParams.get("season");
-  querySeason = querySeason ? parseInt(querySeason, 10) : null;
-  let queryEpisode = url.searchParams.get("episode");
-  queryEpisode = queryEpisode ? parseInt(queryEpisode, 10) : null;
-  let queryYear = url.searchParams.get("year");
-  queryYear = queryYear ? parseInt(queryYear, 10) : null;
-
-  if (url.searchParams.get('_titleMappingApplied') !== '1') {
-    await ensureRemoteTitleMapping();
-    queryTitle = applySearchKeywordMapping(queryTitle, querySeason, queryYear);
-  }
-
   // 搜索词杂音清理：移除画质/配音/版本等杂音词后再提交源站搜索
   if (globals.titleNoiseFilter) {
     queryTitle = queryTitle.replace(globals.titleNoiseFilter, '').trim();
   }
 
+  let querySeason = url.searchParams.get("season");
+  querySeason = querySeason ? parseInt(querySeason, 10) : null;
+  let queryEpisode = url.searchParams.get("episode");
+  queryEpisode = queryEpisode ? parseInt(queryEpisode, 10) : null;
   let tmdbSeasonBoundaries = null;
   log("info", `[system] [searchAnime] Search anime with keyword: ${queryTitle}, target season: ${querySeason}, target episode: ${queryEpisode}`);
 
@@ -1816,8 +1807,6 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
   const targetPlatform = dynamicPlatformOrder.length > 0 ? dynamicPlatformOrder[0] : null;
   const detailStore = new Map();
   const searchUrl = buildSearchAnimeUrl(req.url, title, season, episode);
-  if (year) searchUrl.searchParams.set('year', String(year));
-  searchUrl.searchParams.set('_titleMappingApplied', '1');
   const searchRes = await searchAnime(searchUrl, preferAnimeId, preferSource, detailStore, targetPlatform);
   const searchData = await searchRes.json();
   log("info", `[system] [match] searchData: ${searchData.animes}`);
@@ -1881,11 +1870,10 @@ function normalizeMatchTitle(title) {
   return normalized;
 }
 
-async function resolveLegacyMatchTitle(title, season = null, year = null) {
-  // 确保远程映射表已加载后，经本地+远程合并的映射表转换标题；优先 剧名×季/剧名×年份×季 组合键，再退回裸剧名
-  await ensureRemoteTitleMapping();
-  const mappedTitle = applyTitleMappingWithLog(title, 'match', season, year);
-  return normalizeMatchTitle(mappedTitle);
+function resolveLegacyMatchTitle(title) {
+  const mapped = globals.titleMappingTable instanceof Map ? globals.titleMappingTable.get(title) : null;
+  if (mapped) log("info", `[system] [match] Title mapped from original: ${title} to: ${mapped}`);
+  return normalizeMatchTitle(mapped || title);
 }
 
 function findSeasonPreferenceTitle(titles, season) {
@@ -1984,7 +1972,7 @@ export async function matchAnime(url, req, clientIp) {
     }
 
     if (!mappingApplied) {
-      const title = manualPreferenceTitle || await resolveLegacyMatchTitle(parsed.title, originalSeason, originalYear);
+      const title = manualPreferenceTitle || resolveLegacyMatchTitle(parsed.title);
       const preferenceKey = manualPreferenceTitle || title;
       const [preferAnimeId, preferSource, offsets] = globals.rememberLastSelect
         ? getPreferAnimeId(preferenceKey, originalSeason)

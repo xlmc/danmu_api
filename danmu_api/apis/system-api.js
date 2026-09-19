@@ -2,7 +2,7 @@ import { globals } from "../configs/globals.js";
 import { jsonResponse } from "../utils/http-util.js";
 import { HTML_TEMPLATE } from "../ui/template.js";
 import { formatLogMessage, log } from "../utils/log-util.js";
-import { refreshRemoteTitleMappingNow } from "../utils/title-mapping-url-util.js";
+import { refreshRemoteTitleMappingNow } from "../utils/remote-title-mapping-util.js";
 import { HandlerFactory } from "../configs/handlers/handler-factory.js";
 import { clearBangumiDataCache, initBangumiData } from "../utils/bangumi-data-util.js";
 

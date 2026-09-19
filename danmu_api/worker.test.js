@@ -38,7 +38,7 @@ import { Envs } from "./configs/envs.js";
 import { addAnime, addEpisode, getSearchCache, hasSeasonSpecificPreference, isSearchCacheValid, setSearchCache } from "./utils/cache-util.js";
 import { addFavorite, listFavorites, loadFavorites, removeFavorite, resolveFavoriteForKeyword, saveFavorites } from './utils/favorite-util.js';
 import { candidateMatchesMappingQualifiers, candidateMatchesMappingTitle, parseAutoMatchMappingRules, resolveAutoMatchMapping } from './utils/auto-match-mapping-util.js';
-import { applyRemoteTitleMappingText, applyTitleMappingWithLog, ensureRemoteTitleMapping, normalizeMappingSourceUrl, parseRemoteTitleMappings, refreshRemoteTitleMappingNow } from './utils/title-mapping-url-util.js';
+import { applyRemoteTitleMappingText, ensureRemoteTitleMapping, normalizeMappingSourceUrl, parseRemoteTitleMappings, refreshRemoteTitleMappingNow } from './utils/remote-title-mapping-util.js';
 import { HTML_TEMPLATE } from './ui/template.js';
 import { apitestJsContent } from './ui/js/apitest.js';
 import { systemSettingsJsContent } from './ui/js/systemsettings.js';
@@ -2995,18 +2995,17 @@ test('worker.js API endpoints', async (t) => {
       );
 
       assert.equal(globals.titleMappingTable.get('远程剧X'), '远程映射X');
-      assert.equal(applyTitleMappingWithLog('远程剧X'), '远程映射X');
-      assert.equal(applyTitleMappingWithLog('远程剧Y'), '远程映射Y');
-      assert.equal(applyTitleMappingWithLog('本地剧A'), '本地映射A');
-      assert.equal(applyTitleMappingWithLog('本地剧B'), '本地映射B');
+      assert.equal(globals.titleMappingTable.get('远程剧Y'), '远程映射Y');
+      assert.equal(globals.titleMappingTable.get('本地剧A'), '本地映射A');
+      assert.equal(globals.titleMappingTable.get('本地剧B'), '本地映射B');
 
       await ensureRemoteTitleMapping();
-      assert.equal(applyTitleMappingWithLog('远程剧X'), '远程映射X');
+      assert.equal(globals.titleMappingTable.get('远程剧X'), '远程映射X');
       assert.throws(() => applyRemoteTitleMappingText(
         'https://raw.githubusercontent.com/user/repo/main/mappings.txt',
         '# 只有注释'
       ));
-      assert.equal(applyTitleMappingWithLog('远程剧X'), '远程映射X');
+      assert.equal(globals.titleMappingTable.get('远程剧X'), '远程映射X');
     });
 
     await t.test('manual refresh downloads, parses, merges, and caches the configured table', async () => {
@@ -3030,8 +3029,8 @@ test('worker.js API endpoints', async (t) => {
 
         assert.deepEqual(result, { success: true, count: 2, status: 200 });
         assert.equal(requestedUrl, sourceUrl);
-        assert.equal(applyTitleMappingWithLog('本地剧'), '本地优先');
-        assert.equal(applyTitleMappingWithLog('下载剧'), '下载映射');
+        assert.equal(globals.titleMappingTable.get('本地剧'), '本地优先');
+        assert.equal(globals.titleMappingTable.get('下载剧'), '下载映射');
         assert.match(await fs.readFile(path.join(cacheRoot, '.cache', 'title-mapping-remote.txt'), 'utf8'), /下载剧->下载映射/);
       } finally {
         process.chdir(originalCwd);
@@ -3039,32 +3038,37 @@ test('worker.js API endpoints', async (t) => {
       }
     });
 
-    await t.test('prefers title and season keys before the bare title', () => {
-      Globals.init({
-        TITLE_MAPPING_TABLE: [
-          'Moving->搬家(通用错误目标)',
-          'Moving S01->超异能族',
-          'Moving S02->超异能族 第二季'
-        ].join(';')
-      });
+    await t.test('worker maps a manual search once from the merged table', async () => {
+      const sourceUrl = 'https://maps.example.test/manual-search.txt';
+      Globals.init({ TITLE_MAPPING_TABLE_URL: sourceUrl });
+      Globals.deployPlatform = 'vercel';
+      applyRemoteTitleMappingText(sourceUrl, '原始标题->映射标题\n映射标题->二次映射');
 
-      assert.equal(applyTitleMappingWithLog('Moving', 'match', 1), '超异能族');
-      assert.equal(applyTitleMappingWithLog('Moving', 'match', 2), '超异能族 第二季');
-      assert.equal(applyTitleMappingWithLog('Moving', 'match', 3), '搬家(通用错误目标)');
-      assert.equal(applyTitleMappingWithLog('Moving'), '搬家(通用错误目标)');
-      assert.equal(applyTitleMappingWithLog('Moving', 'favorite', null), '搬家(通用错误目标)');
+      const anime = createFavoriteAnime('映射标题', 1, 919001);
+      Globals.searchCache = new Map();
+      setSearchCache('映射标题', [favoriteSearchResult(anime)], new Map([[anime.animeId, anime]]));
+
+      const response = await handleRequest(
+        new Request('http://localhost/api/v2/search/anime?keyword=' + encodeURIComponent('原始标题')),
+        { TITLE_MAPPING_TABLE_URL: sourceUrl },
+        'vercel',
+        '127.0.0.1'
+      );
+      const body = await response.json();
+      assert.equal(body.animes[0].animeId, anime.animeId);
+      Globals.deployPlatform = 'node';
     });
 
     await t.test('clears stale remote rules when the URL is disabled or changed', async () => {
       const firstUrl = 'https://maps.example.test/first.txt';
       Globals.init({ TITLE_MAPPING_TABLE_URL: firstUrl });
       applyRemoteTitleMappingText(firstUrl, '旧剧->旧映射');
-      assert.equal(applyTitleMappingWithLog('旧剧'), '旧映射');
+      assert.equal(globals.titleMappingTable.get('旧剧'), '旧映射');
 
       Globals.envs.titleMappingTableUrl = '';
       await ensureRemoteTitleMapping();
       assert.equal(globals.titleMappingTable.has('旧剧'), false);
-      assert.equal(applyTitleMappingWithLog('旧剧'), '旧剧');
+      assert.equal(globals.titleMappingTable.get('旧剧'), undefined);
 
       Globals.envs.titleMappingTableUrl = 'https://maps.example.test/second.txt';
       let requests = 0;
@@ -3073,7 +3077,7 @@ test('worker.js API endpoints', async (t) => {
         return new Response('unavailable', { status: 503 });
       }, () => ensureRemoteTitleMapping());
       assert.equal(requests, 1);
-      assert.equal(applyTitleMappingWithLog('旧剧'), '旧剧');
+      assert.equal(globals.titleMappingTable.get('旧剧'), undefined);
     });
 
     await t.test('deduplicates initial downloads and backs off after one failed attempt', async () => {
@@ -3098,16 +3102,8 @@ test('worker.js API endpoints', async (t) => {
         return new Response('冷启动剧->不应等待', { status: 200 });
       }, () => ensureRemoteTitleMapping());
       assert.equal(requests, 0);
-      assert.equal(applyTitleMappingWithLog('冷启动剧'), '冷启动剧');
+      assert.equal(globals.titleMappingTable.get('冷启动剧'), undefined);
       Globals.deployPlatform = 'node';
-    });
-
-    await t.test('normalizes release tags and applies only one mapping step', () => {
-      Globals.init({
-        TITLE_MAPPING_TABLE: 'Show S01->节目;A->B;B->C'
-      });
-      assert.equal(applyTitleMappingWithLog('[WEB-DL] Show', 'match', 1), '节目');
-      assert.equal(applyTitleMappingWithLog('A', 'match'), 'B');
     });
 
     await t.test('manual refresh reports configuration errors without downloading', async () => {

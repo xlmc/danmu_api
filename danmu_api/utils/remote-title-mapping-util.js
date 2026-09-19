@@ -12,8 +12,6 @@ const SCHEDULE_RETRY_DELAY_MS = 60 * 1000;
 const REFRESH_HOUR_SHANGHAI = 5;
 const REFRESH_MINUTE_SHANGHAI = 30;
 
-const emptyIndex = () => ({ raw: new Map(), normalized: new Map(), compact: new Map() });
-
 const remoteState = {
   configuredUrl: '',
   activeUrl: '',
@@ -28,42 +26,8 @@ const remoteState = {
   mergedKeys: new Set(),
 };
 
-const localIndexCache = new WeakMap();
-
 function remoteLog(level, message) {
   log(level, `[system] [remote-mapping] ${message}`);
-}
-
-function normalizeSeparators(value) {
-  return String(value || '').replace(/[.\s_\-]+/g, ' ').trim();
-}
-
-function compactKey(value) {
-  return String(value || '').replace(/[.\s_\-]+/g, '').toLowerCase();
-}
-
-function cleanMappingInputTitle(value) {
-  return String(value || '')
-    .trim()
-    .replace(/^(?:\s*\[(?:WEB[- ]?DL|WEB[- ]?Rip|Blu[- ]?Ray|HDTV|DVDRip|BDRip|2160p|1080p|720p|4K|HDR|DV|x26[45]|H\.?26[45]|AAC|AC3|DDP|TrueHD|DTS|10bit|中字|字幕|国配|中配|日配|粤语|原声|无修|未删减|完整版|臻彩|真彩|Group|[A-Za-z0-9_-]{2,20})[^\]]*\]\s*)+/i, '')
-    .replace(/\.(?:mkv|mp4|avi|mov|wmv)$/i, '')
-    .trim();
-}
-
-function buildMappingIndex(table) {
-  const index = emptyIndex();
-  if (!(table instanceof Map)) return index;
-
-  for (const [rawKey, value] of table) {
-    const key = String(rawKey || '').trim();
-    if (!key || !value) continue;
-    const normalized = normalizeSeparators(key);
-    const compact = compactKey(key);
-    if (!index.raw.has(key)) index.raw.set(key, value);
-    if (normalized && !index.normalized.has(normalized)) index.normalized.set(normalized, value);
-    if (compact && !index.compact.has(compact)) index.compact.set(compact, value);
-  }
-  return index;
 }
 
 function getTitleMappingTable() {
@@ -72,20 +36,10 @@ function getTitleMappingTable() {
   return new Map();
 }
 
-function getMappingIndex(table) {
-  let index = localIndexCache.get(table);
-  if (!index) {
-    index = buildMappingIndex(table);
-    localIndexCache.set(table, index);
-  }
-  return index;
-}
-
 function removeMergedRemoteMappings() {
   const table = remoteState.mergedTable;
   if (table instanceof Map) {
     for (const key of remoteState.mergedKeys) table.delete(key);
-    localIndexCache.delete(table);
   }
   remoteState.mergedTable = null;
   remoteState.mergedKeys = new Set();
@@ -104,18 +58,7 @@ function mergeRemoteMappingsIntoTitleTable() {
       remoteState.mergedKeys.add(key);
     }
   }
-  localIndexCache.delete(table);
   return table;
-}
-
-function lookupMapping(index, candidateKeys) {
-  for (const key of candidateKeys) {
-    const mapped = index.raw.get(key)
-      ?? index.normalized.get(normalizeSeparators(key))
-      ?? index.compact.get(compactKey(key));
-    if (mapped !== undefined) return { key, mapped };
-  }
-  return null;
 }
 
 function cancelScheduler() {
@@ -281,61 +224,6 @@ export function applyRemoteTitleMappingText(url, text) {
   if (!activateRemoteMappings(normalizedUrl, mappings)) return false;
   remoteLog('info', `远程映射表已更新: ${mappings.size} 条规则`);
   return true;
-}
-
-export function buildMappingCandidateKeys(rawTitle, season = null, year = null) {
-  const raw = String(rawTitle || '').trim();
-  const cleaned = cleanMappingInputTitle(raw);
-  const titles = [...new Set([raw, cleaned].filter(Boolean))];
-  if (!titles.length) return [];
-
-  const seasonNumber = Number(season);
-  const yearNumber = Number(year);
-  const seasonTokens = Number.isInteger(seasonNumber) && seasonNumber > 0
-    ? [...new Set([`S${seasonNumber}`, `S${String(seasonNumber).padStart(2, '0')}`])]
-    : [];
-  const yearToken = Number.isInteger(yearNumber) && yearNumber > 0 ? String(yearNumber) : '';
-  const combinations = [];
-
-  for (const title of titles) {
-    if (yearToken && seasonTokens.length) {
-      for (const seasonToken of seasonTokens) {
-        combinations.push(`${title} ${yearToken} ${seasonToken}`, `${title} ${seasonToken} ${yearToken}`);
-      }
-    }
-    for (const seasonToken of seasonTokens) combinations.push(`${title} ${seasonToken}`);
-    if (yearToken) combinations.push(`${title} ${yearToken}`);
-    combinations.push(title);
-  }
-
-  const keys = [];
-  for (const combination of combinations) keys.push(combination, normalizeSeparators(combination));
-  return [...new Set(keys.filter(Boolean))];
-}
-
-export function applyTitleMappingWithLog(rawTitle, source = 'system', season = null, year = null) {
-  const candidateKeys = buildMappingCandidateKeys(rawTitle, season, year);
-  if (!candidateKeys.length) return rawTitle;
-
-  let configuredUrl = '';
-  try {
-    configuredUrl = currentConfiguredUrl();
-  } catch {
-    resetForConfiguredUrl('');
-    return rawTitle;
-  }
-  resetForConfiguredUrl(configuredUrl);
-  const table = mergeRemoteMappingsIntoTitleTable();
-  const match = lookupMapping(getMappingIndex(table), candidateKeys);
-  if (!match) return rawTitle;
-  if (remoteState.mergedKeys.has(match.key)) {
-    remoteLog('info', `[${source}] 匹配成功: 「${match.key}」→「${match.mapped}」`);
-  }
-  return match.mapped;
-}
-
-export function applySearchKeywordMapping(keyword, season = null, year = null) {
-  return applyTitleMappingWithLog(keyword, 'search', season, year);
 }
 
 async function fetchRemoteMappingText(url) {

@@ -3,7 +3,7 @@ import { log } from '../utils/log-util.js';
 import { HandlerFactory } from '../configs/handlers/handler-factory.js';
 import { globals } from '../configs/globals.js';
 import { syncBangumiDataLifecycleOnConfigChange } from '../utils/bangumi-data-util.js';
-import { syncRemoteTitleMappingConfig } from '../utils/title-mapping-url-util.js';
+import { syncRemoteTitleMappingConfig } from '../utils/remote-title-mapping-util.js';
 import AIClient from '../utils/ai-util.js';
 
 /**

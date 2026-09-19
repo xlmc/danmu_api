@@ -3,7 +3,6 @@ import { jsonResponse } from "../../utils/http-util.js";
 import { log } from "../../utils/log-util.js";
 import { simplized } from "../../utils/zh-util.js";
 import { convertChineseNumber, extractEpisodeTitle, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, getExplicitSeasonNumber, normalizeSpaces } from "../../utils/common-util.js";
-import { applyTitleMappingWithLog, ensureRemoteTitleMapping } from "../../utils/title-mapping-url-util.js";
 import { filterSameEpisodeTitle, getBangumiDataForMatch, searchAnime } from "../dandan-api.js";
 
 // =====================
@@ -394,13 +393,15 @@ export async function getFongmiDanmaku(url, req) {
   if (!name) {
     return jsonResponse([], 200);
   }
-  // 确保远程映射表已加载后，经本地+远程合并的映射表转换剧名
-  await ensureRemoteTitleMapping();
-  name = applyTitleMappingWithLog(name, 'fongmi', extractFongmiSeasonNumber(episode));
+  // 使用剧名映射表转换剧名
+  if (globals.titleMappingTable && globals.titleMappingTable.size > 0) {
+    const mappedTitle = globals.titleMappingTable.get(name);
+    if (mappedTitle) {
+      log("info", `[system] [fongmi] Title mapped from original: ${name} to: ${mappedTitle}`);
+      name = mappedTitle;
+    }
+  }
   const searchUrl = new URL(url.toString());
-  const mappingSeason = extractFongmiSeasonNumber(episode);
-  if (mappingSeason) searchUrl.searchParams.set('season', String(mappingSeason));
-  searchUrl.searchParams.set('_titleMappingApplied', '1');
   const detailStore = new Map();
   const keywords = buildFongmiSearchKeywords(name);
   let animes = [];

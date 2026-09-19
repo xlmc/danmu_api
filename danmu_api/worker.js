@@ -21,6 +21,7 @@ import {
     handleQRCheck,
     handleCookieSave
 } from "./utils/cookie-util.js";
+import { ensureRemoteTitleMapping } from './utils/remote-title-mapping-util.js';
 
 let globals;
 
@@ -358,14 +359,41 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     return handleUI();
   }
 
+  const needsTitleMapping = path === "/api/v2/search/anime"
+    || path === "/api/v2/search/episodes"
+    || path === "/api/v2/fongmi/danmaku"
+    || path === "/danmaku"
+    || path === "/api/v2/match"
+    || path === "/api/v2/favorite/add"
+    || path === "/api/favorite/add"
+    || path === "/api/v2/favorite/refresh"
+    || path === "/api/favorite/refresh"
+    || path === "/api/v2/favorite/remove"
+    || path === "/api/favorite/remove";
+  if (needsTitleMapping) await ensureRemoteTitleMapping();
+
   // GET /api/v2/search/anime
   if (path === "/api/v2/search/anime" && method === "GET") {
-    return searchAnime(url);
+    const searchUrl = new URL(url);
+    const keyword = searchUrl.searchParams.get('keyword');
+    const mapped = globals.titleMappingTable instanceof Map ? globals.titleMappingTable.get(keyword) : null;
+    if (mapped) {
+      log("info", `[system] [search] Title mapped from original: ${keyword} to: ${mapped}`);
+      searchUrl.searchParams.set('keyword', mapped);
+    }
+    return searchAnime(searchUrl);
   }
 
   // GET /api/v2/search/episodes
   if (path === "/api/v2/search/episodes" && method === "GET") {
-    return searchEpisodes(url);
+    const episodesUrl = new URL(url);
+    const anime = episodesUrl.searchParams.get('anime');
+    const mapped = globals.titleMappingTable instanceof Map ? globals.titleMappingTable.get(anime) : null;
+    if (mapped) {
+      log("info", `[system] [episodes] Title mapped from original: ${anime} to: ${mapped}`);
+      episodesUrl.searchParams.set('anime', mapped);
+    }
+    return searchEpisodes(episodesUrl);
   }
 
   // GET|POST /api/v2/fongmi/danmaku

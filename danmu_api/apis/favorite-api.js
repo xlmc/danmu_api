@@ -13,7 +13,6 @@ import {
   stripSeasonSuffix
 } from '../utils/favorite-util.js';
 import { extractTitleSeasonEpisode, searchAnime } from './dandan-api.js';
-import { applyTitleMappingWithLog, ensureRemoteTitleMapping } from '../utils/title-mapping-url-util.js';
 import { createFavoriteSchedule } from '../utils/favorite-schedule-util.js';
 
 const favoriteRefreshLocks = new Set();
@@ -22,9 +21,9 @@ async function resolveTitleForFavorite(fileName) {
   const { cleanFileName } = parseFileName(fileName);
   let { title, season, episode, year } = await extractTitleSeasonEpisode(cleanFileName);
 
-  // 确保远程映射表已加载后，经本地+远程合并的映射表转换标题
-  await ensureRemoteTitleMapping();
-  title = applyTitleMappingWithLog(title, 'favorite', season, year);
+  if (globals.titleMappingTable && globals.titleMappingTable.size > 0) {
+    title = globals.titleMappingTable.get(title) || title;
+  }
   if (globals.animeTitleSimplified) title = simplized(title);
   if (globals.titleNoiseFilter) title = title.replace(globals.titleNoiseFilter, '').trim();
 
@@ -38,7 +37,6 @@ function buildFavoriteSearchUrl(baseUrl, keyword, season, episode) {
   searchUrl.searchParams.set('keyword', keyword || '');
   if (season !== undefined && season !== null) searchUrl.searchParams.set('season', String(season));
   if (episode !== undefined && episode !== null) searchUrl.searchParams.set('episode', String(episode));
-  searchUrl.searchParams.set('_titleMappingApplied', '1');
   return searchUrl;
 }
 
@@ -98,8 +96,7 @@ export async function handleFavoriteAdd(req, url) {
     let season = null;
     let episode = null;
     if (requestedKeyword) {
-      await ensureRemoteTitleMapping();
-      title = applyTitleMappingWithLog(requestedKeyword, 'favorite');
+      title = requestedKeyword;
       if (globals.animeTitleSimplified) title = simplized(title);
       if (globals.titleNoiseFilter) title = title.replace(globals.titleNoiseFilter, '').trim();
     } else {
@@ -215,8 +212,7 @@ async function refreshFavoriteResolved(fileName, requestedKeyword, url) {
     } else {
       const resolved = resolveFavoriteForKeyword(requestedKeyword);
       cacheKey = resolved?.keyword || requestedKeyword;
-      await ensureRemoteTitleMapping();
-      title = applyTitleMappingWithLog(stripSeasonSuffix(cacheKey), 'favorite');
+      title = stripSeasonSuffix(cacheKey);
     }
 
     if (!resolveFavoriteForKeyword(cacheKey)) {
