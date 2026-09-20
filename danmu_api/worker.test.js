@@ -38,7 +38,7 @@ import { Envs } from "./configs/envs.js";
 import { addAnime, addEpisode, getSearchCache, hasSeasonSpecificPreference, isSearchCacheValid, setSearchCache } from "./utils/cache-util.js";
 import { addFavorite, listFavorites, loadFavorites, removeFavorite, resolveFavoriteForKeyword, saveFavorites } from './utils/favorite-util.js';
 import { candidateMatchesMappingQualifiers, candidateMatchesMappingTitle, parseAutoMatchMappingRules, resolveAutoMatchMapping } from './utils/auto-match-mapping-util.js';
-import { applyRemoteTitleMappingText, ensureRemoteTitleMapping, normalizeMappingSourceUrl, parseRemoteTitleMappings, refreshRemoteTitleMappingNow } from './utils/remote-title-mapping-util.js';
+import { applyRemoteTitleMappingText, ensureRemoteTitleMapping, millisecondsUntilNextShanghaiRefresh, normalizeMappingSourceUrl, parseRemoteTitleMappings, refreshRemoteTitleMappingNow } from './utils/remote-title-mapping-util.js';
 import { HTML_TEMPLATE } from './ui/template.js';
 import { apitestJsContent } from './ui/js/apitest.js';
 import { systemSettingsJsContent } from './ui/js/systemsettings.js';
@@ -2984,6 +2984,25 @@ test('worker.js API endpoints', async (t) => {
       assert.equal(singleLine.get('C'), 'D');
     });
 
+    await t.test('schedules the next Shanghai 05:30 refresh strictly in the future', () => {
+      assert.equal(
+        millisecondsUntilNextShanghaiRefresh(new Date('2026-09-19T21:29:00.000Z')),
+        60 * 1000,
+      );
+      assert.equal(
+        millisecondsUntilNextShanghaiRefresh(new Date('2026-09-19T21:30:00.000Z')),
+        24 * 60 * 60 * 1000,
+      );
+      assert.equal(
+        millisecondsUntilNextShanghaiRefresh(new Date('2026-09-19T22:00:00.000Z')),
+        23.5 * 60 * 60 * 1000,
+      );
+      assert.equal(
+        millisecondsUntilNextShanghaiRefresh(new Date('2026-09-20T00:00:00.000Z')),
+        21.5 * 60 * 60 * 1000,
+      );
+    });
+
     await t.test('prefers local mappings and preserves state after invalid remote content', async () => {
       Globals.init({
         TITLE_MAPPING_TABLE: '本地剧A->本地映射A;本地剧B->本地映射B',
@@ -3038,25 +3057,30 @@ test('worker.js API endpoints', async (t) => {
       }
     });
 
-    await t.test('worker maps a manual search once from the merged table', async () => {
+    await t.test('manual search does not apply title mapping', async () => {
       const sourceUrl = 'https://maps.example.test/manual-search.txt';
       Globals.init({ TITLE_MAPPING_TABLE_URL: sourceUrl });
       Globals.deployPlatform = 'vercel';
       applyRemoteTitleMappingText(sourceUrl, '原始标题->映射标题\n映射标题->二次映射');
 
-      const anime = createFavoriteAnime('映射标题', 1, 919001);
+      const anime = createFavoriteAnime('原始标题', 1, 919001);
       Globals.searchCache = new Map();
-      setSearchCache('映射标题', [favoriteSearchResult(anime)], new Map([[anime.animeId, anime]]));
+      setSearchCache('原始标题', [favoriteSearchResult(anime)], new Map([[anime.animeId, anime]]));
 
-      const response = await handleRequest(
-        new Request('http://localhost/api/v2/search/anime?keyword=' + encodeURIComponent('原始标题')),
-        { TITLE_MAPPING_TABLE_URL: sourceUrl },
-        'vercel',
-        '127.0.0.1'
-      );
-      const body = await response.json();
-      assert.equal(body.animes[0].animeId, anime.animeId);
-      Globals.deployPlatform = 'node';
+      try {
+        const response = await handleRequest(
+          new Request('http://localhost/api/v2/search/anime?keyword=' + encodeURIComponent('原始标题')),
+          { TITLE_MAPPING_TABLE_URL: sourceUrl },
+          'vercel',
+          '127.0.0.1'
+        );
+        const body = await response.json();
+        // 手动搜索不套用映射表：命中原始标题缓存，而非映射后的“映射标题”
+        assert.equal(body.animes[0].animeId, anime.animeId);
+        assert.equal(globals.searchCache.has('映射标题'), false);
+      } finally {
+        Globals.deployPlatform = 'node';
+      }
     });
 
     await t.test('clears stale remote rules when the URL is disabled or changed', async () => {
@@ -3093,17 +3117,23 @@ test('worker.js API endpoints', async (t) => {
       assert.equal(requests, 1);
     });
 
-    await t.test('does not download during serverless cold start', async () => {
+    await t.test('downloads once during serverless cold start and reuses the warm instance mapping', async () => {
       Globals.init({ TITLE_MAPPING_TABLE_URL: 'https://maps.example.test/serverless.txt' });
       Globals.deployPlatform = 'vercel';
       let requests = 0;
-      await withMockFetch(async () => {
-        requests++;
-        return new Response('冷启动剧->不应等待', { status: 200 });
-      }, () => ensureRemoteTitleMapping());
-      assert.equal(requests, 0);
-      assert.equal(globals.titleMappingTable.get('冷启动剧'), undefined);
-      Globals.deployPlatform = 'node';
+      try {
+        await withMockFetch(async () => {
+          requests++;
+          return new Response('冷启动剧->远程映射剧', { status: 200 });
+        }, async () => {
+          await Promise.all([ensureRemoteTitleMapping(), ensureRemoteTitleMapping()]);
+          await ensureRemoteTitleMapping();
+        });
+        assert.equal(requests, 1);
+        assert.equal(globals.titleMappingTable.get('冷启动剧'), '远程映射剧');
+      } finally {
+        Globals.deployPlatform = 'node';
+      }
     });
 
     await t.test('manual refresh reports configuration errors without downloading', async () => {

@@ -359,9 +359,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     return handleUI();
   }
 
-  const needsTitleMapping = path === "/api/v2/search/anime"
-    || path === "/api/v2/search/episodes"
-    || path === "/api/v2/fongmi/danmaku"
+  const needsTitleMapping = path === "/api/v2/fongmi/danmaku"
     || path === "/danmaku"
     || path === "/api/v2/match"
     || path === "/api/v2/favorite/add"
@@ -374,26 +372,12 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   // GET /api/v2/search/anime
   if (path === "/api/v2/search/anime" && method === "GET") {
-    const searchUrl = new URL(url);
-    const keyword = searchUrl.searchParams.get('keyword');
-    const mapped = globals.titleMappingTable instanceof Map ? globals.titleMappingTable.get(keyword) : null;
-    if (mapped) {
-      log("info", `[system] [search] Title mapped from original: ${keyword} to: ${mapped}`);
-      searchUrl.searchParams.set('keyword', mapped);
-    }
-    return searchAnime(searchUrl);
+    return searchAnime(url);
   }
 
   // GET /api/v2/search/episodes
   if (path === "/api/v2/search/episodes" && method === "GET") {
-    const episodesUrl = new URL(url);
-    const anime = episodesUrl.searchParams.get('anime');
-    const mapped = globals.titleMappingTable instanceof Map ? globals.titleMappingTable.get(anime) : null;
-    if (mapped) {
-      log("info", `[system] [episodes] Title mapped from original: ${anime} to: ${mapped}`);
-      episodesUrl.searchParams.set('anime', mapped);
-    }
-    return searchEpisodes(episodesUrl);
+    return searchEpisodes(url);
   }
 
   // GET|POST /api/v2/fongmi/danmaku

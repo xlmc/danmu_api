@@ -11,6 +11,8 @@ const SCHEDULE_RETRY_COUNT = 5;
 const SCHEDULE_RETRY_DELAY_MS = 60 * 1000;
 const REFRESH_HOUR_SHANGHAI = 5;
 const REFRESH_MINUTE_SHANGHAI = 30;
+const SHANGHAI_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 const remoteState = {
   configuredUrl: '',
@@ -31,9 +33,7 @@ function remoteLog(level, message) {
 }
 
 function getTitleMappingTable() {
-  if (globals.envs?.titleMappingTable instanceof Map) return globals.envs.titleMappingTable;
-  if (globals.titleMappingTable instanceof Map) return globals.titleMappingTable;
-  return new Map();
+  return globals.envs?.titleMappingTable instanceof Map ? globals.envs.titleMappingTable : null;
 }
 
 function removeMergedRemoteMappings() {
@@ -47,7 +47,7 @@ function removeMergedRemoteMappings() {
 
 function mergeRemoteMappingsIntoTitleTable() {
   const table = getTitleMappingTable();
-  if (remoteState.mergedTable === table) return table;
+  if (table === null || remoteState.mergedTable === table) return table;
 
   remoteState.mergedTable = table;
   remoteState.mergedKeys = new Set();
@@ -250,7 +250,7 @@ async function fetchAndApply(url, reason) {
     if (remoteState.configuredUrl !== url) throw new Error('配置地址已变化，忽略旧下载结果');
     const fetchedAt = Date.now();
     activateRemoteMappings(url, mappings, fetchedAt);
-    await saveDiskRemoteMapping(url, text, fetchedAt);
+    if (isLongRunningRuntime()) await saveDiskRemoteMapping(url, text, fetchedAt);
     remoteLog('info', `更新成功: ${mappings.size} 条规则`);
     return mappings.size;
   })().finally(() => remoteState.fetches.delete(url));
@@ -280,17 +280,18 @@ function isLongRunningRuntime() {
   return globals.deployPlatform === 'node' || globals.deployPlatform === 'huggingface';
 }
 
-function millisecondsUntilNextShanghaiRefresh() {
-  const now = new Date();
-  const target = new Date(Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-    REFRESH_HOUR_SHANGHAI - 8,
+export function millisecondsUntilNextShanghaiRefresh(now = new Date()) {
+  const nowMs = now.getTime();
+  const shanghaiNow = new Date(nowMs + SHANGHAI_UTC_OFFSET_MS);
+  let targetMs = Date.UTC(
+    shanghaiNow.getUTCFullYear(),
+    shanghaiNow.getUTCMonth(),
+    shanghaiNow.getUTCDate(),
+    REFRESH_HOUR_SHANGHAI,
     REFRESH_MINUTE_SHANGHAI,
-  ));
-  if (target <= now) target.setUTCDate(target.getUTCDate() + 1);
-  return Math.max(1000, target.getTime() - now.getTime());
+  ) - SHANGHAI_UTC_OFFSET_MS;
+  if (targetMs <= nowMs) targetMs += ONE_DAY_MS;
+  return targetMs - nowMs;
 }
 
 function scheduleRemoteRefresh(url) {
@@ -370,12 +371,13 @@ export async function ensureRemoteTitleMapping() {
   if (!url) return;
   mergeRemoteMappingsIntoTitleTable();
 
-  // Serverless invocations must not wait on an external mapping download during
-  // cold start. The admin refresh endpoint is the explicit loading path there.
-  if (!isLongRunningRuntime()) return;
-
-  await loadDiskRemoteMapping(url);
-  scheduleRemoteRefresh(url);
+  // Long-running runtimes can reuse a disk snapshot and maintain the daily
+  // refresh timer. Serverless runtimes load once into the warm instance's
+  // memory, so the first title-matching request waits for the configured table.
+  if (isLongRunningRuntime()) {
+    await loadDiskRemoteMapping(url);
+    scheduleRemoteRefresh(url);
+  }
 
   if (remoteState.activeUrl === url && remoteState.mappings.size) return;
   if (Date.now() < remoteState.nextInitialRetryAt) return;

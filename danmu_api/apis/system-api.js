@@ -167,7 +167,7 @@ export function handleLogs() {
 /** 管理员手动刷新远程映射表 */
 export async function handleRemoteMappingRefresh() {
   const result = await refreshRemoteTitleMappingNow();
-  const { status = result.success ? 200 : 502, ...body } = result;
+  const { status, ...body } = result;
   return jsonResponse(body, status);
 }
 
