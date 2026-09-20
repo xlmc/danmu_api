@@ -16,13 +16,10 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 const remoteState = {
   configuredUrl: '',
-  activeUrl: '',
   mappings: new Map(),
-  fetchedAt: 0,
   diskAttempted: false,
   nextInitialRetryAt: 0,
   schedulerTimer: null,
-  scheduledUrl: '',
   fetches: new Map(),
   mergedTable: null,
   mergedKeys: new Set(),
@@ -47,24 +44,20 @@ function removeMergedRemoteMappings() {
 
 function mergeRemoteMappingsIntoTitleTable() {
   const table = getTitleMappingTable();
-  if (table === null || remoteState.mergedTable === table) return table;
+  if (table === null || remoteState.mergedTable === table) return;
 
   remoteState.mergedTable = table;
   remoteState.mergedKeys = new Set();
-  if (remoteState.mappings instanceof Map) {
-    for (const [key, value] of remoteState.mappings) {
-      if (table.has(key)) continue;
-      table.set(key, value);
-      remoteState.mergedKeys.add(key);
-    }
+  for (const [key, value] of remoteState.mappings) {
+    if (table.has(key)) continue;
+    table.set(key, value);
+    remoteState.mergedKeys.add(key);
   }
-  return table;
 }
 
 function cancelScheduler() {
   if (remoteState.schedulerTimer) clearTimeout(remoteState.schedulerTimer);
   remoteState.schedulerTimer = null;
-  remoteState.scheduledUrl = '';
 }
 
 function resetForConfiguredUrl(url) {
@@ -72,9 +65,7 @@ function resetForConfiguredUrl(url) {
   cancelScheduler();
   removeMergedRemoteMappings();
   remoteState.configuredUrl = url;
-  remoteState.activeUrl = '';
   remoteState.mappings = new Map();
-  remoteState.fetchedAt = 0;
   remoteState.diskAttempted = false;
   remoteState.nextInitialRetryAt = 0;
 }
@@ -83,12 +74,10 @@ function currentConfiguredUrl() {
   return normalizeMappingSourceUrl(globals.titleMappingTableUrl);
 }
 
-function activateRemoteMappings(url, mappings, fetchedAt = Date.now()) {
+function activateRemoteMappings(url, mappings) {
   if (remoteState.configuredUrl && remoteState.configuredUrl !== url) return false;
   removeMergedRemoteMappings();
-  remoteState.activeUrl = url;
   remoteState.mappings = mappings;
-  remoteState.fetchedAt = fetchedAt;
   remoteState.nextInitialRetryAt = 0;
   mergeRemoteMappingsIntoTitleTable();
   return true;
@@ -117,7 +106,7 @@ async function loadDiskRemoteMapping(url) {
     const text = await fs.readFile(paths.text, 'utf8');
     const mappings = parseRemoteTitleMappings(text);
     if (!mappings.size || remoteState.configuredUrl !== url) return false;
-    activateRemoteMappings(url, mappings, Number(meta.fetchedAt) || 0);
+    activateRemoteMappings(url, mappings);
     remoteLog('info', `已加载本地缓存: ${mappings.size} 条规则`);
     return true;
   } catch {
@@ -125,7 +114,7 @@ async function loadDiskRemoteMapping(url) {
   }
 }
 
-async function saveDiskRemoteMapping(url, text, fetchedAt) {
+async function saveDiskRemoteMapping(url, text) {
   let textTemp = '';
   let metaTemp = '';
   try {
@@ -137,7 +126,7 @@ async function saveDiskRemoteMapping(url, text, fetchedAt) {
     textTemp = `${paths.text}.${suffix}`;
     metaTemp = `${paths.meta}.${suffix}`;
     await fs.writeFile(textTemp, text, 'utf8');
-    await fs.writeFile(metaTemp, JSON.stringify({ url, fetchedAt }), 'utf8');
+    await fs.writeFile(metaTemp, JSON.stringify({ url }), 'utf8');
     await replaceCacheFile(fs, textTemp, paths.text);
     textTemp = '';
     await replaceCacheFile(fs, metaTemp, paths.meta);
@@ -248,9 +237,8 @@ async function fetchAndApply(url, reason) {
     const mappings = parseRemoteTitleMappings(text);
     if (!mappings.size) throw new Error('远程映射表未解析到有效规则');
     if (remoteState.configuredUrl !== url) throw new Error('配置地址已变化，忽略旧下载结果');
-    const fetchedAt = Date.now();
-    activateRemoteMappings(url, mappings, fetchedAt);
-    if (isLongRunningRuntime()) await saveDiskRemoteMapping(url, text, fetchedAt);
+    activateRemoteMappings(url, mappings);
+    if (isLongRunningRuntime()) await saveDiskRemoteMapping(url, text);
     remoteLog('info', `更新成功: ${mappings.size} 条规则`);
     return mappings.size;
   })().finally(() => remoteState.fetches.delete(url));
@@ -296,12 +284,9 @@ export function millisecondsUntilNextShanghaiRefresh(now = new Date()) {
 
 function scheduleRemoteRefresh(url) {
   if (!isLongRunningRuntime() || !url) return;
-  if (remoteState.schedulerTimer && remoteState.scheduledUrl === url) return;
-  cancelScheduler();
-  remoteState.scheduledUrl = url;
+  if (remoteState.schedulerTimer) return;
   remoteState.schedulerTimer = setTimeout(async () => {
     remoteState.schedulerTimer = null;
-    remoteState.scheduledUrl = '';
     await refreshWithRetries(url, '北京时间 05:30 定时更新');
     if (remoteState.configuredUrl === url) scheduleRemoteRefresh(url);
   }, millisecondsUntilNextShanghaiRefresh());
@@ -342,18 +327,6 @@ export async function refreshRemoteTitleMappingNow() {
 }
 
 export function syncRemoteTitleMappingConfig() {
-  let url = '';
-  try {
-    url = currentConfiguredUrl();
-  } catch (error) {
-    resetForConfiguredUrl('');
-    remoteLog('warn', error.message);
-    return;
-  }
-
-  resetForConfiguredUrl(url);
-  if (!url) return;
-  scheduleRemoteRefresh(url);
   void ensureRemoteTitleMapping();
 }
 
@@ -379,7 +352,7 @@ export async function ensureRemoteTitleMapping() {
     scheduleRemoteRefresh(url);
   }
 
-  if (remoteState.activeUrl === url && remoteState.mappings.size) return;
+  if (remoteState.mappings.size) return;
   if (Date.now() < remoteState.nextInitialRetryAt) return;
 
   try {

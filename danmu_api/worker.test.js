@@ -2985,22 +2985,15 @@ test('worker.js API endpoints', async (t) => {
     });
 
     await t.test('schedules the next Shanghai 05:30 refresh strictly in the future', () => {
-      assert.equal(
-        millisecondsUntilNextShanghaiRefresh(new Date('2026-09-19T21:29:00.000Z')),
-        60 * 1000,
-      );
-      assert.equal(
-        millisecondsUntilNextShanghaiRefresh(new Date('2026-09-19T21:30:00.000Z')),
-        24 * 60 * 60 * 1000,
-      );
-      assert.equal(
-        millisecondsUntilNextShanghaiRefresh(new Date('2026-09-19T22:00:00.000Z')),
-        23.5 * 60 * 60 * 1000,
-      );
-      assert.equal(
-        millisecondsUntilNextShanghaiRefresh(new Date('2026-09-20T00:00:00.000Z')),
-        21.5 * 60 * 60 * 1000,
-      );
+      const cases = [
+        ['2026-09-19T21:29:00.000Z', 60 * 1000],
+        ['2026-09-19T21:30:00.000Z', 24 * 60 * 60 * 1000],
+        ['2026-09-19T22:00:00.000Z', 23.5 * 60 * 60 * 1000],
+        ['2026-09-20T00:00:00.000Z', 21.5 * 60 * 60 * 1000],
+      ];
+      for (const [now, expected] of cases) {
+        assert.equal(millisecondsUntilNextShanghaiRefresh(new Date(now)), expected);
+      }
     });
 
     await t.test('prefers local mappings and preserves state after invalid remote content', async () => {
