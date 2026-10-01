@@ -1,5 +1,7 @@
 <!-- 上游配置参考：huangxd-/danmu_api@fc1b7ff6add61d8af24c9bf978253273833f5afc。自用差异见 self-use-features.md。 -->
 
+> 这是上游手册的参考快照，其中 Docker Hub 镜像、发布链接和社区信息属于上游。自用 GHCR 部署请看 [部署说明](deployment.md)，自用功能差异请看 [自用功能说明](self-use-features.md)。
+
 <div align="center">
   <img src="https://i.mji.rip/2025/09/27/eedc7b701c0fa5c1f7c175b22f441ad9.jpeg" alt="Clash" width="128" style="border-radius: 16px;" />
 </div>
