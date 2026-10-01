@@ -1,44 +1,57 @@
 name: Fork Sync
 
-permissions:
-    contents: write
-
 on:
-    schedule:
-        - cron: "0 0 * * *"  # 每天午夜执行
-    workflow_dispatch:  # 允许手动触发
+  schedule:
+    - cron: '0 0 * * *' # 每天北京时间 08:00；GitHub 定时任务可能延迟
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
 
 jobs:
-    sync_with_upstream:
-        name: Sync with Upstream
-        runs-on: ubuntu-latest
-        if: ${{ github.event.repository.fork }}
-
-        steps:
-            - name: Checkout target repo
-              uses: actions/checkout@v4
-              with:
-                token: ${{ secrets.GITHUB_TOKEN }}
-
-            - name: Sync Upstream
-              uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
-              with:
-                  target_repo_token: ${{ secrets.GITHUB_TOKEN }}
-                  upstream_sync_repo: huangxd-/danmu_api
-                  upstream_sync_branch: main
-                  target_sync_branch: main
-                  test_mode: false
-
-            - name: Check for new commits
-              if: success()
-              run: echo "Sync completed successfully"
-
-            - name: Check for Failure
-              if: failure()
-              run: |
-                  echo "[Error] Sync failed. This might be due to:"
-                  echo "1. Changes in the upstream workflow file"
-                  echo "2. Merge conflicts that need manual resolution"
-                  echo "3. Network issues"
-                  echo "Please check the logs and consider manual sync if needed."
-                  exit 1
+  sync:
+    if: github.repository == 'xlmc/danmu_api'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout self-use main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Use Node.js 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - name: Save trusted sync helper before merging upstream
+        run: |
+          cp .github/scripts/sync-upstream.mjs "$RUNNER_TEMP/sync-upstream.mjs"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/huangxd-/danmu_api.git
+          git fetch upstream main
+      - name: Prepare safe merge or conflict snapshot
+        id: prepare
+        run: node "$RUNNER_TEMP/sync-upstream.mjs" prepare "$RUNNER_TEMP/upstream-sync.json"
+      - name: Install merged dependencies
+        if: steps.prepare.outputs.changed == 'true' && steps.prepare.outputs.conflicts == 'false'
+        run: npm install --no-audit --no-fund
+      - name: Verify merged code before publishing sync branch
+        if: steps.prepare.outputs.changed == 'true' && steps.prepare.outputs.conflicts == 'false'
+        run: npm test
+      - name: Publish dedicated sync branch and open or update PR
+        if: steps.prepare.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+        run: node "$RUNNER_TEMP/sync-upstream.mjs" publish "$RUNNER_TEMP/upstream-sync.json"
+      - name: Failure guidance
+        if: failure()
+        run: |
+          echo '::error::同步未完成；检查冲突、测试或 PR 创建权限。main 和 NAS 不会由此工作流覆盖。'

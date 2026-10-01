@@ -1,0 +1,30 @@
+name: Self-use Regression Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, codex/self-use-maintenance]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use Node.js 22 (Docker runtime)
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Test self-use code and safe sync behavior
+        run: npm test
+      - name: Build Docker image (amd64 smoke build, no publishing)
+        run: docker build --tag danmu-api-ci:${{ github.sha }} .
