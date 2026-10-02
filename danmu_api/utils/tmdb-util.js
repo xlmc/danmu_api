@@ -197,15 +197,8 @@ export async function getBangumiPersonResponse(url, validate) {
       clearTimeout(timeoutId);
     }
   };
-  try {
-    return await request(url);
-  } catch (directError) {
-    if (directError.status === 404) throw directError;
-    const proxyUrl = globals.makeProxyUrl(url);
-    if (proxyUrl === url) throw directError;
-    log('warn', '[system] [person-metadata] Bangumi 直连失败，使用系统配置的代理重试');
-    return request(proxyUrl);
-  }
+  // 有适用代理时直接使用，不逐次等待直连失败；未配置则使用原地址。
+  return request(globals.makeProxyUrl(url));
 }
 
 async function getBangumiCharacterNames(title) {
