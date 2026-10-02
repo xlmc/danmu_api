@@ -64,7 +64,8 @@ const tmdbSource = getSourceByKey('tmdb');
 async function applyDomesticCelebrityFilter(danmus, animeTitle) {
   const blockCelebrities = globals.blockDomesticCelebrities;
   const blockRegions = globals.blockDomesticRegions;
-  if ((!blockCelebrities && !blockRegions) || !Array.isArray(danmus) || danmus.length === 0) return danmus;
+  const blockDates = globals.blockDates;
+  if ((!blockCelebrities && !blockRegions && !blockDates) || !Array.isArray(danmus) || danmus.length === 0) return danmus;
   let metadata = { actorNames: [], characterNames: [], names: [], status: 'unavailable' };
   if (blockCelebrities && animeTitle) {
     metadata = await getDomesticPersonMetadataForTitle(animeTitle);
@@ -73,14 +74,19 @@ async function applyDomesticCelebrityFilter(danmus, animeTitle) {
   const blockedNames = blockCelebrities ? metadata.names : [];
   if (blockCelebrities) log(metadata.names.length ? 'info' : 'warn', `[system] [danmu] [person-filter] 演员 ${metadata.actorNames.length} 个，角色 ${metadata.characterNames.length} 个，状态 ${metadata.status}${animeTitle ? '' : '（此请求无作品标题）'}`);
   const result = filterDanmusByBlockedNames(danmus, blockedNames, {
+    blockDates,
     characterNames: blockCelebrities ? metadata.characterNames : [],
     surnameNames: blockCelebrities ? metadata.actorNames : [],
     surnameMatcherOptions: { bareSurname: false },
     regionNames: blockRegions ? DOMESTIC_REGION_NAMES : []
   });
   if (blockCelebrities) {
-    const personHits = result.hits.filter(hit => !hit.name.startsWith('地区:'));
+    const personHits = result.hits.filter(hit => !hit.name.startsWith('地区:') && !hit.name.startsWith('日期:'));
     log('info', `[system] [danmu] [person-filter] 已拦截 ${personHits.reduce((sum, hit) => sum + hit.count, 0)} 条，命中 ${personHits.map(hit => `${hit.name} ×${hit.count}`).join('、') || '无'}`);
+  }
+  if (blockDates) {
+    const count = result.hits.filter(hit => hit.name.startsWith('日期:')).reduce((sum, hit) => sum + hit.count, 0);
+    log('info', `[system] [danmu] [blocked-words] 日期规则已拦截 ${count} 条`);
   }
   if (result.removedCount > 0) {
     log('info', `[system] [danmu] [domestic-filter] 已拦截 ${result.removedCount}/${danmus.length} 条弹幕，命中 ${result.hits.length} 条规则`);

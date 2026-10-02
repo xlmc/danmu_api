@@ -440,6 +440,7 @@ export function buildBlockedRegionMatchers(names) {
     const escaped = escapeRegExp(compact);
     matchers.push({
       label: `地区:${label}`,
+      needle: compact,
       regex: new RegExp(`(?:${REGION_CONTEXT_PREFIX.source}${escaped}(?=${REGION_CONTEXT_TAIL.source})|${escaped}${REGION_CONTEXT_SUFFIX.source}|(?:^|[^\\p{Script=Han}]|哈哈|嘿嘿)${escaped}(?:${regionAlternation ? `(?:${regionAlternation})*` : ''})(?:哦|呀|啊|呢)?(?=$|[^\\p{Script=Han}]))`, 'u')
     });
   }
@@ -482,26 +483,60 @@ export function buildBlockedSurnameMatchers(names, options = {}) {
   return matchers;
 }
 
+/** 昵称仅从当前作品的角色姓名派生，不使用演员表或弹幕内容推断。 */
+export function buildCharacterNicknameMatchers(names) {
+  const aliases = new Set();
+  for (const raw of Array.isArray(names) ? names : []) {
+    const name = simplized(String(raw || '').normalize('NFKC')).trim();
+    if (!/^\p{Script=Han}{2,4}$/u.test(name)) continue;
+    const surnameLength = COMMON_COMPOUND_SURNAMES.has(name.slice(0, 2)) ? 2 : 1;
+    const given = name.slice(surnameLength);
+    if (given.length >= 2) aliases.add(given);
+    if (given.length === 1) {
+      aliases.add(`阿${given}`);
+      for (const suffix of ['子', '儿', '哥', '姐']) aliases.add(`${given}${suffix}`);
+    }
+  }
+  return [...aliases].map(needle => ({ label: `角色昵称:${needle}`, needle, regex: null }));
+}
+
+/** 验证完整年月日，避免把无效日期、普通小数和带 v 前缀的版本号当作日期。 */
+export function hasCalendarDate(text) {
+  const pattern = /(?<![A-Za-z0-9.])((?:19|20)\d{2})(?:([.\/-])(\d{1,2})\2(\d{1,2})|年(\d{1,2})月(\d{1,2})[日号]?)(?![\d.])/g;
+  for (const match of String(text || '').normalize('NFKC').matchAll(pattern)) {
+    const year = Number(match[1]);
+    const month = Number(match[3] || match[5]);
+    const day = Number(match[4] || match[6]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day) return true;
+  }
+  return false;
+}
+
 export function filterDanmusByBlockedNames(danmus, names, options = {}) {
   if (!Array.isArray(danmus) || danmus.length === 0) {
     return { danmus: Array.isArray(danmus) ? danmus : [], removedCount: 0, hits: [] };
   }
   // 当前作品角色表中的完整名字直接匹配；演员二字名仍保留语境保护。
   const characterMatchers = buildBlockedNameMatchers(options.characterNames).map(matcher => ({ ...matcher, regex: null }));
-  const matchers = [...characterMatchers, ...buildBlockedNameMatchers(names)];
+  const matchers = [...characterMatchers, ...buildCharacterNicknameMatchers(options.characterNames), ...buildBlockedNameMatchers(names)];
   const surnameMatchers = buildBlockedSurnameMatchers(options.surnameNames, options.surnameMatcherOptions);
   const regionMatchers = buildBlockedRegionMatchers(options.regionNames);
-  if (matchers.length === 0 && surnameMatchers.length === 0 && regionMatchers.length === 0) {
+  if (!options.blockDates && matchers.length === 0 && surnameMatchers.length === 0 && regionMatchers.length === 0) {
     return { danmus, removedCount: 0, hits: [] };
   }
 
   const hitCounts = new Map();
   const filtered = danmus.filter(item => {
     const text = String(item?.m || '').normalize('NFKC').replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
-    const personText = simplized(text);
+    if (options.blockDates && hasCalendarDate(text)) {
+      hitCounts.set('日期:年月日', (hitCounts.get('日期:年月日') || 0) + 1);
+      return false;
+    }
+    const personText = matchers.length ? simplized(text) : text;
     const matcher = matchers.find(candidate => candidate.regex ? candidate.regex.test(personText) : personText.includes(candidate.needle));
     const surnameMatcher = matcher ? null : surnameMatchers.find(candidate => candidate.regex.test(text));
-    const regionMatcher = matcher || surnameMatcher ? null : regionMatchers.find(candidate => candidate.regex.test(text));
+    const regionMatcher = matcher || surnameMatcher ? null : regionMatchers.find(candidate => text.includes(candidate.needle) && candidate.regex.test(text));
     const hit = matcher || surnameMatcher || regionMatcher;
     if (!hit) return true;
     hitCounts.set(hit.label, (hitCounts.get(hit.label) || 0) + 1);

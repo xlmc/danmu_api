@@ -737,7 +737,8 @@ export class Envs {
 
       // 弹幕配置
       'BLOCKED_WORDS': { category: 'danmu', type: 'text', description: '屏蔽词列表：支持 /正则/flags、纯文本词、@人名（按语境分析匹配：二字人名仅在明确人物语境中命中，避免误伤同名词；姓氏仅在被称谓指代时命中，如"杨老师"）及 地区:地区名（仅命中"来自海南""海南网友"等明确地区语境；地区:* 启用全部内置预设地区名单）' },
-      'BLOCK_DOMESTIC_CELEBRITIES': { category: 'danmu', type: 'boolean', description: '当前华语作品演员/角色名屏蔽开关，默认关闭。开启后通过 TMDB 获取当前国产/港台作品的中文演员名和角色名；作品角色表中的完整角色名直接匹配（含二字角色名）；二字演员名保留独立姓名、标点或明确人物语境保护，三字及以上按完整名称匹配。需要可用的 TMDB_API_KEY，或能够代为认证的 TMDB 反代；动画角色名单同时合并 Bangumi 当前条目及动画前传、续集的角色资料，匹配兼容简繁中文；查询失败或名单不完整时五分钟后允许重试，完整名单缓存一天。' },
+      'BLOCK_DOMESTIC_CELEBRITIES': { category: 'danmu', type: 'boolean', description: '当前华语作品演员/角色名屏蔽开关，默认关闭。开启后通过 TMDB 获取当前国产/港台作品的中文演员名和角色名；作品角色表中的完整角色名和派生昵称直接匹配（含二字角色名、去姓称呼及单字名的阿/子/儿/哥/姐称呼；同名普通词也会命中）；二字演员名保留独立姓名、标点或明确人物语境保护，三字及以上按完整名称匹配。需要可用的 TMDB_API_KEY，或能够代为认证的 TMDB 反代；动画角色名单同时合并 Bangumi 当前条目及动画前传、续集的角色资料，匹配兼容简繁中文；查询失败或名单不完整时五分钟后允许重试，完整名单缓存一天。' },
+      'BLOCK_DATES': { category: 'danmu', type: 'boolean', description: '完整年月日弹幕屏蔽，默认关闭。支持 2026.9.4、2026-09-04、2026/9/4、2026年9月4日 等有效日期；普通小数、无效日期和带 v 前缀的版本号保留。' },
       'BLOCK_DOMESTIC_REGIONS': { category: 'danmu', type: 'boolean', description: '中国大陆地区名屏蔽开关，默认关闭。仅匹配“来自海南”“海南网友”“朝阳区”等明确地区语境，不屏蔽“海南鸡饭”“朝阳升起”“身体安康”等无关内容。' },
       'GROUP_MINUTE': { category: 'danmu', type: 'number', description: '分钟内合并去重（0表示不去重），默认1', min: 0, max: 30 },
       'DANMU_LIMIT': { category: 'danmu', type: 'number', description: '弹幕数量限制，单位为k，即千：默认 0，表示不限制弹幕数', min: 0, max: 100 },
@@ -806,6 +807,7 @@ export class Envs {
       titleNoiseFilter: this.resolveTitleNoiseFilter(), // 剧名杂音清理规则
       blockedWords: this.get('BLOCKED_WORDS', '', 'string'), // 屏蔽词列表
       blockDomesticCelebrities: this.get('BLOCK_DOMESTIC_CELEBRITIES', false, 'boolean'), // 按当前作品演员/角色表屏蔽姓名
+      blockDates: this.get('BLOCK_DATES', false, 'boolean'), // 完整年月日屏蔽
       blockDomesticRegions: this.get('BLOCK_DOMESTIC_REGIONS', false, 'boolean'), // 仅按明确地区语境屏蔽地区名称
       groupMinute: Math.min(this.get('GROUP_MINUTE', 1, 'number'), 30), // 分钟内合并去重（默认 1，最大值30，0表示不去重）
       danmuLimit: this.get('DANMU_LIMIT', 0, 'number'), // 等间隔采样限制弹幕总数，单位为k，即千：默认 0，表示不限制弹幕数，若改为5，弹幕总数在超过5000的情况下会将弹幕数控制在5000
