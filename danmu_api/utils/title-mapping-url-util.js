@@ -349,7 +349,8 @@ export function applyRemoteTitleMappingText(url, text) {
 function ensureMergedIntoGlobals() {
   // 兜底：如果本地快照丢失，就用全局表里现有的内容
   const currentTable = globals.titleMappingTable instanceof Map ? globals.titleMappingTable : new Map();
-  const localTable = remoteState.localMappings || currentTable;
+  const localTable = globals.localTitleMappingTable instanceof Map
+    ? globals.localTitleMappingTable : (remoteState.localMappings || currentTable);
 
   // 远程表为空就不用合并（没什么可合的）
   if (remoteState.mappings.size === 0) return;
@@ -751,10 +752,11 @@ export async function refreshRemoteTitleMappingNow() {
  * 因为那份可能是「本地+远程合并后的结果」，里面混着远程规则。
  * 而我们想要的是用户自己填的 TITLE_MAPPING_TABLE，必须是纯净的本地规则。
  *
- * 优先读 globals.envs.titleMappingTable（envs 里保存的是解析后的纯本地表）；
+ * 优先读 globals.localTitleMappingTable（独立保存的纯本地表）；
  * 万一不存在（边缘情况），才退回用 globals 里的合并表。
  */
 function readPureLocalMappingTable() {
+  if (globals.localTitleMappingTable instanceof Map) return new Map(globals.localTitleMappingTable);
   const envsTable = globals.envs?.titleMappingTable;
   if (envsTable instanceof Map) return new Map(envsTable);
   const fallback = globals.titleMappingTable instanceof Map ? globals.titleMappingTable : new Map();
@@ -778,7 +780,9 @@ function resolveMappingFromTable(table, rawTitle, season = null, year = null) {
 
 /** 分层匹配专用：只查询用户本机 TITLE_MAPPING_TABLE。 */
 export function resolveLocalTitleMapping(rawTitle, season = null, year = null) {
-  const table = globals.envs?.titleMappingTable instanceof Map
+  const table = globals.localTitleMappingTable instanceof Map
+    ? globals.localTitleMappingTable
+    : globals.envs?.titleMappingTable instanceof Map
     ? globals.envs.titleMappingTable
     : (globals.titleMappingTable instanceof Map ? globals.titleMappingTable : new Map());
   return resolveMappingFromTable(table, rawTitle, season, year);
@@ -822,7 +826,7 @@ export async function ensureRemoteTitleMapping(force = false) {
 
   // 1. 本地配置（可能是用户刚改的）始终以纯本地表为准，刷新快照并强制重新合并
   if (globals.envs?.titleMappingTable instanceof Map) {
-    remoteState.localMappings = new Map(globals.envs.titleMappingTable);
+    remoteState.localMappings = readPureLocalMappingTable();
     remoteState.mergedRef = null;
   }
 

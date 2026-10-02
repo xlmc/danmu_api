@@ -22,6 +22,7 @@ import {
 } from "../utils/common-util.js";
 import { getTMDBChineseTitle, getDomesticPersonMetadataForTitle, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
 import { DOMESTIC_REGION_NAMES } from "../data/domestic-regions.js";
+import { shouldBlockDomesticCelebrities } from '../utils/person-filter-exclusion-util.js';
 import { applyMergeLogic, mergeDanmakuList, MERGE_DELIMITER, alignSourceTimelines, sanitizeUrl } from "../utils/merge-util.js";
 import { getHanjutvSourceLabel } from "../utils/hanjutv-util.js";
 import AIClient from '../utils/ai-util.js';
@@ -99,7 +100,7 @@ function attachFilterContext(value, animeTitle, sourceUrl) {
 }
 
 async function applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata = null) {
-  const blockCelebrities = globals.blockDomesticCelebrities;
+  const blockCelebrities = await shouldBlockDomesticCelebrities(animeTitle);
   const blockRegions = globals.blockDomesticRegions;
   const blockDates = globals.blockDates;
   if ((!blockCelebrities && !blockRegions && !blockDates) || !Array.isArray(danmus) || danmus.length === 0) return danmus;
@@ -2923,7 +2924,7 @@ export async function getComment(path, queryFormat, segmentFlag, clientIp, inclu
   log("info", `[system] [LogVar-API] Fetched comment ID: ${commentId}`);
 
   // Start metadata before upstream comments; still await the complete filter before returning.
-  const pendingMetadata = !segmentFlag && globals.blockDomesticCelebrities && animeTitle
+  const pendingMetadata = !segmentFlag && animeTitle && await shouldBlockDomesticCelebrities(animeTitle)
     ? getDomesticPersonMetadataForTitle(animeTitle) : null;
 
   // 检查弹幕缓存
@@ -3139,7 +3140,7 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
 
     videoUrl = videoUrl.trim();
     const animeTitle = await resolveFilterTitle(videoUrl, animeTitleHint);
-    const pendingMetadata = !segmentFlag && globals.blockDomesticCelebrities && animeTitle
+    const pendingMetadata = !segmentFlag && animeTitle && await shouldBlockDomesticCelebrities(animeTitle)
       ? getDomesticPersonMetadataForTitle(animeTitle) : null;
     if (videoUrl.startsWith('local:')) {
       const key = videoUrl.slice(6);
@@ -3288,7 +3289,7 @@ export async function getSegmentComment(segment, queryFormat) {
     const context = segmentFilterContexts.get(`${platform}:${url}`);
     const workUrl = segment.sourceUrl || context?.sourceUrl || (platform === 'local' ? `local:${url}` : url);
     const animeTitle = await resolveFilterTitle(workUrl, segment.animeTitle || context?.animeTitle);
-    const pendingMetadata = globals.blockDomesticCelebrities && animeTitle
+    const pendingMetadata = animeTitle && await shouldBlockDomesticCelebrities(animeTitle)
       ? getDomesticPersonMetadataForTitle(animeTitle) : null;
 
     log("info", `[system] [segmentcomment] Processing segment comment request for URL: ${url}`);
