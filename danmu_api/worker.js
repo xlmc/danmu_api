@@ -312,7 +312,8 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     && !path.startsWith('/api/cookie') && !path.startsWith('/api/config')
     && !path.startsWith('/api/favorite')
     && !path.startsWith('/api/ai') && !path.startsWith('/api/nipaplay')
-    && !path.startsWith('/api/debug') && !path.startsWith('/api/local-danmu') && !path.startsWith('/api/title-mapping')) {
+    && !path.startsWith('/api/debug') && !path.startsWith('/api/local-danmu')
+    && !path.startsWith('/api/title-mapping') && !path.startsWith('/api/auto-match-mapping')) {
       log("info", `[system] [path check] Starting path normalization for: "${path}"`);
       const pathBeforeCleanup = path; // 保存清理前的路径检查是否修改
 
@@ -338,7 +339,8 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
         && !path.startsWith('/api/cookie') && !path.startsWith('/api/config')
         && !path.startsWith('/api/favorite')
         && !path.startsWith('/api/ai') && !path.startsWith('/api/nipaplay')
-        && !path.startsWith('/api/debug') && !path.startsWith('/api/local-danmu') && !path.startsWith('/api/title-mapping')) {
+        && !path.startsWith('/api/debug') && !path.startsWith('/api/local-danmu')
+        && !path.startsWith('/api/title-mapping') && !path.startsWith('/api/auto-match-mapping')) {
           if (path.startsWith('/v2/') || path === '/v2') {
               log("info", `[system] [path check] Path is missing /api prefix. Adding /api...`);
               path = '/api' + path;
