@@ -349,7 +349,7 @@ export const HTML_TEMPLATE = /* html */ `
                 <div class="env-section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
                     <div>
                         <h2 style="margin: 0;">环境变量配置</h2>
-                        <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9em;">vercel/netlify/edgeone平台修改变量后需要重新部署</p>
+                        <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9em;">NAS 配置文件支持热更新；修改 Compose 环境变量后需重建容器</p>
                 </div>
                 <div class="env-toolbar-actions" style="display: flex; gap: 10px; flex-wrap: wrap;">
                     <button class="btn btn-primary config-transfer-btn" onclick="exportSystemConfig()" title="下载当前环境变量配置文件">
@@ -559,7 +559,7 @@ export const HTML_TEMPLATE = /* html */ `
     <!-- 项目声明 -->
     <footer class="footer">
         <p class="footer-text">
-            一个人人都能部署的基于 js 的弹幕 API 服务器，支持爱优腾芒哔咪人韩巴狐乐西埋帆红弹幕直接获取，兼容弹弹play的搜索、详情查询和弹幕获取接口规范，并提供日志记录，支持vercel/netlify/edgeone/cloudflare/docker/hf等部署方式，不用提前下载弹幕，没有nas或小鸡也能一键部署。
+            基于上游 danmu_api 的个人自用弹幕 API，保留自用映射、过滤与日志功能，兼容弹弹play接口；仅维护 NAS Docker Compose 部署，镜像由本仓库 GitHub Actions 发布到 GHCR。
         </p>
         <p class="footer-text">本项目仅为个人学习爱好开发，代码开源。如有任何侵权行为，请联系本人删除。</p>
         <p class="footer-text">本项目完全免费，不收取任何费用，请勿上当受骗。</p>
