@@ -14,6 +14,7 @@ const TMDB_PENDING = new Map();
 const TMDB_ACTOR_NAMES_CACHE = new Map();
 const TMDB_ACTOR_NAMES_PENDING = new Map();
 const TMDB_ACTOR_NAMES_TTL = 24 * 60 * 60 * 1000;
+const PERSON_METADATA_RETRY_TTL = 5 * 60 * 1000;
 const TMDB_ACTOR_NAMES_CACHE_LIMIT = 100;
 
 // TMDB API 请求基础函数
@@ -69,19 +70,26 @@ function tmdbQuery(params = {}) {
   return query.toString();
 }
 
+export function personLookupTitle(value) {
+  return String(value || '').normalize('NFKC')
+    .replace(/(?:\s+|(?<=】))from\s+.*$/i, '')
+    .replace(/【[^】]*】/g, '')
+    .replace(/\((?:19|20)\d{2}\)/g, '')
+    .trim();
+}
+
 function normalizePersonLookupTitle(value) {
   return String(value || '')
     .normalize('NFKC')
     .toLocaleLowerCase()
-    .replace(/(?:from|season|s)\s*\d+.*$/i, '')
     .replace(/[\s\p{P}\p{S}]/gu, '');
 }
 
 export function selectTmdbActorCandidate(results, title) {
-  const query = normalizePersonLookupTitle(cleanSearchQuery(String(title || '')));
-  const requestedYear = String(title || '').match(/(?:19|20)\d{2}/)?.[0] || '';
+  const query = normalizePersonLookupTitle(personLookupTitle(title));
+  const requestedYear = String(title || '').normalize('NFKC').match(/\(((?:19|20)\d{2})\)/)?.[1] || '';
 
-  return (Array.isArray(results) ? results : [])
+  const candidates = (Array.isArray(results) ? results : [])
     .filter(item => item && (item.media_type === 'tv' || item.media_type === 'movie'))
     .map((item, index) => {
       const titles = [item.name, item.title, item.original_name, item.original_title]
@@ -90,16 +98,17 @@ export function selectTmdbActorCandidate(results, title) {
       let score = Math.max(...titles.map(candidate => {
         if (!query || !candidate) return 0;
         if (candidate === query) return 100;
-        if (candidate.includes(query) || query.includes(candidate)) return 40;
         return 0;
       }), 0);
       const resultYear = String(item.first_air_date || item.release_date || '').slice(0, 4);
-      if (requestedYear && requestedYear === resultYear) score += 20;
+      if (requestedYear && resultYear !== requestedYear) score = 0;
       score += Math.max(0, 10 - index) / 100;
       return { item, score };
     })
-    .filter(candidate => candidate.score >= 40)
-    .sort((a, b) => b.score - a.score)[0]?.item || null;
+    .filter(candidate => candidate.score >= 100)
+    .sort((a, b) => b.score - a.score);
+  // 无年份时不能仅凭搜索排名选择不同年份的同名作品。
+  return candidates.length === 1 ? candidates[0].item : null;
 }
 
 export function isDomesticTmdbProduction(candidate) {
@@ -157,35 +166,87 @@ export function extractTmdbChineseCastNames(credits, mediaType = 'movie') {
 /**
  * 从 TMDB 搜索当前国产/港台作品并取得其中文演员名。
  * 不要求应用层配置 TMDB_API_KEY；无 Key 时交由反代/网关认证，直连失败则安全返回空数组。
- * 仅接受标题精确或包含关系的候选；非华语作品或无法可靠匹配时返回空数组，
+ * 仅接受标题、指定年份一致的唯一候选；非华语作品或无法可靠匹配时返回空名单，
  * 避免把普通人名、外国演员或角色名当成国内明星。
  */
-export async function getTmdbDomesticCastNamesForTitle(title) {
-  if (!String(title || '').trim()) return [];
+export function selectBangumiPersonSubject(results, title) {
+  const query = normalizePersonLookupTitle(personLookupTitle(title));
+  const year = String(title || '').normalize('NFKC').match(/\(((?:19|20)\d{2})\)/)?.[1];
+  const matches = (Array.isArray(results) ? results : []).filter(item => item?.type === 2
+    && [item.name, item.name_cn].some(name => normalizePersonLookupTitle(name) === query)
+    && (!year || String(item.date || item.air_date || '').slice(0, 4) === year));
+  return matches.length === 1 ? matches[0] : null;
+}
 
-  const searchTitle = cleanSearchQuery(String(title).trim());
-  const cacheKey = normalizePersonLookupTitle(searchTitle);
-  if (!cacheKey) return [];
+async function getBangumiCharacterNames(title) {
+  const headers = { 'Content-Type': 'application/json', 'User-Agent': 'xlmc/danmu_api (https://github.com/xlmc/danmu_api)' };
+  // NAS 的内置中转只转发 GET，使用已验证的公开 GET 搜索接口。
+  // 优先复用本地作品 ID；详情校验仍须通过精确名称及年份检查。
+  let subject = null;
+  if (globals.useBangumiData) {
+    const local = (await searchBangumiData(personLookupTitle(title), ['bangumi'])).filter(item =>
+      item.titles.some(name => normalizePersonLookupTitle(name) === normalizePersonLookupTitle(personLookupTitle(title))));
+    if (local.length === 1 && /^\d+$/.test(String(local[0].siteId))) {
+      const detail = readTmdbData(await httpGet(globals.makeProxyUrl(`https://api.bgm.tv/v0/subjects/${local[0].siteId}`), { headers, timeout: 5000 }));
+      subject = selectBangumiPersonSubject(detail ? [detail] : [], title);
+    }
+  }
+  if (!subject) {
+    const searchUrl = `https://api.bgm.tv/search/subject/${encodeURIComponent(personLookupTitle(title))}?type=2&responseGroup=large&max_results=20`;
+    const response = await httpGet(globals.makeProxyUrl(searchUrl), { headers, timeout: 5000 });
+    subject = selectBangumiPersonSubject(readTmdbData(response)?.list, title);
+  }
+  if (!subject) throw new Error('Bangumi 未找到唯一且年份一致的动画条目');
+  const charactersResponse = await httpGet(globals.makeProxyUrl(`https://api.bgm.tv/v0/subjects/${subject.id}/characters`), { headers, timeout: 5000 });
+  const characters = readTmdbData(charactersResponse);
+  if (!Array.isArray(characters)) throw new Error('Bangumi 角色响应无效');
+  return { subjectId: subject.id, names: [...new Set(characters.map(item => normalizeTmdbChineseName(item.name)).filter(Boolean))] };
+}
+
+const emptyPersonMetadata = (status = 'unavailable') => ({ actorNames: [], characterNames: [], names: [], status });
+const copyPersonMetadata = value => ({ ...value, actorNames: value.actorNames.slice(), characterNames: value.characterNames.slice(), names: value.names.slice() });
+
+export async function getDomesticPersonMetadataForTitle(title) {
+  if (!String(title || '').trim()) return emptyPersonMetadata();
+
+  const searchTitle = personLookupTitle(title);
+  const year = String(title).normalize('NFKC').match(/\(((?:19|20)\d{2})\)/)?.[1] || '';
+  const cacheKey = `${normalizePersonLookupTitle(searchTitle)}:${year}:${globals.tmdbApiKey || ''}`;
+  if (!searchTitle) return emptyPersonMetadata();
 
   const cached = TMDB_ACTOR_NAMES_CACHE.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < TMDB_ACTOR_NAMES_TTL) {
-    return cached.names.slice();
+  if (cached && Date.now() - cached.timestamp < cached.ttl) {
+    return copyPersonMetadata(cached.metadata);
   }
   if (TMDB_ACTOR_NAMES_PENDING.has(cacheKey)) {
-    return (await TMDB_ACTOR_NAMES_PENDING.get(cacheKey)).slice();
+    return copyPersonMetadata(await TMDB_ACTOR_NAMES_PENDING.get(cacheKey));
   }
 
   const task = (async () => {
     try {
-      const searchResponse = await searchTmdbTitles(searchTitle, 'multi', { page: 1 });
-      const candidate = selectTmdbActorCandidate(readTmdbData(searchResponse)?.results, title);
+      // 复用 bangumi-data 中已经建立的 TMDB ID 映射，并用详情再次校验身份。
+      let candidate = null;
+      if (globals.useBangumiData) {
+        const local = (await searchBangumiData(searchTitle, ['tmdb'])).filter(item => item.titles.some(name =>
+          normalizePersonLookupTitle(name) === normalizePersonLookupTitle(searchTitle))
+          && (!year || String(item.begin || '').slice(0, 4) === year));
+        if (local.length === 1 && /^(tv|movie)\/\d+$/.test(String(local[0].siteId))) {
+          const [mediaType, id] = local[0].siteId.split('/');
+          const detail = readTmdbData(await tmdbApiGet(`${mediaType}/${id}?${tmdbQuery({ language: 'zh-CN' })}`));
+          candidate = selectTmdbActorCandidate(detail ? [{ ...detail, media_type: mediaType }] : [], title);
+        }
+      }
+      if (!candidate) {
+        const searchResponse = await searchTmdbTitles(searchTitle, 'multi', { page: 1 });
+        candidate = selectTmdbActorCandidate(readTmdbData(searchResponse)?.results, title);
+      }
       if (!candidate) {
         log('warn', `[system] [tmdb] 未找到可靠的作品匹配，跳过国内明星屏蔽: ${title}`);
-        return [];
+        return emptyPersonMetadata();
       }
       if (!isDomesticTmdbProduction(candidate)) {
         log('info', `[system] [tmdb] 「${title}」未识别为国产/港台作品，跳过国内明星屏蔽`);
-        return [];
+        return emptyPersonMetadata('not-domestic');
       }
 
       const creditsPath = candidate.media_type === 'tv' ? 'aggregate_credits' : 'credits';
@@ -193,28 +254,48 @@ export async function getTmdbDomesticCastNamesForTitle(title) {
         `${candidate.media_type}/${candidate.id}/${creditsPath}?${tmdbQuery({ language: 'zh-CN' })}`
       );
       const credits = readTmdbData(creditsResponse);
-      if (!credits) return [];
-
-      const resolved = extractTmdbChineseCastNames(credits, candidate.media_type);
-      log('info', `[system] [tmdb] 已为「${title}」加载 ${resolved.actorNames.length} 个中文演员名 + ${resolved.characterNames.length} 个角色名`);
-      return resolved.names;
+      const resolved = extractTmdbChineseCastNames(credits || {}, candidate.media_type);
+      const isAnimation = candidate.genre_ids?.includes(16) || candidate.genres?.some(genre => genre.id === 16);
+      let incomplete = !credits;
+      let bangumiSubjectId = null;
+      if (isAnimation && resolved.characterNames.length === 0) {
+        try {
+          const fallback = await getBangumiCharacterNames(title);
+          resolved.characterNames = fallback.names;
+          bangumiSubjectId = fallback.subjectId;
+          if (fallback.names.length === 0) incomplete = true;
+        } catch (error) {
+          incomplete = true;
+          log('warn', `[system] [person-metadata] Bangumi 角色补充失败: ${error.message}`);
+        }
+      }
+      resolved.names = [...new Set([...resolved.actorNames, ...resolved.characterNames])];
+      const status = resolved.names.length === 0 ? 'unavailable' : incomplete ? 'partial' : 'ready';
+      log('info', `[system] [person-metadata] 「${title}」TMDB ${candidate.media_type}/${candidate.id}${bangumiSubjectId ? ` + Bangumi ${bangumiSubjectId}` : ''}，演员 ${resolved.actorNames.length} 个，角色 ${resolved.characterNames.length} 个，状态 ${status}`);
+      return { ...resolved, status };
     } catch (error) {
       log('warn', `[system] [tmdb] 作品演员表加载失败，已跳过国内明星屏蔽: ${error.message}`);
-      return [];
+      return emptyPersonMetadata();
     }
   })();
 
   TMDB_ACTOR_NAMES_PENDING.set(cacheKey, task);
   try {
-    const names = await task;
-    TMDB_ACTOR_NAMES_CACHE.set(cacheKey, { names, timestamp: Date.now() });
+    const metadata = await task;
+    const ttl = ['unavailable', 'partial'].includes(metadata.status) ? PERSON_METADATA_RETRY_TTL : TMDB_ACTOR_NAMES_TTL;
+    TMDB_ACTOR_NAMES_CACHE.set(cacheKey, { metadata, ttl, timestamp: Date.now() });
+    if (ttl === PERSON_METADATA_RETRY_TTL) log('warn', '[system] [person-metadata] 名单未完整加载，5 分钟后允许重试');
     while (TMDB_ACTOR_NAMES_CACHE.size > TMDB_ACTOR_NAMES_CACHE_LIMIT) {
       TMDB_ACTOR_NAMES_CACHE.delete(TMDB_ACTOR_NAMES_CACHE.keys().next().value);
     }
-    return names.slice();
+    return copyPersonMetadata(metadata);
   } finally {
     TMDB_ACTOR_NAMES_PENDING.delete(cacheKey);
   }
+}
+
+export async function getTmdbDomesticCastNamesForTitle(title) {
+  return (await getDomesticPersonMetadataForTitle(title)).names;
 }
 
 // 使用 TMDB API 查询片名

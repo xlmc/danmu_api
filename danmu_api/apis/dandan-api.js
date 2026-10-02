@@ -19,7 +19,7 @@ import {
   extractEpisodeTitle, convertChineseNumber, parseFileName, extractReleaseGroups, createDynamicPlatformOrder, normalizeSpaces, normalizeTitleForMatch,
   extractYear, titleMatches, extractAnimeInfo, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle
 } from "../utils/common-util.js";
-import { getTMDBChineseTitle, getTmdbDomesticCastNamesForTitle, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
+import { getTMDBChineseTitle, getDomesticPersonMetadataForTitle, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
 import { DOMESTIC_REGION_NAMES } from "../data/domestic-regions.js";
 import { applyMergeLogic, mergeDanmakuList, MERGE_DELIMITER, alignSourceTimelines, sanitizeUrl } from "../utils/merge-util.js";
 import { getHanjutvSourceLabel } from "../utils/hanjutv-util.js";
@@ -65,16 +65,22 @@ async function applyDomesticCelebrityFilter(danmus, animeTitle) {
   const blockCelebrities = globals.blockDomesticCelebrities;
   const blockRegions = globals.blockDomesticRegions;
   if ((!blockCelebrities && !blockRegions) || !Array.isArray(danmus) || danmus.length === 0) return danmus;
-  let titleCastNames = [];
+  let metadata = { actorNames: [], characterNames: [], names: [], status: 'unavailable' };
   if (blockCelebrities && animeTitle) {
-    titleCastNames = await getTmdbDomesticCastNamesForTitle(animeTitle);
+    metadata = await getDomesticPersonMetadataForTitle(animeTitle);
   }
 
-  const blockedNames = blockCelebrities ? titleCastNames : [];
+  const blockedNames = blockCelebrities ? metadata.names : [];
+  if (blockCelebrities) log(metadata.names.length ? 'info' : 'warn', `[system] [danmu] [person-filter] 演员 ${metadata.actorNames.length} 个，角色 ${metadata.characterNames.length} 个，状态 ${metadata.status}${animeTitle ? '' : '（此请求无作品标题）'}`);
   const result = filterDanmusByBlockedNames(danmus, blockedNames, {
-    surnameNames: blockCelebrities ? titleCastNames : [],
+    surnameNames: blockCelebrities ? metadata.actorNames : [],
+    surnameMatcherOptions: { bareSurname: false },
     regionNames: blockRegions ? DOMESTIC_REGION_NAMES : []
   });
+  if (blockCelebrities) {
+    const personHits = result.hits.filter(hit => !hit.name.startsWith('地区:'));
+    log('info', `[system] [danmu] [person-filter] 已拦截 ${personHits.reduce((sum, hit) => sum + hit.count, 0)} 条，命中 ${personHits.map(hit => `${hit.name} ×${hit.count}`).join('、') || '无'}`);
+  }
   if (result.removedCount > 0) {
     log('info', `[system] [danmu] [domestic-filter] 已拦截 ${result.removedCount}/${danmus.length} 条弹幕，命中 ${result.hits.length} 条规则`);
   } else {
