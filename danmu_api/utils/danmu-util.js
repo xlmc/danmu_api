@@ -513,13 +513,19 @@ export function hasCalendarDate(text) {
   return false;
 }
 
+/** 时:分或时:分:秒，限制合法范围，避免命中端口号及不完整数字串。 */
+export function hasClockTime(text) {
+  return /(?<![\d:])(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?![\d:])/.test(String(text || '').normalize('NFKC'));
+}
+
 export function filterDanmusByBlockedNames(danmus, names, options = {}) {
   if (!Array.isArray(danmus) || danmus.length === 0) {
     return { danmus: Array.isArray(danmus) ? danmus : [], removedCount: 0, hits: [] };
   }
-  // 当前作品角色表中的完整名字直接匹配；演员二字名仍保留语境保护。
+  // 当前作品演员及角色表中的完整名字直接匹配；手动 @人名 仍使用原有语境规则。
   const characterMatchers = buildBlockedNameMatchers(options.characterNames).map(matcher => ({ ...matcher, regex: null }));
-  const matchers = [...characterMatchers, ...buildCharacterNicknameMatchers(options.characterNames), ...buildBlockedNameMatchers(names)];
+  const actorMatchers = buildBlockedNameMatchers(options.actorNames).map(matcher => ({ ...matcher, regex: null }));
+  const matchers = [...characterMatchers, ...actorMatchers, ...buildCharacterNicknameMatchers(options.characterNames), ...buildBlockedNameMatchers(names)];
   const surnameMatchers = buildBlockedSurnameMatchers(options.surnameNames, options.surnameMatcherOptions);
   const regionMatchers = buildBlockedRegionMatchers(options.regionNames);
   if (!options.blockDates && matchers.length === 0 && surnameMatchers.length === 0 && regionMatchers.length === 0) {
@@ -529,8 +535,8 @@ export function filterDanmusByBlockedNames(danmus, names, options = {}) {
   const hitCounts = new Map();
   const filtered = danmus.filter(item => {
     const text = String(item?.m || '').normalize('NFKC').replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
-    if (options.blockDates && hasCalendarDate(text)) {
-      hitCounts.set('日期:年月日', (hitCounts.get('日期:年月日') || 0) + 1);
+    if (options.blockDates && (hasCalendarDate(text) || hasClockTime(text))) {
+      hitCounts.set('日期:日期时间', (hitCounts.get('日期:日期时间') || 0) + 1);
       return false;
     }
     const personText = matchers.length ? simplized(text) : text;

@@ -75,6 +75,7 @@ async function applyDomesticCelebrityFilter(danmus, animeTitle) {
   if (blockCelebrities) log(metadata.names.length ? 'info' : 'warn', `[system] [danmu] [person-filter] 演员 ${metadata.actorNames.length} 个，角色 ${metadata.characterNames.length} 个，状态 ${metadata.status}${animeTitle ? '' : '（此请求无作品标题）'}`);
   const result = filterDanmusByBlockedNames(danmus, blockedNames, {
     blockDates,
+    actorNames: blockCelebrities ? metadata.actorNames : [],
     characterNames: blockCelebrities ? metadata.characterNames : [],
     surnameNames: blockCelebrities ? metadata.actorNames : [],
     surnameMatcherOptions: { bareSurname: false },
@@ -86,7 +87,7 @@ async function applyDomesticCelebrityFilter(danmus, animeTitle) {
   }
   if (blockDates) {
     const count = result.hits.filter(hit => hit.name.startsWith('日期:')).reduce((sum, hit) => sum + hit.count, 0);
-    log('info', `[system] [danmu] [blocked-words] 日期规则已拦截 ${count} 条`);
+    log('info', `[system] [danmu] [blocked-words] 日期时间规则已拦截 ${count} 条`);
   }
   if (result.removedCount > 0) {
     log('info', `[system] [danmu] [domestic-filter] 已拦截 ${result.removedCount}/${danmus.length} 条弹幕，命中 ${result.hits.length} 条规则`);
