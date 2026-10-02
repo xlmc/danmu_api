@@ -410,7 +410,7 @@ export function buildBlockedNameMatchers(names) {
     const escaped = escapeRegExp(key);
     const regex = length === 2
       ? new RegExp(
-        `(?:[@＃#]${escaped}(?=$|[^\\p{Script=Han}])|${SHORT_PERSON_CONTEXT_PREFIX.source}${escaped}(?=$|[^\\p{Script=Han}])|${escaped}${SHORT_PERSON_CONTEXT_SUFFIX.source})`,
+        `(?:(?:^|[^\\p{Script=Han}])${escaped}(?=$|[^\\p{Script=Han}])|${SHORT_PERSON_CONTEXT_PREFIX.source}${escaped}(?=$|[^\\p{Script=Han}])|${escaped}${SHORT_PERSON_CONTEXT_SUFFIX.source})`,
         'u'
       )
       : null;
