@@ -422,6 +422,10 @@ export function titleMatches(title, query, parsedSeason = null, forceNonStrict =
   // 预处理：统一繁简、移除干扰字符并转小写，消除书写变体与格式差异
   const t = normalizeTitleForMatch(cleanTitle).toLowerCase();
   const q = normalizeTitleForMatch(queryText).toLowerCase();
+  // A mapping can name an entire season catalogue ("作品 第3季") and
+  // address its internal S01. Honor that exact identity in non-strict mode
+  // too, before rejecting the catalogue's displayed season number.
+  if (Number(parsedSeason) === 1 && getExplicitSeasonNumber(queryText) !== null && t === q) return true;
   let qList = [q];
 
   // 季度特征提取：提前提取季数以支撑策略2的去季包含匹配
