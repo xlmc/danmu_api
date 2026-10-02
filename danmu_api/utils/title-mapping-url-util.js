@@ -614,7 +614,7 @@ export function applyTitleMappingWithLog(rawTitle, source = 'system', season = n
   // ---------- 第一步：查本地表（优先级最高） ----------
   for (const key of candidateKeys) {
     // 先试原样键，再试「分隔符变空格」的键
-    const localMapped = localIndex.rawIndex.get(key) ?? localIndex.normIndex.get(normalizeSeparators(key));
+    const localMapped = localIndex.rawIndex.get(key) ?? localIndex.normIndex.get(normalizeSeparators(key)) ?? localIndex.compactIndex.get(compactKey(key));
     if (localMapped) return localMapped;  // 本地表命中，直接返回
   }
   // 本地表终极兜底：去掉所有分隔符来查（例 "Monster.Island" ≡ "monsterisland"）
@@ -624,7 +624,7 @@ export function applyTitleMappingWithLog(rawTitle, source = 'system', season = n
 
   // ---------- 第二步：查远程表（本地没命中才到这里） ----------
   for (const key of candidateKeys) {
-    const remoteMapped = remoteIndex.rawIndex.get(key) ?? remoteIndex.normIndex.get(normalizeSeparators(key));
+    const remoteMapped = remoteIndex.rawIndex.get(key) ?? remoteIndex.normIndex.get(normalizeSeparators(key)) ?? remoteIndex.compactIndex.get(compactKey(key));
     if (remoteMapped) {
       // 命中远程表：记一条成功日志（方便用户排查），然后返回映射结果
       logRemoteMapping("info", `[system] [remote-mapping] [远程] [${source}] ✅ 匹配成功: 「${key}」→「${remoteMapped}」`);
@@ -766,7 +766,7 @@ function resolveMappingFromTable(table, rawTitle, season = null, year = null) {
   const index = buildMappingIndex(mappingTable);
   const candidateKeys = buildMappingCandidateKeys(rawTitle, season, year);
   for (const key of candidateKeys) {
-    const mapped = index.rawIndex.get(key) ?? index.normIndex.get(normalizeSeparators(key));
+    const mapped = index.rawIndex.get(key) ?? index.normIndex.get(normalizeSeparators(key)) ?? index.compactIndex.get(compactKey(key));
     if (mapped !== undefined) return { matched: true, title: mapped, key };
   }
   const compact = compactKey(rawTitle);

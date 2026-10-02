@@ -1,3 +1,4 @@
+import { canonicalPlatformName, canonicalPlatformGroup } from './platform-util.js';
 import { globals } from '../configs/globals.js';
 import { log } from './log-util.js'
 import { simplized } from './zh-util.js';
@@ -27,7 +28,7 @@ export function printFirst200Chars(data) {
 // 正则表达式：提取episode标题中的内容
 export const extractEpisodeTitle = (title) => {
   const match = title.match(/【(.*?)】/);  // 匹配【】中的内容
-  return match ? match[1] : null;  // 返回方括号中的内容，若没有匹配到，则返回null
+  return match ? canonicalPlatformGroup(match[1]) : null;  // 返回方括号中的内容，若没有匹配到，则返回null
 };
 
 // 正则表达式：提取anime标题中的内容
@@ -270,7 +271,7 @@ function normalizePlatformName(inputPlatform) {
     return '';
   }
 
-  const input = inputPlatform.trim();
+  const input = canonicalPlatformName(inputPlatform);
 
   // 直接返回输入的平台名称（如果有效）
   if (Array.isArray(globals.allowedPlatforms) && globals.allowedPlatforms.includes(input)) {
@@ -283,6 +284,7 @@ function normalizePlatformName(inputPlatform) {
 
 // 根据指定平台创建动态平台顺序
 export function createDynamicPlatformOrder(preferredPlatform) {
+  if (preferredPlatform) preferredPlatform = canonicalPlatformName(preferredPlatform);
   if (!preferredPlatform) {
     return [...globals.platformOrderArr]; // 返回默认顺序的副本
   }

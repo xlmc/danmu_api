@@ -340,7 +340,7 @@ test('worker.js API endpoints', async (t) => {
 
       const platformParsed = parseFileName('[ANi] Foo.S01E01@qq');
       assert.deepEqual(platformParsed.releaseGroups, ['ANi']);
-      assert.equal(platformParsed.preferredPlatform, 'qq');
+      assert.equal(platformParsed.preferredPlatform, 'tencent');
       assert.deepEqual(extractReleaseGroups('Spider-Man.mkv'), []);
     });
 
@@ -382,7 +382,7 @@ test('worker.js API endpoints', async (t) => {
       assert.equal(qualified.targetTitle, '航海王');
       assert.equal(qualified.targetYear, 1999);
       assert.equal(qualified.targetType, '动漫');
-      assert.equal(rules[3].targetPlatform, 'qiyi');
+      assert.equal(rules[3].targetPlatform, 'iqiyi');
       assert.equal(candidateMatchesMappingQualifiers({
         animeTitle: '航海王(1999)【动漫】from tencent',
         typeDescription: '动漫',

@@ -1,3 +1,4 @@
+import { canonicalPlatformName } from '../utils/platform-util.js';
 import { globals } from '../configs/globals.js';
 import { getPageTitle, jsonResponse, httpGet, sourceLogContext, runWithHttpCache, httpCacheContext } from '../utils/http-util.js';
 import { log } from '../utils/log-util.js'
@@ -189,16 +190,16 @@ async function resolveUrlDuration(url) {
     let segmentResult = null;
 
     if (targetUrl.includes('.qq.com')) {
-      segmentResult = await sourceLogContext.run('tencent', () => tencentSource.getComments(targetUrl, 'qq', true));
+      segmentResult = await sourceLogContext.run('tencent', () => tencentSource.getComments(targetUrl, 'tencent', true));
     } else if (targetUrl.includes('.iqiyi.com')) {
-      segmentResult = await sourceLogContext.run('iqiyi', () => iqiyiSource.getComments(targetUrl, 'qiyi', true));
+      segmentResult = await sourceLogContext.run('iqiyi', () => iqiyiSource.getComments(targetUrl, 'iqiyi', true));
     } else if (targetUrl.includes('.mgtv.com')) {
       segmentResult = await sourceLogContext.run('mango', () => mangoSource.getComments(targetUrl, 'imgo', true));
     } else if (targetUrl.includes('.bilibili.com') || targetUrl.includes('b23.tv')) {
       if (targetUrl.includes('b23.tv')) {
         targetUrl = await sourceLogContext.run('bilibili', () => bilibiliSource.resolveB23Link(targetUrl));
       }
-      segmentResult = await sourceLogContext.run('bilibili', () => bilibiliSource.getComments(targetUrl, 'bilibili1', true));
+      segmentResult = await sourceLogContext.run('bilibili', () => bilibiliSource.getComments(targetUrl, 'bilibili', true));
     } else if (targetUrl.includes('.youku.com')) {
       segmentResult = await sourceLogContext.run('youku', () => youkuSource.getComments(targetUrl, 'youku', true));
     } else if (targetUrl.includes('.miguvideo.com')) {
@@ -331,6 +332,24 @@ export function matchSeason(anime, queryTitle, season) {
   }
 }
 
+// “最终季”本身没有季号；只有同一剧名的至少两个分集明确给出一致季号时才补充。
+function matchEpisodeSeason(anime, queryTitle, season, detailStore) {
+  const titles = [anime.animeTitle, ...(anime.aliases || [])];
+  if (titles.some(title => extractSeasonNumberFromAnimeTitle(title).season !== null)) return false;
+  const episodes = getBangumiDataForMatch(anime, detailStore)?.bangumi?.episodes || [];
+  const query = normalizeTitleForMatch(queryTitle.replace(/\s*(?:最终季|完结季)$/, ''));
+  const seasons = new Set();
+  const numbers = new Set();
+  for (const ep of episodes) {
+    const raw = ep.episodeTitle.replace(/^【[^】]+】\s*/, '').trim();
+    const numbered = raw.match(/^(.*?)\s*(?:第\s*)?(\d{1,2})\s*(?:季)?\s*[_\.\-]\s*(\d{1,3})(?:\s|$)/);
+    if (!numbered || normalizeTitleForMatch(numbered[1]) !== query) continue;
+    seasons.add(Number(numbered[2]));
+    numbers.add(Number(numbered[3]));
+  }
+  return seasons.size === 1 && seasons.has(season) && numbers.size >= 2;
+}
+
 /**
  * 验证指定结果集中是否满足目标集数的需求
  * 依据目标平台偏好，推断核心数据源容量，决定是否需要触发跨季全量检索
@@ -346,7 +365,7 @@ function checkEpisodeSatisfied(animesList, querySeason, queryEpisode, requestAni
 
   let targetPlatforms = [];
   if (targetPlatform) {
-    targetPlatforms = targetPlatform.split('&').map(s => s.trim().toLowerCase()).filter(s => s);
+    targetPlatforms = targetPlatform.split('&').map(s => canonicalPlatformName(s.trim().toLowerCase())).filter(s => s);
   }
 
   if (targetPlatforms.length === 0) {
@@ -363,7 +382,7 @@ function checkEpisodeSatisfied(animesList, querySeason, queryEpisode, requestAni
     const providedSources = new Set();
 
     for (const anime of animesList) {
-      // 候选平台由番剧身份标签(标题 from 段或 source)与所挂集标签共同决定，使身份名(如tencent)与优选平台名(如qq)不一致但集上挂有目标标签的源也能被正确识别为该平台有数据
+      // 候选平台由番剧身份标签(标题 from 段或 source)与所挂集标签共同决定，同时兼容旧缓存中的平台别名
       const identityPlatform = extractPlatformFromTitle(anime.animeTitle) || anime.source;
       const bData = getBangumiDataForMatch(anime, requestAnimeDetailsMap);
       const epPlatforms = new Set();
@@ -374,7 +393,7 @@ function checkEpisodeSatisfied(animesList, querySeason, queryEpisode, requestAni
         }
       }
       const actualPlatform = [...new Set([identityPlatform, ...epPlatforms].filter(Boolean)
-          .flatMap(p => p.split(/[&＆]/).map(s => s.trim().toLowerCase())).filter(s => s))].join('&');
+          .flatMap(p => p.split(/[&＆]/).map(s => canonicalPlatformName(s.trim().toLowerCase()))).filter(s => s))].join('&');
 
       if (tPlat !== '_any_' && getPlatformMatchScore(actualPlatform, tPlat) === 0) {
         continue;
@@ -505,15 +524,15 @@ async function executeSourceHandlers(resultData, queryTitle, targetAnimesList, r
 }
 
 // Extracted function for GET /api/v2/search/anime
-export async function searchAnime(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false) {
+export async function searchAnime(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null) {
   // 单次搜索请求内启用 HTTP 响应复用缓存: 作为各源通用的请求级复用安全网, 借助 AsyncLocalStorage 做请求级隔离
   if (httpCacheContext.getStore()) {
-    return searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh);
+    return searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress);
   }
-  return runWithHttpCache(() => searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh));
+  return runWithHttpCache(() => searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress));
 }
 
-async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false) {
+async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null) {
   let queryTitle = url.searchParams.get("keyword");
   const skipTitleMapping = url.searchParams.get('_skipTitleMapping') === '1';
 
@@ -735,15 +754,15 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
 
     let platform = "unknown";
     if (queryTitle.includes(".qq.com")) {
-      platform = "qq";
+      platform = "tencent";
     } else if (queryTitle.includes(".iqiyi.com")) {
-      platform = "qiyi";
+      platform = "iqiyi";
     } else if (queryTitle.includes(".mgtv.com")) {
       platform = "imgo";
     } else if (queryTitle.includes(".youku.com")) {
       platform = "youku";
     } else if (queryTitle.includes(".bilibili.com") || queryTitle.includes('b23.tv')) {
-      platform = "bilibili1";
+      platform = "bilibili";
     } else if (queryTitle.includes('.miguvideo.com')) {
       platform = "migu";
     } else if (queryTitle.includes('.sohu.com')) {
@@ -835,12 +854,25 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
 
     // 构建逐源管道：每个源 search 完成后，通过 executeSourceHandlers 处理 handleAnimes
     // 传入仅含当前源数据的 resultData，使 executeSourceHandlers 仅处理该源
-    const pipelineTasks = globals.sourceOrderArr.map(source => {
+    const completedSources = new Map();
+    const pipelineTasks = globals.sourceOrderArr.filter(source => sourceSearchMap[source]).map(source => {
       const isolatedAnimes = [];
       const isolatedDetailStore = new Map();
       const pipelinePromise = sourceSearchMap[source].then(async searchResult => {
         resultData[source] = searchResult;
         await executeSourceHandlers({ [source]: searchResult }, queryTitle, isolatedAnimes, isolatedDetailStore, querySeason, preferAnimeId, preferSource);
+        completedSources.set(source, { animes: isolatedAnimes, details: isolatedDetailStore });
+        if (onProgress) {
+          const readyAnimes = [];
+          const readyDetails = new Map();
+          for (const key of globals.sourceOrderArr) {
+            const ready = completedSources.get(key);
+            if (!ready) continue;
+            readyAnimes.push(...ready.animes);
+            for (const [id, anime] of ready.details) if (!readyDetails.has(id)) readyDetails.set(id, anime);
+          }
+          onProgress({ animes: readyAnimes, details: readyDetails });
+        }
       });
       return { key: source, animes: isolatedAnimes, detailStore: isolatedDetailStore, promise: pipelinePromise };
     });
@@ -1061,15 +1093,15 @@ export function filterSameEpisodeTitle(filteredTmpEpisodes) {
 /**
  * 计算平台匹配得分 (新增函数 - 用于支持合并源模糊匹配和杂质过滤)
  * @param {string} candidatePlatform 候选平台字符串 (e.g., "bilibili&dandan")
- * @param {string} targetPlatform 目标配置字符串 (e.g., "bilibili1&dandan")
+ * @param {string} targetPlatform 目标配置字符串 (e.g., "bilibili&dandan")
  * @returns {number} 得分：越高越好，0表示不匹配
  */
 function getPlatformMatchScore(candidatePlatform, targetPlatform) {
   if (!candidatePlatform || !targetPlatform) return 0;
 
   // 预处理：按半角/全角 & 分割，转小写去空格并去重，避免合并标题重复标签抬高杂质长度导致评分失真
-  const cParts = [...new Set(candidatePlatform.split(/[&＆]/).map(s => s.trim().toLowerCase()).filter(s => s))];
-  const tParts = [...new Set(targetPlatform.split(/[&＆]/).map(s => s.trim().toLowerCase()).filter(s => s))];
+  const cParts = [...new Set(candidatePlatform.split(/[&＆]/).map(s => canonicalPlatformName(s.trim().toLowerCase())).filter(s => s))];
+  const tParts = [...new Set(targetPlatform.split(/[&＆]/).map(s => canonicalPlatformName(s.trim().toLowerCase())).filter(s => s))];
 
   let matchCount = 0;
 
@@ -1516,7 +1548,7 @@ export async function matchAniAndEp(season, episode, year, searchData, title, re
                 // 构造一个虚拟的 anime 对象传入 matchSeason，这样当命中别名时，matchSeason 才能正确判断后缀
                 const tempAnime = { ...anime, animeTitle: candTitle };
 
-                const seasonOk = matchSeason(tempAnime, title, season);
+                const seasonOk = matchSeason(tempAnime, title, season) || matchEpisodeSeason(anime, title, season, detailStore);
                 if (seasonOk || animeIsPrefer) {
                     isMatch = true;
                     break; // 别名命中跳出
@@ -1617,16 +1649,18 @@ export async function matchAniAndEp(season, episode, year, searchData, title, re
     // 3. 匹配结果处理与评分比较
     if (matchedEpisode) {
         // 计算当前匹配的得分
-        // 候选平台由番剧身份标签（标题 from 段或 source）与命中集所挂平台标签共同决定，使身份名（如 tencent）与优选平台名（如 qq）不一致但集上挂有该标签的源也能正确加分
+        // 候选平台由番剧身份标签（标题 from 段或 source）与命中集所挂平台标签共同决定，同时兼容旧缓存中的平台别名
         const identityPlatform = extractPlatformFromTitle(anime.animeTitle) || anime.source;
         const epPlatform = matchedEpisode ? extractEpisodeTitle(matchedEpisode.episodeTitle) : null;
         const candidatePlatform = [...new Set([identityPlatform, epPlatform].filter(Boolean)
-            .flatMap(p => p.split(/[&＆]/).map(s => s.trim().toLowerCase())).filter(s => s))].join('&');
+            .flatMap(p => p.split(/[&＆]/).map(s => canonicalPlatformName(s.trim().toLowerCase()))).filter(s => s))].join('&');
         let currentScore = 0;
 
         if (platform) {
             // 如果指定了平台偏好，计算匹配得分
             currentScore = getPlatformMatchScore(candidatePlatform, platform);
+            // 不属于当前平台组的候选留给后续组或最终回退，不能抢占第一组。
+            if (currentScore === 0 && !isPreferredAnime) continue;
         } else {
             // 如果没有指定平台偏好，默认为 1
             currentScore = 1;
@@ -1670,7 +1704,7 @@ export async function matchAniAndEp(season, episode, year, searchData, title, re
       const spillIdentity = extractPlatformFromTitle(spilloverRes.resAnime.animeTitle) || spilloverRes.resAnime.source;
       const spillEpPlatform = spilloverRes.resEpisode ? extractEpisodeTitle(spilloverRes.resEpisode.episodeTitle) : null;
       const spillCandidate = [...new Set([spillIdentity, spillEpPlatform].filter(Boolean)
-          .flatMap(p => p.split(/[&＆]/).map(s => s.trim().toLowerCase())).filter(s => s))].join('&');
+          .flatMap(p => p.split(/[&＆]/).map(s => canonicalPlatformName(s.trim().toLowerCase()))).filter(s => s))].join('&');
       bestRes = {
         episode: spilloverRes.resEpisode,
         anime: spilloverRes.resAnime,
@@ -1987,12 +2021,85 @@ function createMatchPlatformOrder(preferredPlatform, secondaryPreferredPlatform 
   return withoutSecondary;
 }
 
+async function selectReadyMatch({ animes, details, title, season, episode, year, platform, req, mapping, strictTargetTitle }) {
+  const guard = mapping || (strictTargetTitle ? { targetTitle: title } : null);
+  let candidates = guard ? filterMappingTargetCandidates(animes, guard) : animes;
+  // 快速路径只接受明确季号与集标题，不用数组位置或跨季推算。
+  candidates = candidates.filter(anime => {
+    if (anime.isHiddenChild || !matchYear(anime, year)) return false;
+    const titles = [anime.animeTitle, ...(anime.aliases || [])];
+    if (!titles.some(candidate => matchSeason({ ...anime, animeTitle: candidate }, title, season)) &&
+        !matchEpisodeSeason(anime, title, season, details)) return false;
+    const episodes = getBangumiDataForMatch(anime, details)?.bangumi?.episodes || [];
+    return episodes.some(ep => !globals.episodeTitleFilter.test(ep.episodeTitle) &&
+      extractEpisodeNumberFromTitle(ep.episodeTitle) === episode &&
+      getPlatformMatchScore(extractEpisodeTitle(ep.episodeTitle), platform) > 0);
+  });
+  if (candidates.length === 0) return null;
+  const selected = await matchAniAndEp(season, episode, year, { animes: candidates }, title, req, platform, null, null, details);
+  if (!selected.resAnime || !selected.resEpisode || extractEpisodeNumberFromTitle(selected.resEpisode.episodeTitle) !== episode) return null;
+  return { ...selected, spilloverMatched: false, title, season, episode };
+}
+
 async function executeMatchAttempt({ req, title, season, episode, year, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false }) {
+  const startedAt = Date.now();
   const dynamicPlatformOrder = createMatchPlatformOrder(preferredPlatform, secondaryPreferredPlatform);
   const targetPlatform = dynamicPlatformOrder.length > 0 ? dynamicPlatformOrder[0] : null;
   const detailStore = new Map();
   const searchUrl = buildSearchAnimeUrl(req.url, title, season, episode, true);
-  const searchRes = await searchAnime(searchUrl, preferAnimeId, preferSource, detailStore, targetPlatform);
+  const budget = globals.matchSearchBudgetMs;
+  const catalogKey = `${title}_S${season}`;
+  const canUseReady = budget > 0 && season && episode && targetPlatform && !preferAnimeId && !offsets &&
+    !globals.aiValid && !resolveFavoriteForSearchKeyword(catalogKey) &&
+    !(mapping?.targetYear || mapping?.targetType || mapping?.targetTmdbId);
+  const probe = progress => selectReadyMatch({ ...progress, title, season, episode, year, platform: targetPlatform, req, mapping, strictTargetTitle });
+  if (canUseReady) {
+    // 已保存的目录仍包含可用剧集 URL；缺集、不确定季号或优先组无数据时才重新搜索。
+    const details = new Map();
+    const cached = getSearchCache(catalogKey, details) ?? getSearchCache(title, details);
+    const catalog = cached ?? globals.animes.filter(anime => globals.sourceOrderArr.includes(anime.source));
+    if (cached === null) catalog.forEach((anime, index) => details.set(index, anime));
+    const ready = await probe({ animes: catalog, details });
+    if (ready) {
+      log('info', `[system] [match-fast] 复用已保存目录，耗时 ${Date.now() - startedAt}ms: ${ready.resAnime.animeTitle}, ${ready.resEpisode.episodeTitle}`);
+      return ready;
+    }
+  }
+
+  let latestProgress = null;
+  let budgetElapsed = false;
+  let closed = false;
+  let resolveReady;
+  const readyPromise = new Promise(resolve => { resolveReady = resolve; });
+  const checkReady = async () => {
+    if (closed || !budgetElapsed || !latestProgress) return;
+    const progress = latestProgress;
+    const ready = await probe(progress);
+    if (!ready || closed) return;
+    for (const [key, value] of progress.details) detailStore.set(key, value);
+    log('info', `[system] [match-fast] 优先组准确命中，耗时 ${Date.now() - startedAt}ms，慢源继续搜索: ${ready.resAnime.animeTitle}, ${ready.resEpisode.episodeTitle}`);
+    resolveReady({ ready });
+  };
+  const onProgress = canUseReady ? progress => {
+    latestProgress = progress;
+    void checkReady().catch(error => log('warn', `[system] [match-fast] ${error.message}`));
+  } : null;
+  const timer = canUseReady ? setTimeout(() => {
+    budgetElapsed = true;
+    void checkReady().catch(error => log('warn', `[system] [match-fast] ${error.message}`));
+  }, budget) : null;
+  const fullSearch = searchAnime(searchUrl, preferAnimeId, preferSource, detailStore, targetPlatform, false, onProgress);
+  // 完整搜索继续完成合并与缓存；部分搜索结果绝不写成完整搜索缓存。
+  fullSearch.catch(error => log('warn', `[system] [match-fast] 完整搜索失败: ${error.message}`));
+  let outcome;
+  try {
+    outcome = await Promise.race([fullSearch.then(response => ({ response })), readyPromise]);
+  } finally {
+    closed = true;
+    if (timer) clearTimeout(timer);
+  }
+  if (outcome.ready) return outcome.ready;
+  const searchRes = outcome.response;
   const searchData = await searchRes.json();
   log("info", `[system] [match] searchData: ${searchData.animes}`);
   log("info", `[system] [match] Dynamic platformOrder: ${dynamicPlatformOrder}`);
@@ -3086,9 +3193,9 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
 
     // 根据URL域名判断平台并获取弹幕
     if (url.includes('.qq.com')) {
-      danmus = await sourceLogContext.run('tencent', () => tencentSource.getComments(cleanUrl, "qq", segmentFlag));
+      danmus = await sourceLogContext.run('tencent', () => tencentSource.getComments(cleanUrl, "tencent", segmentFlag));
     } else if (url.includes('.iqiyi.com')) {
-      danmus = await sourceLogContext.run('iqiyi', () => iqiyiSource.getComments(cleanUrl, "qiyi", segmentFlag));
+      danmus = await sourceLogContext.run('iqiyi', () => iqiyiSource.getComments(cleanUrl, "iqiyi", segmentFlag));
     } else if (url.includes('.mgtv.com')) {
       danmus = await sourceLogContext.run('mango', () => mangoSource.getComments(cleanUrl, "imgo", segmentFlag));
     } else if (url.includes('.bilibili.com') || url.includes('b23.tv')) {
@@ -3097,7 +3204,7 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
       if (resolvedUrl.includes('b23.tv')) {
         resolvedUrl = await sourceLogContext.run('bilibili', () => bilibiliSource.resolveB23Link(resolvedUrl));
       }
-      danmus = await sourceLogContext.run('bilibili', () => bilibiliSource.getComments(resolvedUrl, "bilibili1", segmentFlag));
+      danmus = await sourceLogContext.run('bilibili', () => bilibiliSource.getComments(resolvedUrl, "bilibili", segmentFlag));
     } else if (url.includes('.youku.com')) {
       danmus = await sourceLogContext.run('youku', () => youkuSource.getComments(cleanUrl, "youku", segmentFlag));
     } else if (url.includes('.miguvideo.com')) {
@@ -3166,7 +3273,7 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
 export async function getSegmentComment(segment, queryFormat) {
   try {
     let url = segment.url;
-    let platform = segment.type;
+    let platform = canonicalPlatformName(segment.type);
 
     // 验证URL参数
     if (!url || typeof url !== 'string') {
@@ -3205,13 +3312,13 @@ export async function getSegmentComment(segment, queryFormat) {
     let danmus = [];
 
     // 根据平台调用相应的分段弹幕获取方法
-    if (platform === "qq") {
+    if (platform === "tencent") {
       danmus = await sourceLogContext.run('tencent', () => tencentSource.getSegmentComments(segment));
-    } else if (platform === "qiyi") {
+    } else if (platform === "iqiyi") {
       danmus = await sourceLogContext.run('iqiyi', () => iqiyiSource.getSegmentComments(segment));
     } else if (platform === "imgo") {
       danmus = await sourceLogContext.run('mango', () => mangoSource.getSegmentComments(segment));
-    } else if (platform === "bilibili1") {
+    } else if (platform === "bilibili") {
       danmus = await sourceLogContext.run('bilibili', () => bilibiliSource.getSegmentComments(segment));
     } else if (platform === "youku") {
       danmus = await sourceLogContext.run('youku', () => youkuSource.getSegmentComments(segment));

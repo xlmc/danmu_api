@@ -1,3 +1,4 @@
+import { canonicalPlatformGroup, canonicalPlatformName } from './platform-util.js';
 import { globals } from '../configs/globals.js';
 import { log } from './log-util.js'
 import { binResponse, jsonResponse, xmlResponse } from "./http-util.js";
@@ -139,6 +140,7 @@ export function handleDanmusLike(groupedDanmus) {
   const lowThresholdSources = new Set([
     '[hanjutv]',
     '[sohu]',
+    '[bilibili]',
     '[bilibili1]',
     '[migu]',
   ]);
@@ -635,13 +637,14 @@ export function convertToDanmakuJson(contents, platform) {
     }
 
     // 优先使用弹幕自带的 _sourceLabel（应对合并工具），其次是外部传入的宏观 platform
-    let currentPlatform = item._sourceLabel || platform;
+    let currentPlatform = canonicalPlatformGroup(item._sourceLabel || platform);
     // 原生 color_v2 由 dandan 兼容链路接管：不参与本项目渐变规则。
     if (nativeGradient.present) currentPlatform = 'dandan';
 
     // 如果存在实时拉取的副源标签，安全追加
-    if (item.realTimeSource && !currentPlatform.includes(item.realTimeSource)) {
-      currentPlatform = `${currentPlatform}＆${item.realTimeSource}`;
+    const realTimeSource = canonicalPlatformName(item.realTimeSource);
+    if (realTimeSource && !currentPlatform.split(/[&＆]/).includes(realTimeSource)) {
+      currentPlatform = `${currentPlatform}＆${realTimeSource}`;
     }
 
     // 在组装字符串时，顺带通过符号检测判定当前是否为多源组合数据
