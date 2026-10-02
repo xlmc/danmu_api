@@ -441,7 +441,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       const cachedComments = getCommentCache(videoUrl);
       if (cachedComments !== null) {
         log("info", `[system] [Rate Limit] Cache hit for URL: ${videoUrl}, skipping rate limit check`);
-        return getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration);
+        return getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration, url.searchParams.get('animeTitle') || '');
       }
 
       // 缓存未命中，执行限流检查（如果 rateLimitMaxRequests > 0 则启用限流）
@@ -476,7 +476,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       }
 
       // 通过URL获取弹幕
-      return getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration);
+      return getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration, url.searchParams.get('animeTitle') || '');
     }
 
     // 否则通过commentId获取弹幕

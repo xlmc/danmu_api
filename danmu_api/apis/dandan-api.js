@@ -61,6 +61,42 @@ const localSource = getSourceByKey('local');
 const doubanSource = getSourceByKey('douban');
 const tmdbSource = getSourceByKey('tmdb');
 
+const normalizedFilterUrl = value => stripLinkOffset(sanitizeUrl(String(value || ''))).cleanUrl;
+async function resolveFilterTitle(videoUrl, hint = '') {
+  if (String(videoUrl || '').startsWith('local:')) {
+    const { getLocalDanmu } = await import('../utils/local-danmu-store.js');
+    const resource = await getLocalDanmu(String(videoUrl).slice(6));
+    if (resource?.title) return `${resource.title}${resource.year ? `(${resource.year})` : ''}`;
+  }
+  const target = normalizedFilterUrl(videoUrl);
+  const matches = new Set();
+  for (const anime of globals.animes) {
+    if (anime.links?.some(link => link.url === videoUrl || String(link.url).split(MERGE_DELIMITER)
+      .some(part => normalizedFilterUrl(part) === target))) matches.add(anime.animeTitle);
+  }
+  if (matches.size === 1) return [...matches][0];
+  if (matches.size > 1) {
+    log('warn', '[system] [danmu] [person-filter] URL 对应多个作品，跳过人物名单，仍执行地区和日期时间规则');
+    return '';
+  }
+  return String(hint || '');
+}
+const segmentFilterContexts = new Map();
+function attachFilterContext(value, animeTitle, sourceUrl) {
+  if (!value || typeof value !== 'object') return value;
+  if (Array.isArray(value.segmentList)) value.segmentList = value.segmentList.map(segment => {
+    const key = `${segment.type}:${String(segment.url).trim()}`;
+    const previous = segmentFilterContexts.get(key);
+    // Older players may send only the original segment fields. Never reuse an ambiguous work identity.
+    segmentFilterContexts.set(key, previous && previous.animeTitle !== animeTitle
+      ? { animeTitle: '', sourceUrl: '' } : { animeTitle, sourceUrl });
+    while (segmentFilterContexts.size > 500) segmentFilterContexts.delete(segmentFilterContexts.keys().next().value);
+    return Object.assign(Object.create(Object.getPrototypeOf(segment)), segment, { animeTitle, sourceUrl });
+  });
+  if (Array.isArray(value)) return value.map(item => attachFilterContext(item, animeTitle, sourceUrl));
+  return value;
+}
+
 async function applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata = null) {
   const blockCelebrities = globals.blockDomesticCelebrities;
   const blockRegions = globals.blockDomesticRegions;
@@ -2743,7 +2779,7 @@ export async function getComment(path, queryFormat, segmentFlag, clientIp, inclu
   let title = findTitleById(commentId);
   let plat = title ? extractEpisodeTitle(title) : null;
   if (url?.startsWith('local:')) {
-    return getCommentByUrl(url, queryFormat, segmentFlag, includeDuration);
+    return getCommentByUrl(url, queryFormat, segmentFlag, includeDuration, animeTitle);
   }
   // 分段请求不会用到本地兜底结果，直接跳过这次全量扫描（本地资源多时它是白跑的开销）。
   const localResource = segmentFlag ? null : await (async () => {
@@ -2766,7 +2802,8 @@ export async function getComment(path, queryFormat, segmentFlag, clientIp, inclu
   })();
   if (localResource && !segmentFlag) {
     const localComments = await localSource.getComments(localResource.resourceKey, 'local');
-    return formatDanmuResponse(buildDanmuResponse({ count: localComments.length, comments: localComments }, null), queryFormat);
+    const filtered = await applyDomesticCelebrityFilter(localComments, await resolveFilterTitle(`local:${localResource.resourceKey}`, animeTitle));
+    return formatDanmuResponse(buildDanmuResponse({ count: filtered.length, comments: filtered }, null), queryFormat);
   }
   const shouldAttachDuration = shouldIncludeVideoDuration(queryFormat, includeDuration);
   log("info", "[system] [LogVar-API] comment url...", url);
@@ -2784,7 +2821,7 @@ export async function getComment(path, queryFormat, segmentFlag, clientIp, inclu
 
   // 检查弹幕缓存
   const cacheKey = resolveCommentCacheKey(url);
-  const cachedComments = getCommentCache(cacheKey);
+  const cachedComments = segmentFlag ? null : getCommentCache(cacheKey);
   if (cachedComments !== null) {
     const filteredCachedComments = await applyDomesticCelebrityFilter(cachedComments, animeTitle, pendingMetadata);
     const responseData = buildDanmuResponse(
@@ -2867,6 +2904,8 @@ export async function getComment(path, queryFormat, segmentFlag, clientIp, inclu
       danmus = await sourceLogContext.run('other', () => otherSource.getComments(url, "other_server", segmentFlag));
     }
   }
+
+  if (segmentFlag) danmus = attachFilterContext(danmus, animeTitle, url);
 
   // 单链接偏移值应用（合并链接已在 fetchMergedComments 中按来源分别应用，此处仅处理单链接）
   if (!(url && url.includes(MERGE_DELIMITER)) && singleUrlOffset !== 0 && danmus && Array.isArray(danmus) && danmus.length > 0) {
@@ -2980,7 +3019,7 @@ export async function getComment(path, queryFormat, segmentFlag, clientIp, inclu
 }
 
 // Extracted function for GET /api/v2/comment?url=xxx or /api/v2/extcomment?url=xxx
-export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration = false) {
+export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration = false, animeTitleHint = '') {
   try {
     // 验证URL参数
     if (!videoUrl || typeof videoUrl !== 'string') {
@@ -2992,12 +3031,16 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
     }
 
     videoUrl = videoUrl.trim();
+    const animeTitle = await resolveFilterTitle(videoUrl, animeTitleHint);
+    const pendingMetadata = !segmentFlag && globals.blockDomesticCelebrities && animeTitle
+      ? getDomesticPersonMetadataForTitle(animeTitle) : null;
     if (videoUrl.startsWith('local:')) {
       const key = videoUrl.slice(6);
-      if (segmentFlag) return jsonResponse(await localSource.getComments(key, 'local', true));
+      if (segmentFlag) return jsonResponse(attachFilterContext(await localSource.getComments(key, 'local', true), animeTitle, videoUrl));
       const localComments = await localSource.getComments(key, 'local');
       if (!localComments.length) return jsonResponse({ success: false, count: 0, comments: [] }, 404);
-      return formatDanmuResponse(buildDanmuResponse({ count: localComments.length, comments: localComments }, null), queryFormat);
+      const filtered = await applyDomesticCelebrityFilter(localComments, animeTitle, pendingMetadata);
+      return formatDanmuResponse(buildDanmuResponse({ count: filtered.length, comments: filtered }, null), queryFormat);
     }
 
     // 验证URL格式
@@ -3015,9 +3058,9 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
     const shouldAttachDuration = shouldIncludeVideoDuration(queryFormat, includeDuration);
     // 检查弹幕缓存
     const cacheKey = resolveCommentCacheKey(url);
-    const cachedComments = getCommentCache(cacheKey);
+    const cachedComments = segmentFlag ? null : getCommentCache(cacheKey);
     if (cachedComments !== null) {
-      const filteredCachedComments = await applyDomesticCelebrityFilter(cachedComments, '');
+      const filteredCachedComments = await applyDomesticCelebrityFilter(cachedComments, animeTitle, pendingMetadata);
       const responseData = buildDanmuResponse({
         errorCode: 0,
         success: true,
@@ -3079,6 +3122,8 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
       }
     }
 
+    if (segmentFlag) return jsonResponse(attachFilterContext(danmus, animeTitle, videoUrl));
+
     log("info", `[system] [LogVar-API] Successfully fetched ${danmus.length} comments from URL`);
 
     // 单链接偏移值应用
@@ -3097,7 +3142,7 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
     if (danmus.length > 0) {
       setCommentCache(cacheKey, danmus);
     }
-    danmus = await applyDomesticCelebrityFilter(danmus, '');
+    danmus = await applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata);
 
     const responseData = buildDanmuResponse({
       errorCode: 0,
@@ -3133,6 +3178,11 @@ export async function getSegmentComment(segment, queryFormat) {
     }
 
     url = url.trim();
+    const context = segmentFilterContexts.get(`${platform}:${url}`);
+    const workUrl = segment.sourceUrl || context?.sourceUrl || (platform === 'local' ? `local:${url}` : url);
+    const animeTitle = await resolveFilterTitle(workUrl, segment.animeTitle || context?.animeTitle);
+    const pendingMetadata = globals.blockDomesticCelebrities && animeTitle
+      ? getDomesticPersonMetadataForTitle(animeTitle) : null;
 
     log("info", `[system] [segmentcomment] Processing segment comment request for URL: ${url}`);
 
@@ -3140,7 +3190,7 @@ export async function getSegmentComment(segment, queryFormat) {
     const cacheKey = resolveCommentCacheKey(url);
     const cachedComments = getCommentCache(cacheKey);
     if (cachedComments !== null) {
-      const filteredCachedComments = await applyDomesticCelebrityFilter(cachedComments, '');
+      const filteredCachedComments = await applyDomesticCelebrityFilter(cachedComments, animeTitle, pendingMetadata);
       const responseData = {
         errorCode: 0,
         success: true,
@@ -3203,7 +3253,7 @@ export async function getSegmentComment(segment, queryFormat) {
     if (danmus.length > 0) {
       setCommentCache(cacheKey, danmus);
     }
-    danmus = await applyDomesticCelebrityFilter(danmus, '');
+    danmus = await applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata);
 
     const responseData = {
       errorCode: 0,
