@@ -3,6 +3,7 @@ import { log } from './log-util.js'
 import { httpGet } from "./http-util.js";
 import { isNonChinese } from "./zh-util.js";
 import { searchBangumiData } from './bangumi-data-util.js';
+import { getWikipediaPersonMetadata } from './wikipedia-person-util.js';
 
 // ---------------------
 // TMDB API 工具方法
@@ -314,24 +315,36 @@ export async function getDomesticPersonMetadataForTitle(title) {
       }
 
       const creditsPath = candidate.media_type === 'tv' ? 'aggregate_credits' : 'credits';
-      const creditsResponse = await tmdbApiGet(
-        `${candidate.media_type}/${candidate.id}/${creditsPath}?${tmdbQuery({ language: 'zh-CN' })}`
-      );
-      const credits = readTmdbData(creditsResponse);
-      const resolved = extractTmdbChineseCastNames(credits || {}, candidate.media_type);
       const isAnimation = candidate.genre_ids?.includes(16) || candidate.genres?.some(genre => genre.id === 16);
+      // Independent providers load together; partial failure must not discard another provider's names.
+      const [creditsResult, bangumiResult, wikiResult] = await Promise.allSettled([
+        tmdbApiGet(`${candidate.media_type}/${candidate.id}/${creditsPath}?${tmdbQuery({ language: 'zh-CN' })}`),
+        isAnimation ? getBangumiCharacterNames(title) : Promise.resolve(null),
+        getWikipediaPersonMetadata(searchTitle, year || String(candidate.first_air_date || candidate.release_date || '').slice(0, 4)),
+      ]);
+      const credits = creditsResult.status === 'fulfilled' ? readTmdbData(creditsResult.value) : null;
+      const resolved = extractTmdbChineseCastNames(credits || {}, candidate.media_type);
       let incomplete = !credits;
       let bangumiSubjectId = null;
       if (isAnimation) {
-        try {
-          const fallback = await getBangumiCharacterNames(title);
+        if (bangumiResult.status === 'fulfilled') {
+          const fallback = bangumiResult.value;
           resolved.characterNames = [...new Set([...resolved.characterNames, ...fallback.names])];
           bangumiSubjectId = fallback.subjectIds.join(',');
           if (fallback.incomplete || fallback.names.length === 0) incomplete = true;
-        } catch (error) {
+        } else {
           incomplete = true;
-          log('warn', `[system] [person-metadata] Bangumi 角色补充失败: ${error.message}`);
+          log('warn', `[system] [person-metadata] Bangumi 角色补充失败: ${bangumiResult.reason.message}`);
         }
+      }
+      if (wikiResult.status === 'fulfilled') {
+        const wiki = wikiResult.value;
+        resolved.actorNames = [...new Set([...resolved.actorNames, ...wiki.actorNames])];
+        resolved.characterNames = [...new Set([...resolved.characterNames, ...wiki.characterNames])];
+        log('info', `[system] [person-metadata] Wikipedia 当前作品补充演员 ${wiki.actorNames.length} 个、角色 ${wiki.characterNames.length} 个${wiki.sourceUrl ? `，来源 ${wiki.sourceUrl}，修订 ${wiki.revision}` : '，无对应条目'}`);
+      } else {
+        incomplete = true;
+        log('warn', `[system] [person-metadata] Wikipedia 补充失败，保留已有名单: ${wikiResult.reason.message}`);
       }
       if (resolved.characterNames.length === 0) incomplete = true;
       resolved.names = [...new Set([...resolved.actorNames, ...resolved.characterNames])];

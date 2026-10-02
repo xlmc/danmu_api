@@ -61,14 +61,14 @@ const localSource = getSourceByKey('local');
 const doubanSource = getSourceByKey('douban');
 const tmdbSource = getSourceByKey('tmdb');
 
-async function applyDomesticCelebrityFilter(danmus, animeTitle) {
+async function applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata = null) {
   const blockCelebrities = globals.blockDomesticCelebrities;
   const blockRegions = globals.blockDomesticRegions;
   const blockDates = globals.blockDates;
   if ((!blockCelebrities && !blockRegions && !blockDates) || !Array.isArray(danmus) || danmus.length === 0) return danmus;
   let metadata = { actorNames: [], characterNames: [], names: [], status: 'unavailable' };
   if (blockCelebrities && animeTitle) {
-    metadata = await getDomesticPersonMetadataForTitle(animeTitle);
+    metadata = await (pendingMetadata || getDomesticPersonMetadataForTitle(animeTitle));
   }
 
   const blockedNames = blockCelebrities ? metadata.names : [];
@@ -2778,11 +2778,15 @@ export async function getComment(path, queryFormat, segmentFlag, clientIp, inclu
   }
   log("info", `[system] [LogVar-API] Fetched comment ID: ${commentId}`);
 
+  // Start metadata before upstream comments; still await the complete filter before returning.
+  const pendingMetadata = !segmentFlag && globals.blockDomesticCelebrities && animeTitle
+    ? getDomesticPersonMetadataForTitle(animeTitle) : null;
+
   // 检查弹幕缓存
   const cacheKey = resolveCommentCacheKey(url);
   const cachedComments = getCommentCache(cacheKey);
   if (cachedComments !== null) {
-    const filteredCachedComments = await applyDomesticCelebrityFilter(cachedComments, animeTitle);
+    const filteredCachedComments = await applyDomesticCelebrityFilter(cachedComments, animeTitle, pendingMetadata);
     const responseData = buildDanmuResponse(
       { count: filteredCachedComments.length, comments: filteredCachedComments },
       shouldAttachDuration ? await resolveMergedDuration(url) : null
@@ -2965,7 +2969,7 @@ export async function getComment(path, queryFormat, segmentFlag, clientIp, inclu
         setCommentCache(cacheKey, danmus);
     }
     // 缓存原始结果，确保关闭演员屏蔽开关后不会继续返回已过滤的旧缓存。
-    danmus = await applyDomesticCelebrityFilter(danmus, animeTitle);
+    danmus = await applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata);
   }
 
   const responseData = buildDanmuResponse(
