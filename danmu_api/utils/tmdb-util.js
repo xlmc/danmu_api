@@ -4,6 +4,7 @@ import { httpGet } from "./http-util.js";
 import { isNonChinese } from "./zh-util.js";
 import { searchBangumiData } from './bangumi-data-util.js';
 import { getWikipediaPersonMetadata } from './wikipedia-person-util.js';
+import { cachedPersonSource, personCacheIdentity } from './person-source-cache.js';
 
 // ---------------------
 // TMDB API 工具方法
@@ -12,11 +13,7 @@ import { getWikipediaPersonMetadata } from './wikipedia-person-util.js';
 // 全局任务队列，用于管理并发请求的合并与中断
 // Key: title, Value: { promise, controller, refCount }
 const TMDB_PENDING = new Map();
-const TMDB_ACTOR_NAMES_CACHE = new Map();
 const TMDB_ACTOR_NAMES_PENDING = new Map();
-const TMDB_ACTOR_NAMES_TTL = 24 * 60 * 60 * 1000;
-const PERSON_METADATA_RETRY_TTL = 5 * 60 * 1000;
-const TMDB_ACTOR_NAMES_CACHE_LIMIT = 100;
 
 // TMDB API 请求基础函数
 async function tmdbApiGet(url, options = {}) {
@@ -276,13 +273,10 @@ export async function getDomesticPersonMetadataForTitle(title) {
 
   const searchTitle = personLookupTitle(title);
   const year = String(title).normalize('NFKC').match(/\(((?:19|20)\d{2})\)/)?.[1] || '';
-  const cacheKey = `${normalizePersonLookupTitle(searchTitle)}:${year}:${globals.tmdbApiKey || ''}`;
+  const cacheKey = await personCacheIdentity([normalizePersonLookupTitle(searchTitle), year,
+    globals.tmdbApiKey || '', globals.proxyUrl || '', Boolean(globals.useBangumiData)]);
   if (!searchTitle) return emptyPersonMetadata();
 
-  const cached = TMDB_ACTOR_NAMES_CACHE.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < cached.ttl) {
-    return copyPersonMetadata(cached.metadata);
-  }
   if (TMDB_ACTOR_NAMES_PENDING.has(cacheKey)) {
     return copyPersonMetadata(await TMDB_ACTOR_NAMES_PENDING.get(cacheKey));
   }
@@ -290,21 +284,25 @@ export async function getDomesticPersonMetadataForTitle(title) {
   const task = (async () => {
     try {
       // 复用 bangumi-data 中已经建立的 TMDB ID 映射，并用详情再次校验身份。
-      let candidate = null;
-      if (globals.useBangumiData) {
-        const local = (await searchBangumiData(searchTitle, ['tmdb'])).filter(item => item.titles.some(name =>
-          normalizePersonLookupTitle(name) === normalizePersonLookupTitle(searchTitle))
-          && (!year || String(item.begin || '').slice(0, 4) === year));
-        if (local.length === 1 && /^(tv|movie)\/\d+$/.test(String(local[0].siteId))) {
-          const [mediaType, id] = local[0].siteId.split('/');
-          const detail = readTmdbData(await tmdbApiGet(`${mediaType}/${id}?${tmdbQuery({ language: 'zh-CN' })}`));
-          candidate = selectTmdbActorCandidate(detail ? [{ ...detail, media_type: mediaType }] : [], title);
+      const identity = await cachedPersonSource(`${cacheKey}:identity`, async () => {
+        let candidate = null;
+        if (globals.useBangumiData) {
+          const local = (await searchBangumiData(searchTitle, ['tmdb'])).filter(item => item.titles.some(name =>
+            normalizePersonLookupTitle(name) === normalizePersonLookupTitle(searchTitle))
+            && (!year || String(item.begin || '').slice(0, 4) === year));
+          if (local.length === 1 && /^(tv|movie)\/\d+$/.test(String(local[0].siteId))) {
+            const [mediaType, id] = local[0].siteId.split('/');
+            const detail = readTmdbData(await tmdbApiGet(`${mediaType}/${id}?${tmdbQuery({ language: 'zh-CN' })}`));
+            candidate = selectTmdbActorCandidate(detail ? [{ ...detail, media_type: mediaType }] : [], title);
+          }
         }
-      }
-      if (!candidate) {
-        const searchResponse = await searchTmdbTitles(searchTitle, 'multi', { page: 1 });
-        candidate = selectTmdbActorCandidate(readTmdbData(searchResponse)?.results, title);
-      }
+        if (!candidate) {
+          const searchResponse = await searchTmdbTitles(searchTitle, 'multi', { page: 1 });
+          candidate = selectTmdbActorCandidate(readTmdbData(searchResponse)?.results, title);
+        }
+        return candidate;
+      }, value => Boolean(value?.id) && ['tv', 'movie'].includes(value.media_type));
+      const candidate = identity.value;
       if (!candidate) {
         log('warn', `[system] [tmdb] 未找到可靠的作品匹配，跳过国内明星屏蔽: ${title}`);
         return emptyPersonMetadata();
@@ -317,34 +315,37 @@ export async function getDomesticPersonMetadataForTitle(title) {
       const creditsPath = candidate.media_type === 'tv' ? 'aggregate_credits' : 'credits';
       const isAnimation = candidate.genre_ids?.includes(16) || candidate.genres?.some(genre => genre.id === 16);
       // Independent providers load together; partial failure must not discard another provider's names.
-      const [creditsResult, bangumiResult, wikiResult] = await Promise.allSettled([
-        tmdbApiGet(`${candidate.media_type}/${candidate.id}/${creditsPath}?${tmdbQuery({ language: 'zh-CN' })}`),
-        isAnimation ? getBangumiCharacterNames(title) : Promise.resolve(null),
-        getWikipediaPersonMetadata(searchTitle, year || String(candidate.first_air_date || candidate.release_date || '').slice(0, 4)),
+      const creditsLoader = async () => {
+        const response = readTmdbData(await tmdbApiGet(
+          `${candidate.media_type}/${candidate.id}/${creditsPath}?${tmdbQuery({ language: 'zh-CN' })}`));
+        if (!Array.isArray(response?.cast)) throw new Error('TMDB 演员表获取失败');
+        return extractTmdbChineseCastNames(response, candidate.media_type);
+      };
+      const [creditsResult, bangumiResult, wikiResult] = await Promise.all([
+        cachedPersonSource(`${cacheKey}:${candidate.media_type}/${candidate.id}:credits`, creditsLoader, value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames) && value.actorNames.length + value.characterNames.length > 0),
+        isAnimation ? cachedPersonSource(`${cacheKey}:bangumi`, () => getBangumiCharacterNames(title),
+          value => Array.isArray(value?.names) && value.names.length > 0, value => !value.incomplete) : Promise.resolve(null),
+        cachedPersonSource(`${cacheKey}:wiki`, () => getWikipediaPersonMetadata(searchTitle,
+          year || String(candidate.first_air_date || candidate.release_date || '').slice(0, 4)),
+          value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames)),
       ]);
-      const credits = creditsResult.status === 'fulfilled' ? readTmdbData(creditsResult.value) : null;
-      const resolved = extractTmdbChineseCastNames(credits || {}, candidate.media_type);
-      let incomplete = !credits;
+      const credits = creditsResult.value;
+      const resolved = credits || { actorNames: [], characterNames: [] };
+      let incomplete = identity.stale || creditsResult.stale || wikiResult.stale;
       let bangumiSubjectId = null;
       if (isAnimation) {
-        if (bangumiResult.status === 'fulfilled') {
-          const fallback = bangumiResult.value;
+        const fallback = bangumiResult.value;
+        if (fallback) {
           resolved.characterNames = [...new Set([...resolved.characterNames, ...fallback.names])];
           bangumiSubjectId = fallback.subjectIds.join(',');
-          if (fallback.incomplete || fallback.names.length === 0) incomplete = true;
-        } else {
-          incomplete = true;
-          log('warn', `[system] [person-metadata] Bangumi 角色补充失败: ${bangumiResult.reason.message}`);
         }
+        if (bangumiResult.stale) incomplete = true;
       }
-      if (wikiResult.status === 'fulfilled') {
-        const wiki = wikiResult.value;
+      const wiki = wikiResult.value;
+      if (wiki) {
         resolved.actorNames = [...new Set([...resolved.actorNames, ...wiki.actorNames])];
         resolved.characterNames = [...new Set([...resolved.characterNames, ...wiki.characterNames])];
-        log('info', `[system] [person-metadata] Wikipedia 当前作品补充演员 ${wiki.actorNames.length} 个、角色 ${wiki.characterNames.length} 个${wiki.sourceUrl ? `，来源 ${wiki.sourceUrl}，修订 ${wiki.revision}` : '，无对应条目'}`);
-      } else {
-        incomplete = true;
-        log('warn', `[system] [person-metadata] Wikipedia 补充失败，保留已有名单: ${wikiResult.reason.message}`);
+        log('info', `[system] [person-metadata] Wikipedia 当前作品演员 ${wiki.actorNames.length} 个、角色 ${wiki.characterNames.length} 个${wiki.sourceUrl ? `，来源 ${wiki.sourceUrl}，修订 ${wiki.revision}` : '，无对应条目'}`);
       }
       if (resolved.characterNames.length === 0) incomplete = true;
       resolved.names = [...new Set([...resolved.actorNames, ...resolved.characterNames])];
@@ -359,14 +360,7 @@ export async function getDomesticPersonMetadataForTitle(title) {
 
   TMDB_ACTOR_NAMES_PENDING.set(cacheKey, task);
   try {
-    const metadata = await task;
-    const ttl = ['unavailable', 'partial'].includes(metadata.status) ? PERSON_METADATA_RETRY_TTL : TMDB_ACTOR_NAMES_TTL;
-    TMDB_ACTOR_NAMES_CACHE.set(cacheKey, { metadata, ttl, timestamp: Date.now() });
-    if (ttl === PERSON_METADATA_RETRY_TTL) log('warn', '[system] [person-metadata] 名单未完整加载，5 分钟后允许重试');
-    while (TMDB_ACTOR_NAMES_CACHE.size > TMDB_ACTOR_NAMES_CACHE_LIMIT) {
-      TMDB_ACTOR_NAMES_CACHE.delete(TMDB_ACTOR_NAMES_CACHE.keys().next().value);
-    }
-    return copyPersonMetadata(metadata);
+    return copyPersonMetadata(await task);
   } finally {
     TMDB_ACTOR_NAMES_PENDING.delete(cacheKey);
   }
