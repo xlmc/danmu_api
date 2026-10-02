@@ -923,6 +923,13 @@ test('worker.js API endpoints', async (t) => {
       { m: '海南网友来了' },
       { m: '朝阳区天气不错' },
       { m: '安康市欢迎你' },
+      { m: '湖南' },
+      { m: '北京发来贺电' },
+      { m: '甘肃前来围观' },
+      { m: '哈哈哈四川德阳哦' },
+      { m: '妖帅怎么还是广东的？' },
+      { m: '？广东妖帅？' },
+      { m: '哈哈哈哈广东妖帅' },
       { m: '海南鸡饭真好吃' },
       { m: '来自海南鸡饭的厨师' },
       { m: '朝阳升起来了' },
@@ -930,7 +937,7 @@ test('worker.js API endpoints', async (t) => {
       { m: '白鹿原很好看' },
     ], [], { regionNames: DOMESTIC_REGION_NAMES });
 
-    assert.equal(result.removedCount, 4);
+    assert.equal(result.removedCount, 11);
     assert.deepEqual(result.danmus.map(item => item.m), [
       '海南鸡饭真好吃',
       '来自海南鸡饭的厨师',

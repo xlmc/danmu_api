@@ -420,7 +420,7 @@ export function buildBlockedNameMatchers(names) {
 }
 
 const REGION_CONTEXT_PREFIX = /(?:来自|人在|身在|坐标|定位|住在|回到|去过|前往|老家(?:在|是)?|IP(?:在|属地)?)/u;
-const REGION_CONTEXT_SUFFIX = /(?:省|市|区|县|州|盟|旗|人|网友|观众|口音|方言|地区|本地|那边|这边|的朋友)/u;
+const REGION_CONTEXT_SUFFIX = /(?:省|市|区|县|州|盟|旗|人|网友|观众|口音|方言|地区|本地|那边|这边|的|话|腔|妖帅|发来贺电|前来围观|报到|报道|集合|路过|来冒泡)/u;
 const REGION_CONTEXT_TAIL = /(?:$|[^\p{Script=Han}]|的|这边|那边|工作|生活|上学|旅游|出差)/u;
 const REGION_MATCHER_CACHE = new WeakMap();
 
@@ -430,6 +430,8 @@ export function buildBlockedRegionMatchers(names) {
   if (Object.isFrozen(names) && REGION_MATCHER_CACHE.has(names)) return REGION_MATCHER_CACHE.get(names);
   const seen = new Set();
   const matchers = [];
+  const regionAlternation = names.map(name => String(name || '').normalize('NFKC').replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase())
+    .filter(name => /^\p{Script=Han}{2,}$/u.test(name)).sort((a, b) => b.length - a.length).map(escapeRegExp).join('|');
   for (const rawName of names) {
     const label = String(rawName || '').normalize('NFKC').trim();
     const compact = label.replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
@@ -438,7 +440,7 @@ export function buildBlockedRegionMatchers(names) {
     const escaped = escapeRegExp(compact);
     matchers.push({
       label: `地区:${label}`,
-      regex: new RegExp(`(?:${REGION_CONTEXT_PREFIX.source}${escaped}(?=${REGION_CONTEXT_TAIL.source})|${escaped}${REGION_CONTEXT_SUFFIX.source})`, 'u')
+      regex: new RegExp(`(?:${REGION_CONTEXT_PREFIX.source}${escaped}(?=${REGION_CONTEXT_TAIL.source})|${escaped}${REGION_CONTEXT_SUFFIX.source}|(?:^|[^\\p{Script=Han}]|哈哈|嘿嘿)${escaped}(?:${regionAlternation ? `(?:${regionAlternation})*` : ''})(?:哦|呀|啊|呢)?(?=$|[^\\p{Script=Han}]))`, 'u')
     });
   }
   if (Object.isFrozen(names)) REGION_MATCHER_CACHE.set(names, matchers);
