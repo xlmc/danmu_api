@@ -141,7 +141,13 @@ export function publish(record, { request = api, promote, verifyLatest, save = (
   verifyLatest(record);
   record.latestUpdated = true;
   save(record);
-  request(endpoint, 'PATCH', { draft: false, make_latest: 'true', body: renderNotes(record) });
+  const release = request(endpoint, 'PATCH', {
+    tag_name: record.version, target_commitish: record.sha, name: record.version,
+    draft: false, make_latest: 'true', body: renderNotes(record),
+  });
+  if (release.tag_name !== record.version || release.draft !== false) {
+    throw new Error('Release tag does not match the source and image version');
+  }
   record.releaseRecorded = true;
   save(record);
   return true;
