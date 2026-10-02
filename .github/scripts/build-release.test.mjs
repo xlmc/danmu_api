@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { nextVersion, collectChanges, prepare, publish, renderNotes, verifyPlatforms } from './build-release.mjs';
+import { nextVersion, collectChanges, prepare, publish, renderNotes, renderBuildRecord, verifyPlatforms } from './build-release.mjs';
 
 const marker = '<!-- danmu-self-use-release -->';
 const digest = `sha256:${'d'.repeat(64)}`;
@@ -175,13 +175,29 @@ test('Release response must confirm the exact published version before success i
   }
 });
 
-test('notes distinguish upstream version, NAS status, exact source, digest and source changelog', () => {
+test('Actions details retain upstream version, NAS status, exact source and digest', () => {
   const r = { ...successfulRecord(), commits: 'abc ``` injected title', imageVerified: true };
-  const notes = renderNotes(r);
+  const notes = renderBuildRecord(r);
   assert.match(notes, /custom-2026\.10\.02\.1/);
   assert.match(notes, /不是自用版编号/); assert.match(notes, /NAS：未部署/);
   assert.match(notes, new RegExp(`/blob/${r.sha}/SELF_USE_CHANGELOG.md`));
   assert.match(notes, /````text/); assert.doesNotMatch(notes, /build-2026/);
+});
+
+test('public notes show only added update bullets, without build metadata or diffs', () => {
+  const notes = renderNotes({
+    ...successfulRecord(), commits: 'abc1234 fix: internal commit',
+    changelogDelta: 'diff --git a/log b/log\n+++ b/log\n@@ -1 +1 @@\n+### 修复\n+- 修复季集映射刷新返回 404。\n+- 下载失败保留旧缓存。\n+- 修复季集映射刷新返回 404。\n-旧内容',
+  });
+  assert.equal(notes, marker + '\n## 更新内容\n\n- 修复季集映射刷新返回 404。\n- 下载失败保留旧缓存。\n');
+  assert.doesNotMatch(notes, /镜像状态|NAS|ghcr|Digest|源码|变更文件|diff --git|internal commit|custom-/);
+});
+
+test('notes fall back to commit subjects when no new changelog bullets exist', () => {
+  assert.equal(renderNotes({ commitSubjects: 'fix: 修复请求路由\nMerge pull request #10\nfix: 修复请求路由' }),
+    marker + '\n## 更新内容\n\n- 修复请求路由\n');
+  assert.match(renderNotes({ commits: '' }), /重新构建镜像，源码无新增提交/);
+  assert.doesNotMatch(renderNotes({ commits: 'abc1234 fix: <b> code' }), /abc1234|<b>/);
 });
 
 test('workflow gates latest separately, uses one version and avoids tag-triggered duplicate builds', () => {
