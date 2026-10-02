@@ -1,6 +1,6 @@
 # danmu_api · 自用版
 
-这是 [xlmc/danmu_api](https://github.com/xlmc/danmu_api) 的个人自用分支，基于 [huangxd-/danmu_api](https://github.com/huangxd-/danmu_api)。不是官方发布，也不是“增强版”；保留自己的配置和匹配规则，同时通过审核式同步跟进上游。
+这是 [xlmc/danmu_api](https://github.com/xlmc/danmu_api) 的个人自用分支，基于 [huangxd-/danmu_api](https://github.com/huangxd-/danmu_api)。保留自己的配置和匹配规则，同时通过审核式同步跟进上游。
 
 ## 从哪里看
 
