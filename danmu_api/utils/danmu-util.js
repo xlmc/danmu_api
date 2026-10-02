@@ -403,7 +403,7 @@ export function buildBlockedNameMatchers(names) {
     const label = String(rawName || '').normalize('NFKC').trim();
     const compact = label.replace(/[\s·・•‧·･]+/g, '');
     if (!/\p{Script=Han}/u.test(compact) || Array.from(compact).length < 2) continue;
-    const key = compact.toLocaleLowerCase();
+    const key = simplized(compact).toLocaleLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
     const length = Array.from(compact).length;
@@ -498,7 +498,8 @@ export function filterDanmusByBlockedNames(danmus, names, options = {}) {
   const hitCounts = new Map();
   const filtered = danmus.filter(item => {
     const text = String(item?.m || '').normalize('NFKC').replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
-    const matcher = matchers.find(candidate => candidate.regex ? candidate.regex.test(text) : text.includes(candidate.needle));
+    const personText = simplized(text);
+    const matcher = matchers.find(candidate => candidate.regex ? candidate.regex.test(personText) : personText.includes(candidate.needle));
     const surnameMatcher = matcher ? null : surnameMatchers.find(candidate => candidate.regex.test(text));
     const regionMatcher = matcher || surnameMatcher ? null : regionMatchers.find(candidate => candidate.regex.test(text));
     const hit = matcher || surnameMatcher || regionMatcher;

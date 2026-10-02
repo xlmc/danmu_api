@@ -144,7 +144,7 @@ function splitTmdbCharacterNames(value) {
 export function extractTmdbChineseCastNames(credits, mediaType = 'movie') {
   const actorNames = new Set();
   const characterNames = new Set();
-  for (const cast of (credits?.cast || []).slice(0, 80)) {
+  for (const cast of (credits?.cast || [])) {
     for (const value of [cast?.name, cast?.original_name]) {
       const name = normalizeTmdbChineseName(value);
       if (name) actorNames.add(name);
@@ -280,10 +280,10 @@ export async function getDomesticPersonMetadataForTitle(title) {
       const isAnimation = candidate.genre_ids?.includes(16) || candidate.genres?.some(genre => genre.id === 16);
       let incomplete = !credits;
       let bangumiSubjectId = null;
-      if (isAnimation && resolved.characterNames.length === 0) {
+      if (isAnimation) {
         try {
           const fallback = await getBangumiCharacterNames(title);
-          resolved.characterNames = fallback.names;
+          resolved.characterNames = [...new Set([...resolved.characterNames, ...fallback.names])];
           bangumiSubjectId = fallback.subjectId;
           if (fallback.names.length === 0) incomplete = true;
         } catch (error) {
