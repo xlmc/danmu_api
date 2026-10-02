@@ -606,14 +606,14 @@ export default class DandanSource extends BaseSource {
 
 const DandanUserAgent = `LogVar Danmu API/${globals.version}`
 
-// 源标识 → 平台标识映射，与核心路由一致（见 ALLOWED_PLATFORMS：bilibili1/qq/qiyi/imgo 等），
+// 关联链接的源与平台使用相同标识，与核心路由一致，
 // 使实时拉取的弹弹302关联弹幕在 [来源＆平台] 标签中标注真实平台，并让去重阶段按来源统计重复弹幕。
 const SOURCE_TO_PLATFORM = {
-  bilibili: 'bilibili1',
+  bilibili: 'bilibili',
   bahamut: 'bahamut',
-  iqiyi: 'qiyi',
+  iqiyi: 'iqiyi',
   youku: 'youku',
-  tencent: 'qq',
+  tencent: 'tencent',
   imgo: 'imgo',
 };
 

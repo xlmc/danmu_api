@@ -674,7 +674,7 @@ export default class BilibiliSource extends BaseSource {
                return {
                  name: realVal,
                  url: linkUrl,
-                 title: `【bilibili1】 ${displayTitle.trim()}`,
+                 title: `【bilibili】 ${displayTitle.trim()}`,
                  _id: parseInt(epId, 10) || 0
                };
              });
@@ -704,7 +704,7 @@ export default class BilibiliSource extends BaseSource {
                 return {
                     name: `${index + 1}`,
                     url: linkUrl,
-                    title: `【bilibili1】 ${ep.title}`,
+                    title: `【bilibili】 ${ep.title}`,
                     _id: parseInt(ep.id, 10) || 0
                 };
              });
@@ -1010,7 +1010,7 @@ export default class BilibiliSource extends BaseSource {
           const metadataHash = `#combine_start=${start}&combine_end=${end}&combine_offset=${currentOffset}`;
 
           segmentList.push({
-            "type": "bilibili1",
+            "type": "bilibili",
             "segment_start": i * 360,
             "segment_end": Math.min((i + 1) * 360, end),
             "url": `https://api.bilibili.com/x/v2/dm/web/seg.so?type=1&oid=${cid}&segment_index=${i + 1}${metadataHash}`
@@ -1020,7 +1020,7 @@ export default class BilibiliSource extends BaseSource {
       }
 
       return new SegmentListResponse({
-        "type": "bilibili1",
+        "type": "bilibili",
         "duration": totalDuration,
         "segmentList": segmentList
       });
@@ -1030,7 +1030,7 @@ export default class BilibiliSource extends BaseSource {
     const videoInfo = await this._extractVideoInfo(id);
     if (!videoInfo) {
       return new SegmentListResponse({
-        "type": "bilibili1",
+        "type": "bilibili",
         "segmentList": []
       });
     }
@@ -1057,7 +1057,7 @@ export default class BilibiliSource extends BaseSource {
       }
 
       segmentList.push({
-        "type": "bilibili1",
+        "type": "bilibili",
         "segment_start": i * 360,
         "segment_end": duration > 0 ? Math.min((i + 1) * 360, duration) : (i + 1) * 360,
         "url": danmakuUrl
@@ -1065,7 +1065,7 @@ export default class BilibiliSource extends BaseSource {
     }
 
     return new SegmentListResponse({
-      "type": "bilibili1",
+      "type": "bilibili",
       "duration": duration > 0 ? duration : 0,
       "segmentList": segmentList
     });
