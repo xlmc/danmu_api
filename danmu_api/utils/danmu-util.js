@@ -502,7 +502,7 @@ export function buildCharacterNicknameMatchers(names) {
 
 /** 验证完整年月日，避免把无效日期、普通小数和带 v 前缀的版本号当作日期。 */
 export function hasCalendarDate(text) {
-  const pattern = /(?<![A-Za-z0-9.])((?:19|20)\d{2})(?:([.\/-])(\d{1,2})\2(\d{1,2})|年(\d{1,2})月(\d{1,2})[日号]?)(?![\d.])/g;
+  const pattern = /(?<![A-Za-z0-9.])((?:19|20)\d{2})(?:([.\/-])(\d{1,2})\2(\d{1,2})|年(\d{1,2})月(\d{1,2})[日号]?)(?!\d|\.\d)/g;
   for (const match of String(text || '').normalize('NFKC').matchAll(pattern)) {
     const year = Number(match[1]);
     const month = Number(match[3] || match[5]);
@@ -515,7 +515,7 @@ export function hasCalendarDate(text) {
 
 /** 时:分或时:分:秒，限制合法范围，避免命中端口号及不完整数字串。 */
 export function hasClockTime(text) {
-  return /(?<![\d:])(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?![\d:])/.test(String(text || '').normalize('NFKC'));
+  return /(?<!\d)(?<![\d:]:)(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?!\d|:\d)/.test(String(text || '').normalize('NFKC'));
 }
 
 export function filterDanmusByBlockedNames(danmus, names, options = {}) {
