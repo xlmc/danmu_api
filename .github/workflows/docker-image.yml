@@ -2,49 +2,62 @@ name: Publish Docker Image to GHCR
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - 'custom-*'
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# One publisher at a time: date counters and latest must not race.
 concurrency:
-  group: ghcr-publish-${{ github.ref }}
+  group: ghcr-publish-main
   cancel-in-progress: false
 
 jobs:
   build:
+    if: github.repository == 'xlmc/danmu_api' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
-      contents: read
+      contents: write
       packages: write
 
     steps:
-      - name: Checkout code
+      - name: Checkout code and version history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Set image name
-        id: image
-        shell: bash
+      - name: Use Node.js 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+
+      - name: Reserve one source and image version
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_DIR=$RUNNER_TEMP/danmu-release" >> "$GITHUB_ENV"
+          node .github/scripts/build-release.mjs prepare "$RUNNER_TEMP/danmu-release"
+
+      - name: Install dependencies and test before publishing
+        run: |
+          npm install --no-audit --no-fund
+          npm test
 
       - name: Generate image tags and labels
         id: metadata
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ steps.image.outputs.name }}
+          images: ${{ steps.release.outputs.image }}
           flavor: latest=false
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=sha,format=long
-            type=ref,event=tag
+            type=raw,value=${{ steps.release.outputs.version }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -59,7 +72,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - name: Build and push image
+      - name: Build and push versioned image (not latest)
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -71,22 +84,26 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Verify published image
+      - name: Verify both published platforms by digest
+        id: verify
         env:
-          IMAGE: ${{ steps.image.outputs.name }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-          TAGS: ${{ steps.metadata.outputs.tags }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker buildx imagetools inspect "$IMAGE@$DIGEST"
-          {
-            echo '## Published GHCR image'
-            echo
-            echo '```text'
-            printf '%s\n' "$TAGS"
-            printf '%s@%s\n' "$IMAGE" "$DIGEST"
-            echo '```'
-            echo
-            echo 'Only main publishes latest. Use a sha-* tag or the digest to pin a deployment.'
-          } >> "$GITHUB_STEP_SUMMARY"
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: node .github/scripts/build-release.mjs verify "$RELEASE_DIR"
+
+      - name: Record outcome and publish only verified images
+        if: always() && steps.release.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: node .github/scripts/build-release.mjs finish "$RELEASE_DIR"
+
+      - name: Retain version and update notes for troubleshooting
+        if: always() && steps.release.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-record-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.RELEASE_DIR }}/
+          retention-days: 90
