@@ -89,19 +89,27 @@ git fetch /path/to/danmu-api-before-cleanup-2026-10-02.bundle refs/remotes/origi
 
 ## 自用发布流程
 
-1. 每次功能/修复先更新 `SELF_USE_CHANGELOG.md` 的“未发布”，写入口、配置、行为、上游基线、风险和测试证据。
-2. 工作分支运行 `npm test`，在 PR 上看 CI；远程来源、管理界面和 NAS 需要对应实测，不能用单元测试替代。
-3. 合并到 main 后确认 GHCR 构建成功。记录完整提交和 digest，不假定 latest 已更新。
-4. 准备自用发布记录，确定未使用的 `custom-YYYY.MM.DD.N` 标签，将记录提交到 main。
-5. 在已确认的目标提交创建并推送标签，例如：
+### 一个版本号，三个对应位置
 
-```bash
-# 示例：日期与序号需按实际发布确定，不是执行本次发布的命令
-git tag -a custom-YYYY.MM.DD.N VERIFIED_COMMIT_SHA -m "自用版：本次功能与修复主题"
-git push origin refs/tags/custom-YYYY.MM.DD.N
-```
+`custom-YYYY.MM.DD.N` 同时用于源码 Git 标签、GHCR 镜像标签和 GitHub Release；北京时间日期 + 当天自动序号。`latest` 是部署入口，不是另一个版本号；运行编号/重试次数仅保存在 Actions 中。
 
-6. 标签触发同名 GHCR 镜像构建；将构建 digest、Actions 记录和 Git 标签实际 SHA 补充到 GitHub Release 或后续文档提交，已有标签不移动。
-7. 按部署文档在独立环境测试，通过后手动升级 NAS，再记录部署状态和回滚点。
+1. 功能/修复在 PR 中更新 `SELF_USE_CHANGELOG.md` 的“未发布”，记录入口、配置、行为、上游基线、风险和验证结果。
+2. 工作分支运行 `npm test` 并检查 PR CI；审阅后合并 main。
+3. main 自动运行发布工作流，预留唯一源码标签和 **Release 草稿**，执行测试，再构建双架构版本镜像。默认部署标签暂不变化。
+4. 通过镜像 digest 检查双架构清单，保存更新说明；确认 main 没有前进后才将该镜像提升为 latest，核对 latest 的 digest，最后公开同名 Release。
+5. 在 [Releases](https://github.com/xlmc/danmu_api/releases) 查看每次成功版本。说明自动包含相对上次成功发布的提交、文件统计、人工更新日志增量、完整提交 SHA、上游版本、镜像 digest 和 Actions 链接。
+6. 按部署文档测试并手动升级 NAS。NAS 实际版本、备份和验收保存在私有运维记录，不公开个人部署信息。
+
+**不再手动推标签触发另一轮构建，也不把发布结果提交回 main。** 因此不会出现“写更新说明 → 再构建 → 再写说明”的循环。Actions 创建标签/Release 使用本仓库的 `GITHUB_TOKEN`，需要 `contents: write`；推镜像需要 `packages: write`，不需要 Docker Hub 账号或新增 PAT。仓库策略如阻止标签/Release 写入，会报错而不是伪报成功。
+
+### 失败、重试和历史
+
+- 构建、测试、双架构检查失败或取消：不更新 latest，不公开 Release。Actions 记录结果；草稿和预留 Git 标签不能当作成功版本。
+- 版本标签预留后不移动、不复用。失败/取消可能留下序号空缺；重新运行会分配下一个未使用的版本号，不覆盖部分已上传的旧产物。
+- main 在排队或构建期间发生变化时，旧运行拒绝更新 latest；新 main 的运行接续处理。Actions 可能合并替换排队任务，期间的源码提交仍在后续成功 Release 的比较范围里。
+- GitHub 与 GHCR 不能进行跨服务原子事务：如果镜像已经提升 latest，但最后写 Release 失败，Actions 会报错并保留镜像 digest/状态附件；这表示发布记录未完成，不表示镜像构建失败。检查摘要和实际 latest，再根据附件修复原 Release 草稿；不要移动标签或冒充 NAS 已升级。
+- 成功 Release 长期保留；每次运行另提供 `release-record-*` 附件（90 天，受仓库保留策略影响），包含 `release-record.json` 和 `release-notes.md`。记录步骤执行前被强制终止时，以 Actions 原始状态为准。
+- 首次自动记录没有成功发布基线，不伪造历史增量；提供当前提交和固定到本版本的完整自用更新日志。后续比较跳过失败草稿，从上次成功发布累计计算。
+- 已有 `sha-*` 镜像不删除；新流程只发布统一自用版本标签与 latest。镜像 OCI `org.opencontainers.image.version` 是自用版本，`org.opencontainers.image.revision` 是源码 SHA。程序内上游 `VERSION` 与 `package.json` 元数据暂不改写为构建号，避免污染上游同步。
 
 `Forward` 插件构建目前仍有 Node 内建模块/依赖解析兼容失败；不作为 NAS 发布成功证据，也不在本次维护中擅自大幅改造播放器打包链路。HF 自动同步工作流已删除，不再维护该发布方式。

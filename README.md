@@ -17,16 +17,24 @@
 
 ## 镜像与版本
 
-部署统一使用 **`ghcr.io/xlmc/danmu_api:latest`**，无需填写 SHA 或 digest。发布工作流构建 `linux/amd64` 和 `linux/arm64`；请在 [Actions](https://github.com/xlmc/danmu_api/actions/workflows/docker-image.yml) 确认 main 的镜像发布结果，源码更新不等于 latest 已更新。
+**代码、镜像、更新说明共用一个自用版本号。NAS 始终使用 `ghcr.io/xlmc/danmu_api:latest`。**
 
-| 标识 | 用途 |
-| --- | --- |
-| `sha-<完整提交 SHA>` | 保留用于源码追溯，不要求部署时使用 |
-| `custom-YYYY.MM.DD.N` | 自用发布标签；仅实际创建且构建成功后可用 |
-| `@sha256:<digest>` | 用于构建核对、问题排查和回滚记录 |
-| `latest` | 默认部署标签，随 main 的镜像发布更新 |
+例如（不是已发布版本声明）：
 
-上游版本号不代表自用功能版本。源码合并、镜像发布和 NAS 部署是三个独立状态；版本说明中的“未发布”不代表不存在 SHA 构建，也不代表 NAS 已升级。
+```text
+仓库标签：custom-2026.10.02.1
+镜像标签：ghcr.io/xlmc/danmu_api:custom-2026.10.02.1
+更新说明：GitHub Releases 中同名版本
+NAS 配置：ghcr.io/xlmc/danmu_api:latest（不用跟着改）
+```
+
+版本格式是 `custom-YYYY.MM.DD.N`，日期使用北京时间，序号自动分配。main 更新后由 Actions 运行测试、构建并检查 `linux/amd64` 和 `linux/arm64` 镜像，成功后更新 latest 并发布同名更新说明。**构建或检查失败不会更新 latest，草稿和预留标签不代表成功发布。**
+
+- **看版本与更新内容**：[GitHub Releases](https://github.com/xlmc/danmu_api/releases)，包含源码提交、变更摘要、镜像 digest 和构建链接。
+- **看失败/进行中的构建**：[Actions](https://github.com/xlmc/danmu_api/actions/workflows/docker-image.yml)，摘要与附件保留当次状态。
+- **写功能说明**：[自用更新日志](SELF_USE_CHANGELOG.md)，记录功能含义、配置变化、风险；Release 会链接到对应源码版本并带上增量。
+
+上游版本仅说明代码基于哪个上游版本；Actions 运行编号、SHA、digest 是排错信息，不是需要维护的另一套版本号。新流程不再生成额外的 `build-*` 或 `sha-*` 镜像标签，已有历史镜像不删除。源码合并、镜像发布、NAS 升级分别确认；仓库不会自动升级 NAS。
 
 ## NAS 首次部署
 
