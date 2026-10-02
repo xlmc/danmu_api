@@ -17,14 +17,14 @@
 
 ## 镜像与版本
 
-镜像仓库：`ghcr.io/xlmc/danmu_api`。发布工作流构建 `linux/amd64` 和 `linux/arm64`；请先在 [Actions](https://github.com/xlmc/danmu_api/actions/workflows/docker-image.yml) 确认对应提交构建成功，再从 **Published GHCR image** 摘要复制标签或 digest。
+部署统一使用 **`ghcr.io/xlmc/danmu_api:latest`**，无需填写 SHA 或 digest。发布工作流构建 `linux/amd64` 和 `linux/arm64`；请在 [Actions](https://github.com/xlmc/danmu_api/actions/workflows/docker-image.yml) 确认 main 的镜像发布结果，源码更新不等于 latest 已更新。
 
 | 标识 | 用途 |
 | --- | --- |
-| `sha-<完整提交 SHA>` | 对应精确源码提交，适合迁移前选择已验证版本 |
+| `sha-<完整提交 SHA>` | 保留用于源码追溯，不要求部署时使用 |
 | `custom-YYYY.MM.DD.N` | 自用发布标签；仅实际创建且构建成功后可用 |
-| `@sha256:<digest>` | 固定一次构建的镜像内容，推荐生产使用 |
-| `latest` | 随 main 发布变化，不建议生产自动追踪 |
+| `@sha256:<digest>` | 用于构建核对、问题排查和回滚记录 |
+| `latest` | 默认部署标签，随 main 的镜像发布更新 |
 
 上游版本号不代表自用功能版本。源码合并、镜像发布和 NAS 部署是三个独立状态；版本说明中的“未发布”不代表不存在 SHA 构建，也不代表 NAS 已升级。
 
@@ -34,11 +34,9 @@
 
 1. 在 NAS 选择项目目录，保存 [compose.nas.yml](compose.nas.yml)。模板使用相对此文件的 `./data/config` 和 `./data/.cache`，分别挂载到 `/app/config` 和 `/app/.cache`。
 2. 创建上述目录，将 [配置示例](config/.env.example) 保存为 `data/config/.env`。**启动前**设置自己的 `TOKEN` 和独立的 `ADMIN_TOKEN`，不要使用默认令牌，也不要把真实配置提交到 Git。
-3. 在项目目录创建供 Compose 使用的 `.env`（与 `data/config/.env` 不是同一个文件）：
+3. 模板已设置 latest 镜像，不需要 `DANMU_API_IMAGE`。默认宿主端口为 `9321`；需要修改时，可在项目目录创建供 Compose 使用的 `.env`（与 `data/config/.env` 不是同一个文件）：
 
 ```dotenv
-# 必须替换为 Actions 已成功发布的完整 SHA 标签，或 image@sha256:digest
-DANMU_API_IMAGE=ghcr.io/xlmc/danmu_api:sha-REPLACE_WITH_VERIFIED_FULL_COMMIT_SHA
 NAS_HTTP_PORT=9321
 ```
 
@@ -60,12 +58,24 @@ docker compose -f compose.nas.yml logs --tail=100
 **迁移的最小改动是：原 Compose 只替换 `image`，其余设置保持不变。** 不需要等待上游合并 PR，也不需要迁移至 Docker Hub。
 
 1. 记录旧镜像 ID/digest，保留旧镜像、原 Compose 和环境配置；停止写入后备份配置与全部持久化数据，外置 Redis 等存储另行备份。
-2. 选择已经构建成功的本仓库镜像，将备份复制到独立测试目录，用独立端口和独立项目名测试。**不得与生产共享可写挂载**，有外置存储也要隔离。
+2. 拉取本仓库的 latest 镜像，将备份复制到独立测试目录，用独立端口和独立项目名测试。**不得与生产共享可写挂载**，有外置存储也要隔离。
 3. 验证鉴权、搜索/匹配、弹幕获取、收藏和本地弹幕后，停止测试容器和旧生产容器。
-4. 仅替换原 Compose 中该服务的 `image`，保留原端口、绝对挂载路径、环境变量、网络和重启策略，拉取后在原项目内重建该服务。
+4. 仅将原 Compose 中该服务的 `image` 改为 `ghcr.io/xlmc/danmu_api:latest`，保留原端口、绝对挂载路径、环境变量、网络和重启策略，拉取后在原项目内重建该服务。
 5. 检查日志和播放器调用；失败时停止新容器，用旧镜像和升级前的数据备份回滚。
 
 完整操作与回滚要求见 [迁移指南](docs/deployment.md)。仓库上游同步及镜像发布**不会自动更新 NAS**。
+
+## 日常更新
+
+镜像名称始终使用 latest，不必每次修改 Compose。备份后，在原项目目录执行（以下以仓库模板为例）：
+
+```bash
+docker compose -f compose.nas.yml pull danmu-api
+docker compose -f compose.nas.yml up -d --no-deps danmu-api
+docker compose -f compose.nas.yml logs --tail=100 danmu-api
+```
+
+只有拉取成功后才继续重建。`pull` 只下载镜像，`up -d` 才应用更新；仅 `restart` 不会换用新镜像。**使用 latest 不等于自动更新容器**，本仓库不额外安装定时更新服务。若旧 Compose 文件名或服务名不同，使用原来的名称和项目参数。
 
 ## 开发与维护
 

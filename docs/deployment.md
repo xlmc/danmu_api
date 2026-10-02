@@ -4,11 +4,11 @@
 
 ## 选择镜像
 
-- 镜像仓库：`ghcr.io/xlmc/danmu_api`，由 GitHub Actions 构建，不需要 Docker Hub 账户。
-- `sha-<完整提交 SHA>` 对应源码；`custom-YYYY.MM.DD.N` 对应已创建的自用发布标签；digest 固定构建内容。
+- 部署镜像：`ghcr.io/xlmc/danmu_api:latest`，由 GitHub Actions 构建，不需要 Docker Hub 账户，不要求固定版本。
+- SHA/custom 标签和 digest 仍保留用于版本追溯和故障回滚，不作为日常部署的必填项。
 - `latest` 随 main 发布变化。迁移/回滚不要仅记录 latest，应记录实际镜像 ID/digest。
-- 从对应提交成功的 [发布工作流](https://github.com/xlmc/danmu_api/actions/workflows/docker-image.yml) 中复制 **Published GHCR image** 摘要，核对 NAS 架构是否为支持的 `linux/amd64` 或 `linux/arm64`。
-- 首先在 NAS 执行 `docker pull <已验证的完整镜像引用>`。若失败，检查标签是否存在、网络与包可见性；需要认证时使用具备包读取权限的凭据登录 GHCR，勿将凭据写入仓库。
+- 从对应提交成功的 [发布工作流](https://github.com/xlmc/danmu_api/actions/workflows/docker-image.yml) 中查看 **Published GHCR image** 摘要，核对 NAS 架构是否为支持的 `linux/amd64` 或 `linux/arm64`。
+- 首先在 NAS 执行 `docker pull ghcr.io/xlmc/danmu_api:latest`。若失败，检查标签是否存在、网络与包可见性；需要认证时使用具备包读取权限的凭据登录 GHCR，勿将凭据写入仓库。
 
 **本机/CI 构建成功、注册表中存在镜像、NAS 能拉取、应用实际可用，必须分别验证。** 工作流发布不等于 NAS 已升级。
 
@@ -28,7 +28,7 @@
 ```yaml
 services:
   danmu-api-test:
-    image: ghcr.io/xlmc/danmu_api:sha-REPLACE_WITH_VERIFIED_FULL_COMMIT_SHA
+    image: ghcr.io/xlmc/danmu_api:latest
     ports:
       - "19321:9321"
     volumes:
@@ -37,7 +37,7 @@ services:
     restart: "no"
 ```
 
-镜像占位符必须替换。外置 Redis、计划任务及第三方写入目标也必须隔离：不要让测试副本读写生产存储或重复执行生产任务。保留业务配置，但按需禁用测试中的调度；未完成隔离前不要启动。
+测试同样使用 latest。外置 Redis、计划任务及第三方写入目标也必须隔离：不要让测试副本读写生产存储或重复执行生产任务。保留业务配置，但按需禁用测试中的调度；未完成隔离前不要启动。
 
 ```bash
 docker compose -p danmu-migration-test -f compose.test.yml config --quiet
@@ -52,10 +52,10 @@ docker compose -p danmu-migration-test -f compose.test.yml logs --tail=100
 
 **仅修改原 Compose 的 `image`，不要用首次部署模板替换原文件。** 原来的相对路径不要随文件移动；绝对路径、端口、环境变量、网络、容器名和项目名都保持不变，尤其避免误挂到一个空数据目录。
 
-将镜像改为已测试的完整引用。例如：
+将镜像改为 latest：
 
 ```yaml
-image: ghcr.io/xlmc/danmu_api@sha256:REPLACE_WITH_VERIFIED_DIGEST
+image: ghcr.io/xlmc/danmu_api:latest
 ```
 
 在原目录操作；将 `compose.yml` 和 `<SERVICE>` 替换为实际文件名与服务名。如果原部署指定了 `-p` 或 `--env-file`，每条命令继续使用相同参数：
@@ -64,6 +64,7 @@ image: ghcr.io/xlmc/danmu_api@sha256:REPLACE_WITH_VERIFIED_DIGEST
 # 提前校验和下载；这些步骤成功后再停止旧服务
 docker compose -f compose.yml config --quiet
 docker compose -f compose.yml pull <SERVICE>
+# 核对拉取结果与测试镜像是否相同；若 latest 已变化，先重新测试
 docker compose -f compose.yml stop <SERVICE>
 # 此时完成最终一致性备份，再重建该服务
 docker compose -f compose.yml up -d --no-deps --force-recreate <SERVICE>
@@ -74,7 +75,13 @@ docker compose -f compose.yml logs --tail=100 <SERVICE>
 
 确认鉴权、原数据、播放器和关键功能后，在**私有运维记录**中保存实际部署镜像、时间和验收结果；公开版本说明只记录通用功能、兼容性和构建信息。
 
-## 4. 回滚
+## 4. 日常升级 latest
+
+备份并保留旧镜像后，在原目录执行 `docker compose -f compose.yml pull <SERVICE>`；成功后执行 `docker compose -f compose.yml up -d --no-deps <SERVICE>`，再检查日志和功能。继续使用原项目名和环境文件参数。
+
+不用修改 image 标签，也不用创建自用版本标签才能升级。latest 只表示浮动镜像标签，不会主动更新已运行容器；单独执行 restart 也不会更新镜像。本仓库不因此增加自动部署服务。
+
+## 5. 回滚
 
 1. 停止新容器，避免继续写入数据。
 2. 恢复原 Compose/环境配置，并将 image 固定为事先保留的旧镜像。不能指望旧 latest 仍指向原内容。

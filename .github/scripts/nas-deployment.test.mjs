@@ -16,13 +16,13 @@ test('NAS-only: retired cloud deployment entries must not return during upstream
   }
 });
 
-test('NAS compose requires an explicit image and uses portable first-install paths', () => {
+test('NAS compose uses GHCR latest and portable first-install paths', () => {
   const compose = read('compose.nas.yml');
-  assert.match(compose, /image: \$\{DANMU_API_IMAGE:\?[^}]+\}/);
+  assert.match(compose, /^\s+image: ghcr\.io\/xlmc\/danmu_api:latest\s*$/m);
   assert.match(compose, /\$\{NAS_HTTP_PORT:-9321\}:9321/);
   assert.match(compose, /\.\/data\/config:\/app\/config/);
   assert.match(compose, /\.\/data\/\.cache:\/app\/\.cache/);
-  assert.doesNotMatch(compose, /:latest/);
+  assert.doesNotMatch(compose, /DANMU_API_IMAGE|:sha-|@sha256:/);
 });
 
 test('NAS retains its Docker server and shared request handler', () => {

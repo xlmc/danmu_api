@@ -2,7 +2,7 @@
 # 相对路径基于此 Compose 文件目录；迁移前备份，测试与生产不得共享可写数据。
 services:
   danmu-api:
-    image: ${DANMU_API_IMAGE:?请设置已验证的 GHCR 镜像标签或 digest}
+    image: ghcr.io/xlmc/danmu_api:latest
     ports:
       - "${NAS_HTTP_PORT:-9321}:9321"
     volumes:
