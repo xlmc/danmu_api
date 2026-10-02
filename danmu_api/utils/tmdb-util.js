@@ -178,8 +178,30 @@ export function selectBangumiPersonSubject(results, title) {
   return matches.length === 1 ? matches[0] : null;
 }
 
-async function getBangumiCharacterNames(title) {
+export async function getBangumiPersonResponse(url, validate) {
   const headers = { 'Content-Type': 'application/json', 'User-Agent': 'xlmc/danmu_api (https://github.com/xlmc/danmu_api)' };
+  const request = async target => {
+    // httpGet 的内部超时在收到响应头后结束；此处覆盖响应体读取。
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await httpGet(target, { headers, timeout: 5000, signal: controller.signal, validStatusCodes: [404] });
+      if (response.status === 404) {
+        const error = new Error('Bangumi 资源不存在');
+        error.status = 404;
+        throw error;
+      }
+      if (response.status !== 200 || !validate(readTmdbData(response))) throw new Error('Bangumi 响应无效');
+      return response;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+  // 有适用代理时直接使用，不逐次等待直连失败；未配置则使用原地址。
+  return request(globals.makeProxyUrl(url));
+}
+
+async function getBangumiCharacterNames(title) {
   // NAS 的内置中转只转发 GET，使用已验证的公开 GET 搜索接口。
   // 优先复用本地作品 ID；详情校验仍须通过精确名称及年份检查。
   let subject = null;
@@ -187,17 +209,17 @@ async function getBangumiCharacterNames(title) {
     const local = (await searchBangumiData(personLookupTitle(title), ['bangumi'])).filter(item =>
       item.titles.some(name => normalizePersonLookupTitle(name) === normalizePersonLookupTitle(personLookupTitle(title))));
     if (local.length === 1 && /^\d+$/.test(String(local[0].siteId))) {
-      const detail = readTmdbData(await httpGet(globals.makeProxyUrl(`https://api.bgm.tv/v0/subjects/${local[0].siteId}`), { headers, timeout: 5000 }));
+      const detail = readTmdbData(await getBangumiPersonResponse(`https://api.bgm.tv/v0/subjects/${local[0].siteId}`, data => Boolean(data?.id)));
       subject = selectBangumiPersonSubject(detail ? [detail] : [], title);
     }
   }
   if (!subject) {
     const searchUrl = `https://api.bgm.tv/search/subject/${encodeURIComponent(personLookupTitle(title))}?type=2&responseGroup=large&max_results=20`;
-    const response = await httpGet(globals.makeProxyUrl(searchUrl), { headers, timeout: 5000 });
+    const response = await getBangumiPersonResponse(searchUrl, data => Array.isArray(data?.list));
     subject = selectBangumiPersonSubject(readTmdbData(response)?.list, title);
   }
   if (!subject) throw new Error('Bangumi 未找到唯一且年份一致的动画条目');
-  const charactersResponse = await httpGet(globals.makeProxyUrl(`https://api.bgm.tv/v0/subjects/${subject.id}/characters`), { headers, timeout: 5000 });
+  const charactersResponse = await getBangumiPersonResponse(`https://api.bgm.tv/v0/subjects/${subject.id}/characters`, Array.isArray);
   const characters = readTmdbData(charactersResponse);
   if (!Array.isArray(characters)) throw new Error('Bangumi 角色响应无效');
   return { subjectId: subject.id, names: [...new Set(characters.map(item => normalizeTmdbChineseName(item.name)).filter(Boolean))] };

@@ -1,0 +1,11 @@
+.git
+node_modules
+.env
+.cache
+work
+outputs
+**/*.test.js
+**/*.test.mjs
+**/__tests__
+**/fixtures
+**/*.log
