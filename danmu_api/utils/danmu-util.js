@@ -421,30 +421,20 @@ export function buildBlockedNameMatchers(names) {
   return matchers;
 }
 
-const REGION_CONTEXT_PREFIX = /(?:来自|人在|身在|坐标|定位|住在|回到|去过|前往|老家(?:在|是)?|IP(?:在|属地)?)/u;
-const REGION_CONTEXT_SUFFIX = /(?:省|市|区|县|州|盟|旗|人|网友|观众|口音|方言|地区|本地|那边|这边|的|话|腔|妖帅|发来贺电|前来围观|报到|报道|集合|路过|来冒泡)/u;
-const REGION_CONTEXT_TAIL = /(?:$|[^\p{Script=Han}]|的|这边|那边|工作|生活|上学|旅游|出差)/u;
 const REGION_MATCHER_CACHE = new WeakMap();
 
-/** 地区名称仅在明确地区语境中匹配，避免“安康”“朝阳”等普通词误伤。 */
+/** 地区名称按字面包含匹配；开关和手动地区条目共用规则。 */
 export function buildBlockedRegionMatchers(names) {
   if (!Array.isArray(names)) return [];
   if (Object.isFrozen(names) && REGION_MATCHER_CACHE.has(names)) return REGION_MATCHER_CACHE.get(names);
   const seen = new Set();
   const matchers = [];
-  const regionAlternation = names.map(name => String(name || '').normalize('NFKC').replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase())
-    .filter(name => /^\p{Script=Han}{2,}$/u.test(name)).sort((a, b) => b.length - a.length).map(escapeRegExp).join('|');
   for (const rawName of names) {
     const label = String(rawName || '').normalize('NFKC').trim();
-    const compact = label.replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
-    if (!/\p{Script=Han}/u.test(compact) || Array.from(compact).length < 2 || seen.has(compact)) continue;
-    seen.add(compact);
-    const escaped = escapeRegExp(compact);
-    matchers.push({
-      label: `地区:${label}`,
-      needle: compact,
-      regex: new RegExp(`(?:${REGION_CONTEXT_PREFIX.source}${escaped}(?=${REGION_CONTEXT_TAIL.source})|${escaped}${REGION_CONTEXT_SUFFIX.source}|(?:^|[^\\p{Script=Han}]|哈哈|嘿嘿)${escaped}(?:${regionAlternation ? `(?:${regionAlternation})*` : ''})(?:哦|呀|啊|呢)?(?=$|[^\\p{Script=Han}]))`, 'u')
-    });
+    const needle = simplized(label.replace(/[\s·・•‧·･]+/g, '')).toLocaleLowerCase();
+    if (!/\p{Script=Han}/u.test(needle) || Array.from(needle).length < 2 || seen.has(needle)) continue;
+    seen.add(needle);
+    matchers.push({ label: `地区:${label}`, needle, regex: null });
   }
   if (Object.isFrozen(names)) REGION_MATCHER_CACHE.set(names, matchers);
   return matchers;
@@ -502,22 +492,39 @@ export function buildCharacterNicknameMatchers(names) {
   return [...aliases].map(needle => ({ label: `角色昵称:${needle}`, needle, regex: null }));
 }
 
-/** 验证完整年月日，避免把无效日期、普通小数和带 v 前缀的版本号当作日期。 */
+/** 完整日期、中文月日及带日期语境的简写；校验实际日历范围。 */
 export function hasCalendarDate(text) {
-  const pattern = /(?<![A-Za-z0-9.])((?:19|20)\d{2})(?:([.\/-])(\d{1,2})\2(\d{1,2})|年(\d{1,2})月(\d{1,2})[日号]?)(?!\d|\.\d)/g;
-  for (const match of String(text || '').normalize('NFKC').matchAll(pattern)) {
-    const year = Number(match[1]);
-    const month = Number(match[3] || match[5]);
-    const day = Number(match[4] || match[6]);
+  const value = String(text || '').normalize('NFKC');
+  const valid = (year, month, day) => {
     const date = new Date(Date.UTC(year, month - 1, day));
-    if (date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day) return true;
+    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  };
+  const full = /(?<![A-Za-z0-9.])((?:19|20)\d{2})(?:\s*([.\/-])\s*(\d{1,2})\s*\2\s*(\d{1,2})|(?:\s*年\s*|\s*[.\/-]\s*|\s+)(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?)(?!\d|\.\d)/g;
+  for (const m of value.matchAll(full)) {
+    if (valid(Number(m[1]), Number(m[3] || m[5]), Number(m[4] || m[6]))) return true;
+  }
+  const shortYear = /(?<![A-Za-z0-9.])(\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})(?!\d)\s*[日号]?/g;
+  for (const m of value.matchAll(shortYear)) {
+    if (valid(2000 + Number(m[1]), Number(m[2]), Number(m[3]))) return true;
+  }
+  // 没有年份的月日按闰年校验；不从完整但无效的日期中截取月日。
+  const monthDay = /(?<![\d.年\/\-])(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g;
+  for (const m of value.matchAll(monthDay)) {
+    if (/(?:\d{2,4}\s*年|\d{4})\s*$/.test(value.slice(0, m.index))) continue;
+    if (valid(2000, Number(m[1]), Number(m[2]))) return true;
+  }
+  const abbreviated = /(?<![A-Za-z0-9.年\/\-])(\d{1,2})([.\/\-])(\d{1,2})(?!\d|\.\d)(?=\s*(?:国庆|元旦|春节|中秋|七夕|情人节|二刷|一刷|三刷|打卡|报到|报道|签到|来看|看的|看完))/g;
+  for (const m of value.matchAll(abbreviated)) {
+    if (valid(2000, Number(m[1]), Number(m[3]))) return true;
   }
   return false;
 }
 
-/** 时:分或时:分:秒，限制合法范围，避免命中端口号及不完整数字串。 */
+/** 合法时分秒，以及中文“点/时”形式；不匹配端口及不完整数字串。 */
 export function hasClockTime(text) {
-  return /(?<!\d)(?<![\d:]:)(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?!\d|:\d)/.test(String(text || '').normalize('NFKC'));
+  const value = String(text || '').normalize('NFKC');
+  return /(?<!\d)(?<![\d:]:)(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?!\d|:\d)/.test(value)
+    || /(?<![\d.])(?:[01]?\d|2[0-3])\s*[点时]\s*(?:[0-5]?\d\s*分?(?:\s*[0-5]?\d\s*秒)?(?!\d)|半|整)/.test(value);
 }
 
 export function filterDanmusByBlockedNames(danmus, names, options = {}) {
@@ -536,15 +543,16 @@ export function filterDanmusByBlockedNames(danmus, names, options = {}) {
 
   const hitCounts = new Map();
   const filtered = danmus.filter(item => {
-    const text = String(item?.m || '').normalize('NFKC').replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
-    if (options.blockDates && (hasCalendarDate(text) || hasClockTime(text))) {
+    const rawText = String(item?.m || '').normalize('NFKC');
+    const text = rawText.replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
+    if (options.blockDates && (hasCalendarDate(rawText) || hasClockTime(rawText))) {
       hitCounts.set('日期:日期时间', (hitCounts.get('日期:日期时间') || 0) + 1);
       return false;
     }
-    const personText = matchers.length ? simplized(text) : text;
+    const personText = matchers.length || regionMatchers.length ? simplized(text) : text;
     const matcher = matchers.find(candidate => candidate.regex ? candidate.regex.test(personText) : personText.includes(candidate.needle));
     const surnameMatcher = matcher ? null : surnameMatchers.find(candidate => candidate.regex.test(text));
-    const regionMatcher = matcher || surnameMatcher ? null : regionMatchers.find(candidate => text.includes(candidate.needle) && candidate.regex.test(text));
+    const regionMatcher = matcher || surnameMatcher ? null : regionMatchers.find(candidate => personText.includes(candidate.needle));
     const hit = matcher || surnameMatcher || regionMatcher;
     if (!hit) return true;
     hitCounts.set(hit.label, (hitCounts.get(hit.label) || 0) + 1);
