@@ -219,10 +219,52 @@ async function getBangumiCharacterNames(title) {
     subject = selectBangumiPersonSubject(readTmdbData(response)?.list, title);
   }
   if (!subject) throw new Error('Bangumi 未找到唯一且年份一致的动画条目');
-  const charactersResponse = await getBangumiPersonResponse(`https://api.bgm.tv/v0/subjects/${subject.id}/characters`, Array.isArray);
-  const characters = readTmdbData(charactersResponse);
-  if (!Array.isArray(characters)) throw new Error('Bangumi 角色响应无效');
-  return { subjectId: subject.id, names: [...new Set(characters.map(item => normalizeTmdbChineseName(item.name)).filter(Boolean))] };
+  return getBangumiSeriesCharacterNames(subject.id);
+}
+
+/** 仅沿动画前传/续集关系收集角色；限制条目数以避免异常关联图无限扩展。 */
+export async function getBangumiSeriesCharacterNames(subjectId) {
+  const limit = 12;
+  const subjectIds = [];
+  const seen = new Set([Number(subjectId)]);
+  const pending = [Number(subjectId)];
+  const names = new Set();
+  let incomplete = false;
+  while (pending.length) {
+    const id = pending.shift();
+    subjectIds.push(id);
+    const results = await Promise.allSettled([
+      getBangumiPersonResponse(`https://api.bgm.tv/v0/subjects/${id}/characters`, Array.isArray),
+      getBangumiPersonResponse(`https://api.bgm.tv/v0/subjects/${id}/subjects`, Array.isArray),
+    ]);
+    const [characters, relations] = results;
+    if (characters.status === 'fulfilled') {
+      const entries = readTmdbData(characters.value);
+      for (const item of entries) {
+        const name = normalizeTmdbChineseName(item.name);
+        if (name) names.add(name);
+      }
+      if (entries.length === 0) incomplete = true;
+    } else {
+      incomplete = true;
+      log('warn', `[system] [person-metadata] Bangumi ${id} 角色加载失败，保留已取得名单: ${characters.reason.message}`);
+    }
+    if (relations.status === 'fulfilled') {
+      for (const item of readTmdbData(relations.value)) {
+        const nextId = Number(item.id);
+        if (item.type !== 2 || !['前传', '续集'].includes(item.relation)
+          || !Number.isSafeInteger(nextId) || nextId <= 0 || seen.has(nextId)) continue;
+        if (seen.size >= limit) { incomplete = true; continue; }
+        seen.add(nextId);
+        pending.push(nextId);
+      }
+    } else {
+      incomplete = true;
+      log('warn', `[system] [person-metadata] Bangumi ${id} 季度关系加载失败: ${relations.reason.message}`);
+    }
+  }
+  log(incomplete ? 'warn' : 'info', `[system] [person-metadata] Bangumi 跨季条目 ${subjectIds.join(',')}，角色 ${names.size} 个，查询${incomplete ? '未完整，稍后重试' : '成功'}`);
+  return { subjectId: Number(subjectId), subjectIds, names: [...names], incomplete };
 }
 
 const emptyPersonMetadata = (status = 'unavailable') => ({ actorNames: [], characterNames: [], names: [], status });
@@ -284,8 +326,8 @@ export async function getDomesticPersonMetadataForTitle(title) {
         try {
           const fallback = await getBangumiCharacterNames(title);
           resolved.characterNames = [...new Set([...resolved.characterNames, ...fallback.names])];
-          bangumiSubjectId = fallback.subjectId;
-          if (fallback.names.length === 0) incomplete = true;
+          bangumiSubjectId = fallback.subjectIds.join(',');
+          if (fallback.incomplete || fallback.names.length === 0) incomplete = true;
         } catch (error) {
           incomplete = true;
           log('warn', `[system] [person-metadata] Bangumi 角色补充失败: ${error.message}`);
