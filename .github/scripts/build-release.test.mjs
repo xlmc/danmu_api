@@ -126,7 +126,16 @@ test('successful publish records digest then promotes, verifies latest, and publ
   const r = successfulRecord();
   const events = [];
   publish(r, {
-    request: (endpoint, method, body) => { events.push(method || 'GET'); return method ? {} : { object: { sha: r.sha } }; },
+    request: (endpoint, method, body) => {
+      events.push(method || 'GET');
+      if (body?.draft === false) {
+        assert.equal(body.tag_name, r.version);
+        assert.equal(body.name, r.version);
+        assert.equal(body.target_commitish, r.sha);
+        return { tag_name: body.tag_name, draft: false };
+      }
+      return method ? {} : { object: { sha: r.sha } };
+    },
     promote: v => { assert.equal(v.version, r.version); events.push('promote'); },
     verifyLatest: () => events.push('verify'),
   });
@@ -152,6 +161,18 @@ test('Release API failure after promotion keeps truthful recovery evidence', () 
     promote: () => {}, verifyLatest: () => {},
   }), /release API failed/);
   assert.equal(r.latestUpdated, true); assert.equal(r.imageVerified, true); assert.equal(r.releaseRecorded, undefined);
+});
+
+test('Release response must confirm the exact published version before success is recorded', () => {
+  for (const response of [{ tag_name: 'untagged-temporary', draft: false }, { tag_name: 'custom-2026.10.02.1', draft: true }]) {
+    const r = successfulRecord();
+    assert.throws(() => publish(r, {
+      request: (endpoint, method, body) => body?.draft === false ? response : method ? {} : { object: { sha: r.sha } },
+      promote: () => {}, verifyLatest: () => {},
+    }), /Release tag does not match/);
+    assert.equal(r.latestUpdated, true);
+    assert.equal(r.releaseRecorded, undefined);
+  }
 });
 
 test('notes distinguish upstream version, NAS status, exact source, digest and source changelog', () => {
