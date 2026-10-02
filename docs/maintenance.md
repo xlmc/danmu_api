@@ -97,7 +97,7 @@ git fetch /path/to/danmu-api-before-cleanup-2026-10-02.bundle refs/remotes/origi
 2. 工作分支运行 `npm test` 并检查 PR CI；审阅后合并 main。
 3. main 自动运行发布工作流，预留唯一源码标签和 **Release 草稿**，执行测试。AMD64、ARM64 分别在对应架构的 GitHub runner 上构建并执行 Node.js/esbuild 冒烟测试，再按精确 digest 合成一个双架构版本镜像。默认部署标签暂不变化。
 4. 通过镜像 digest 检查双架构清单，保存更新说明；确认 main 没有前进后才将该镜像提升为 latest，核对 latest 的 digest，最后公开同名 Release。
-5. 在 [Releases](https://github.com/xlmc/danmu_api/releases) 查看每次成功版本。说明自动包含相对上次成功发布的提交、文件统计、人工更新日志增量、完整提交 SHA、上游版本、镜像 digest 和 Actions 链接。
+5. 在 [Releases](https://github.com/xlmc/danmu_api/releases) 查看每次成功版本。正文只展示本次更新内容，优先使用相对上次成功发布的自用更新日志新增条目；没有新增条目时使用提交说明。完整提交 SHA、文件统计、上游版本、镜像 digest 和构建状态保留在 Actions 摘要与附件的 `build-details.md`、`release-record.json` 中。
 6. 按部署文档测试并手动升级 NAS。NAS 实际版本、备份和验收保存在私有运维记录，不公开个人部署信息。
 
 **不再手动推标签触发另一轮构建，也不把发布结果提交回 main。** 因此不会出现“写更新说明 → 再构建 → 再写说明”的循环。Actions 创建标签/Release 使用本仓库的 `GITHUB_TOKEN`，需要 `contents: write`；推镜像需要 `packages: write`，不需要 Docker Hub 账号或新增 PAT。仓库策略如阻止标签/Release 写入，会报错而不是伪报成功。
