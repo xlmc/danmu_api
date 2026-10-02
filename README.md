@@ -24,17 +24,7 @@
 
 本自用版只维护 **NAS 上的 Docker Compose 部署**。镜像由本仓库 GitHub Actions 构建并发布到 `ghcr.io/xlmc/danmu_api`，不需要 Docker Hub 账户。已移除云平台一键部署配置与 HF 同步工作流，不再提供其他部署教程。
 
-### 路径和配置
 
-| 项目 | 当前 NAS 约定 |
-| --- | --- |
-| 共享目录 | `\\192.168.31.9\docker\logvar` |
-| NAS 目录 | `/volume1/docker/logvar` |
-| API 端口 | `29321:9321` |
-| 配置挂载 | `data/config` → `/app/config` |
-| 缓存、收藏、本地弹幕挂载 | `data/.cache` → `/app/.cache` |
-
-使用仓库中的 [compose.nas.yml](compose.nas.yml)。容器内端口保持 `9321`；如果旧配置自定义了 `DANMU_API_PORT`，需要先核对端口映射。
 
 - **首次部署**：创建上述数据目录，把 [配置示例](config/.env.example) 复制为 `data/config/.env`，设置自己的 `TOKEN` 和独立的 `ADMIN_TOKEN`。不要使用默认令牌，不要将含令牌的配置提交到 Git。
 - **从现有容器迁移**：保留原来的 `data/config/.env` 和数据，**不要用配置示例覆盖**。先备份并用独立目录、端口 `29322` 测试，通过后才停止旧容器并替换生产容器。完整步骤见 [迁移与回滚](docs/deployment.md)。
