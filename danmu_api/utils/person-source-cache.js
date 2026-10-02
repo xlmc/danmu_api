@@ -73,7 +73,7 @@ export async function cachedPersonSource(key, loader, usable, complete = () => t
       } catch (error) {
         entries.set(key, { value: good ? entry.value : null, expiresAt: good ? entry.expiresAt : 0, partial: true,
           retryAt: Date.now() + RETRY });
-        log('warn', `[system] [person-metadata] 来源刷新失败${good ? '，继续使用有效旧名单' : ''}: ${error.message}`);
+        log('warn', `[system] [person-metadata] 来源 ${key.split(':').at(-1)} 刷新失败${good ? '，继续使用有效旧名单' : ''}: ${error.message}`);
         return { value: good ? copy(entry.value) : null, stale: true };
       } finally {
         while (entries.size > LIMIT) entries.delete(entries.keys().next().value);
