@@ -1,11 +1,11 @@
-# NAS 唯一部署模板；在 NAS 上设置已验证的 SHA/custom 镜像或 digest 后再运行。
-# 迁移前备份；不要与旧生产容器同时使用这些可写挂载。
+# NAS 通用首次部署模板；已有部署请仅修改原 Compose 的 image。
+# 相对路径基于此 Compose 文件目录；迁移前备份，测试与生产不得共享可写数据。
 services:
   danmu-api:
     image: ${DANMU_API_IMAGE:?请设置已验证的 GHCR 镜像标签或 digest}
     ports:
-      - "29321:9321"
+      - "${NAS_HTTP_PORT:-9321}:9321"
     volumes:
-      - /volume1/docker/logvar/data/config:/app/config
-      - /volume1/docker/logvar/data/.cache:/app/.cache
+      - ./data/config:/app/config
+      - ./data/.cache:/app/.cache
     restart: unless-stopped

@@ -1,68 +1,84 @@
-# NAS 自用版部署、迁移与回滚
+# NAS 部署、迁移与回滚
 
-本仓库仅维护 NAS Docker Compose 部署，统一使用根目录的 [compose.nas.yml](../compose.nas.yml)。首次部署和启动命令见 [README](../README.md#nas-部署唯一维护方式)；本文补充已有 NAS 的迁移、独立测试和回滚步骤。
+仅维护 NAS Docker Compose 部署。首次部署见 [README](../README.md#nas-首次部署)，模板为 [compose.nas.yml](../compose.nas.yml)。本文不记录任何真实 NAS 地址、私人目录或部署凭据。
 
-## 镜像来源
+## 选择镜像
 
-- 仓库：`ghcr.io/xlmc/danmu_api`，由本仓库 GitHub Actions 构建，无需 Docker Hub 信息。
-- `latest`：仅 `main` 构建成功后更新，是浮动标签，不建议生产无审核自动拉取。
-- `custom-YYYY.MM.DD.N`：发布标签对应的镜像，先核对 [版本说明](../SELF_USE_CHANGELOG.md)。
-- `sha-<完整提交 SHA>`：精确源码身份；最严格固定方式是 `ghcr.io/xlmc/danmu_api@sha256:<digest>`。
-- 镜像标签存在不等于 NAS 已更新；必须查看该次 Actions 的成功状态和 Published GHCR image 摘要，核对 `linux/amd64`、`linux/arm64`。
+- 镜像仓库：`ghcr.io/xlmc/danmu_api`，由 GitHub Actions 构建，不需要 Docker Hub 账户。
+- `sha-<完整提交 SHA>` 对应源码；`custom-YYYY.MM.DD.N` 对应已创建的自用发布标签；digest 固定构建内容。
+- `latest` 随 main 发布变化。迁移/回滚不要仅记录 latest，应记录实际镜像 ID/digest。
+- 从对应提交成功的 [发布工作流](https://github.com/xlmc/danmu_api/actions/workflows/docker-image.yml) 中复制 **Published GHCR image** 摘要，核对 NAS 架构是否为支持的 `linux/amd64` 或 `linux/arm64`。
+- 首先在 NAS 执行 `docker pull <已验证的完整镜像引用>`。若失败，检查标签是否存在、网络与包可见性；需要认证时使用具备包读取权限的凭据登录 GHCR，勿将凭据写入仓库。
 
-新镜像未构建成功时不要把示例标签直接放入生产。若匿名拉取失败，检查 GHCR 包可见性或使用有 `read:packages` 权限的凭据登录，切勿把 token 写入 compose/仓库。
+**本机/CI 构建成功、注册表中存在镜像、NAS 能拉取、应用实际可用，必须分别验证。** 工作流发布不等于 NAS 已升级。
 
-## 当前 NAS（本次未修改）
+## 1. 保存现状与备份
 
-共享目录：`\\192.168.31.9\docker\logvar`；NAS 实际路径：`/volume1/docker/logvar`。
+1. 在原项目记录服务名、项目名、Compose 文件和所有环境文件，记录旧容器的镜像 ID、digest、端口、实际挂载目录及网络设置。保留旧镜像，必要时导出为离线备份。
+2. 停止写入后备份挂载到 `/app/config`、`/app/.cache` 的整个目录，以及其他自定义持久化目录。缓存目录中可能包含收藏计划和本地弹幕，不可当作临时文件丢弃。
+3. 存在 Redis 或其他外置持久化时另行备份，确认恢复方法。备份放在项目之外并限制读取权限。
+4. 测试期间如恢复旧服务供日常使用，正式切换前再次停止写入并做最终备份，避免丢失测试期间新增的数据。
 
-既有生产镜像是 `logvar/danmu-api:latest`（仅为迁移前的历史记录，不是本仓库发布镜像）。原端口 `29321:9321`，原挂载如下，升级时保持不变：
+**不要用配置示例覆盖原 `config/.env`。保留 TOKEN、ADMIN_TOKEN 及来源配置，不把关闭鉴权作为迁移步骤。** 不要把备份、令牌、实际部署路径上传到公开 Git/Release。
 
-- `/volume1/docker/logvar/data/config:/app/config`
-- `/volume1/docker/logvar/data/.cache:/app/.cache`
+## 2. 独立测试
 
-不要把新模板直接作为第二个生产项目启动：两个容器不能同时写这些目录。保留旧 Compose 中已有的环境变量、网络或其他自定义设置；新模板是最小配置，不覆盖旧配置。
-
-## 迁移顺序
-
-1. 记录旧容器的实际镜像 ID/digest 和 compose；旧 `latest` 也会漂移，不能只记录这个字符串。
-2. 停止写入后备份 `data/config`、`data/.cache` 以及原 compose；备份放在独立目录。存在 Redis 等外置持久化时另行备份。
-3. 准备已经构建成功的 GHCR SHA/custom 标签，把旧数据**复制**到独立测试目录。
-4. 用独立容器名、端口 `29322` 和独立数据副本测试；不要让两个容器共享生产可写目录。
-5. 测试管理端登录/鉴权、已知剧名和季集规则、弹幕获取、收藏、过滤及本地弹幕上传；记录异常与版本。
-6. 验收后停止旧容器，仅替换生产 compose 中的 `image` 行（使用本仓库模板时设置 `DANMU_API_IMAGE`），保留 `29321:9321` 和原挂载路径；拉取后重建容器。
-7. 将实际部署标签、digest、日期及结果补充到版本说明或 GitHub Release。
-
-测试 compose 示例（先替换占位镜像；测试数据需预先准备）：
+把数据复制到单独测试目录，不直接挂载生产目录。下面的 Compose 放在该测试目录中；示例端口可换为任意未占用端口：
 
 ```yaml
 services:
-  danmu-api-self-use-test:
+  danmu-api-test:
     image: ghcr.io/xlmc/danmu_api:sha-REPLACE_WITH_VERIFIED_FULL_COMMIT_SHA
     ports:
-      - "29322:9321"
+      - "19321:9321"
     volumes:
-      - /volume1/docker/logvar/test-self-use/config:/app/config
-      - /volume1/docker/logvar/test-self-use/.cache:/app/.cache
-    restart: unless-stopped
+      - ./data/config:/app/config
+      - ./data/.cache:/app/.cache
+    restart: "no"
 ```
 
-在 NAS 上使用 Docker Compose CLI 的命令示例：
+镜像占位符必须替换。外置 Redis、计划任务及第三方写入目标也必须隔离：不要让测试副本读写生产存储或重复执行生产任务。保留业务配置，但按需禁用测试中的调度；未完成隔离前不要启动。
 
 ```bash
-# 指定你实际保存的独立测试 compose 文件
-sudo docker compose -f compose.self-use-test.yml pull
-sudo docker compose -f compose.self-use-test.yml up -d
-sudo docker compose -f compose.self-use-test.yml logs --tail=100
+docker compose -p danmu-migration-test -f compose.test.yml config --quiet
+docker compose -p danmu-migration-test -f compose.test.yml pull
+docker compose -p danmu-migration-test -f compose.test.yml up -d
+docker compose -p danmu-migration-test -f compose.test.yml logs --tail=100
 ```
 
-这里不默认提供/执行 SSH 登录，不自动替换生产 compose，也不安装自动拉取部署服务。
+测试清单：管理登录及鉴权、已知剧名和季集匹配、弹幕获取、过滤、收藏读写、本地弹幕列表/上传，以及实际播放器调用。检查容器架构、目录权限、是否意外生成空配置。验收后停止测试项目。
 
-## 回滚
+## 3. 切换原生产项目
 
-- 停止新容器，用记录下来的旧镜像 ID/digest 或已保留的旧版本重建。
-- 若新版本写入了不兼容数据，恢复升级前 config/cache 快照，再启动旧镜像；不能只换镜像而忽略数据。
-- 测试失败时直接停止独立测试容器，生产容器及生产数据不应受到影响。
-- 保留备份和镜像，直到生产验收完成；不能先清理旧镜像再验证回滚。
+**仅修改原 Compose 的 `image`，不要用首次部署模板替换原文件。** 原来的相对路径不要随文件移动；绝对路径、端口、环境变量、网络、容器名和项目名都保持不变，尤其避免误挂到一个空数据目录。
 
-TOKEN 默认保留，`TOKEN_AUTH_DISABLED=true` 会关闭所有 API 鉴权，只适合你主动确认受信任的内网；不能作为迁移必需项。
+将镜像改为已测试的完整引用。例如：
+
+```yaml
+image: ghcr.io/xlmc/danmu_api@sha256:REPLACE_WITH_VERIFIED_DIGEST
+```
+
+在原目录操作；将 `compose.yml` 和 `<SERVICE>` 替换为实际文件名与服务名。如果原部署指定了 `-p` 或 `--env-file`，每条命令继续使用相同参数：
+
+```bash
+# 提前校验和下载；这些步骤成功后再停止旧服务
+docker compose -f compose.yml config --quiet
+docker compose -f compose.yml pull <SERVICE>
+docker compose -f compose.yml stop <SERVICE>
+# 此时完成最终一致性备份，再重建该服务
+docker compose -f compose.yml up -d --no-deps --force-recreate <SERVICE>
+docker compose -f compose.yml logs --tail=100 <SERVICE>
+```
+
+不要用 `down -v` 清除卷，不要另建一个共享生产数据的项目。使用 NAS 图形化管理时，按同一原则在原项目编辑镜像并重新创建服务。
+
+确认鉴权、原数据、播放器和关键功能后，在**私有运维记录**中保存实际部署镜像、时间和验收结果；公开版本说明只记录通用功能、兼容性和构建信息。
+
+## 4. 回滚
+
+1. 停止新容器，避免继续写入数据。
+2. 恢复原 Compose/环境配置，并将 image 固定为事先保留的旧镜像。不能指望旧 latest 仍指向原内容。
+3. 新版本若写入数据，必要时恢复升级前配置、缓存和外置存储快照；不能只换镜像而忽略数据兼容性。
+4. 在原项目重建旧服务，检查日志和原有功能。恢复备份会丢弃备份之后的新增数据，应先保留故障现场副本。
+
+完成生产验收并确认回滚路径之前，不清理旧镜像和备份。本仓库不会自动连接、升级或更改 NAS。

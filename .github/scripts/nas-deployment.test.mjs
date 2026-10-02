@@ -16,12 +16,12 @@ test('NAS-only: retired cloud deployment entries must not return during upstream
   }
 });
 
-test('NAS compose requires an explicit image and preserves production port and data paths', () => {
+test('NAS compose requires an explicit image and uses portable first-install paths', () => {
   const compose = read('compose.nas.yml');
   assert.match(compose, /image: \$\{DANMU_API_IMAGE:\?[^}]+\}/);
-  assert.match(compose, /29321:9321/);
-  assert.match(compose, /\/volume1\/docker\/logvar\/data\/config:\/app\/config/);
-  assert.match(compose, /\/volume1\/docker\/logvar\/data\/\.cache:\/app\/\.cache/);
+  assert.match(compose, /\$\{NAS_HTTP_PORT:-9321\}:9321/);
+  assert.match(compose, /\.\/data\/config:\/app\/config/);
+  assert.match(compose, /\.\/data\/\.cache:\/app\/\.cache/);
   assert.doesNotMatch(compose, /:latest/);
 });
 
@@ -32,5 +32,14 @@ test('NAS retains its Docker server and shared request handler', () => {
   for (const file of ['README.md', 'docs/configuration.md', 'danmu_api/ui/README.md']) {
     assert.doesNotMatch(read(file), /^#{2,} (?:部署到 |部署平台支持|部署平台环境变量配置指南)/m);
     assert.doesNotMatch(read(file), /https:\/\/(?:vercel\.com\/new|app\.netlify\.com\/start|deploy\.workers\.cloudflare\.com)/);
+  }
+});
+
+// Documentation and templates must stay portable; examples use placeholders, not hosts.
+test('public deployment docs contain no private host addresses or absolute home/NAS paths', () => {
+  for (const file of ['README.md', 'docs/deployment.md', 'compose.nas.yml', 'SELF_USE_CHANGELOG.md']) {
+    const text = read(file);
+    assert.doesNotMatch(text, /\b(?:192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(?:1[6-9]|2\d|3[01])\.\d+\.\d+)\b/);
+    assert.doesNotMatch(text, /\/volume\d+\/|[A-Z]:[\\/]Users[\\/]|\/home\/[^\s/]+\//i);
   }
 });
