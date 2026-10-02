@@ -759,6 +759,7 @@ export class Envs {
 
       // 缓存配置
       'SEARCH_CACHE_MINUTES': { category: 'cache', type: 'number', description: '搜索结果缓存时间(分钟)，默认3', min: 1, max: 120 },
+      'MATCH_SEARCH_BUDGET_MS': { category: 'match', type: 'number', description: '自动匹配快速搜索等待时间，默认1500毫秒。优先平台组已有准确季集时提前返回，慢源继续完成完整搜索；没有准确候选仍等待回退。0关闭目录复用和提前返回，等待全部来源及合并。手动搜索不受影响。', min: 0, max: 10000 },
       'COMMENT_CACHE_MINUTES': { category: 'cache', type: 'number', description: '弹幕缓存时间(分钟)，默认3', min: 1, max: 120 },
       'COMMENT_CACHE_MIN_COUNT': { category: 'cache', type: 'number', description: '弹幕缓存最少条数，低于该值时重新获取，默认100，设置0关闭', min: 0, max: 10000 },
       'REMEMBER_LAST_SELECT': { category: 'cache', type: 'boolean', description: '记住明确手动选择的结果；自动匹配后直接获取其返回结果不会写入偏好' },
@@ -827,6 +828,7 @@ export class Envs {
       enableAnimeEpisodeFilter: this.get('ENABLE_ANIME_EPISODE_FILTER', false, 'boolean'), // 控制手动搜索的时候是否根据ANIME_TITLE_FILTER进行剧名过滤以及根据EPISODE_TITLE_FILTER进行集标题过滤（默认 false，禁用过滤）
       logLevel: this.get('LOG_LEVEL', 'info', 'string'), // 日志级别配置（默认 info，可选值：error, warn, info）
       searchCacheMinutes: this.get('SEARCH_CACHE_MINUTES', 3, 'number'), // 搜索结果缓存时间配置（分钟，默认 3）
+      matchSearchBudgetMs: Math.max(0, Math.min(10000, this.get('MATCH_SEARCH_BUDGET_MS', 1500, 'number'))),
       commentCacheMinutes: this.get('COMMENT_CACHE_MINUTES', 3, 'number'), // 弹幕缓存时间配置（分钟，默认 3）
       commentCacheMinCount: this.get('COMMENT_CACHE_MIN_COUNT', 100, 'number'), // 弹幕缓存最少条数，低于该值时忽略缓存（默认 100，0 表示关闭）
       hongguoMergeAllEpisodes: this.get('HONGGUO_MERGE_ALL_EPISODES', false, 'boolean'), // 红果短剧是否合并全集弹幕（默认 false）
