@@ -12,6 +12,13 @@
 
 ## 未发布 · 2026-10-02 仓库整理与上游同步
 
+### 发布构建修复（2026-10-02）
+
+- 源码 Git 标签、镜像标签和 Release 仍共用一个 `custom-YYYY.MM.DD.N` 版本号，NAS 继续使用 `ghcr.io/xlmc/danmu_api:latest`。
+- 首次统一版本发布在 ARM64 QEMU 模拟构建中出现 Illegal instruction 并超时；预留编号不复用，不把失败草稿当作成功版本。
+- 改用 AMD64、ARM64 原生 runner 并行构建，分别测试 Node.js 与 esbuild，再按两份精确 digest 合成同一版本镜像。两边均成功且清单验证通过后才更新 latest、公开同名更新说明。
+- PR 回归检查增加 ARM64 原生镜像构建与冒烟测试；发布仍不自动部署 NAS。
+
 ### 标识与状态
 
 | 项目 | 记录 |

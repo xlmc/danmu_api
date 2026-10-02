@@ -8,32 +8,32 @@ on:
 permissions:
   contents: read
 
-# One publisher at a time: date counters and latest must not race.
+# Reserve one version and promote latest only once per main run.
 concurrency:
   group: ghcr-publish-main
   cancel-in-progress: false
 
 jobs:
-  build:
+  prepare:
     if: github.repository == 'xlmc/danmu_api' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
-      packages: write
-
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      image: ${{ steps.release.outputs.image }}
+      labels: ${{ steps.metadata.outputs.labels }}
     steps:
       - name: Checkout code and version history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-
       - name: Use Node.js 22
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
-
       - name: Reserve one source and image version
         id: release
         env:
@@ -41,13 +41,11 @@ jobs:
         run: |
           echo "RELEASE_DIR=$RUNNER_TEMP/danmu-release" >> "$GITHUB_ENV"
           node .github/scripts/build-release.mjs prepare "$RUNNER_TEMP/danmu-release"
-
       - name: Install dependencies and test before publishing
         run: |
           npm install --no-audit --no-fund
           npm test
-
-      - name: Generate image tags and labels
+      - name: Generate image labels
         id: metadata
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
@@ -58,52 +56,147 @@ jobs:
           labels: |
             org.opencontainers.image.version=${{ steps.release.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
+      - name: Retain reserved release for final recording
+        if: always() && steps.release.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: reserved-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.RELEASE_DIR }}/
+          if-no-files-found: error
+          retention-days: 90
 
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Build and push versioned image (not latest)
+      - name: Build native platform and push by digest
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ needs.prepare.outputs.labels }}
+          outputs: type=image,name=${{ needs.prepare.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=image-${{ matrix.arch }}
+          cache-to: type=gha,scope=image-${{ matrix.arch }},mode=max
+      - name: Smoke test native runtime and retain digest
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          EXPECTED_ARCH: ${{ matrix.arch == 'amd64' && 'x64' || 'arm64' }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          docker run --rm -e EXPECTED_ARCH "$IMAGE@$IMAGE_DIGEST" node --input-type=module -e "
+            import { transformSync } from 'esbuild';
+            if (process.arch !== process.env.EXPECTED_ARCH) throw new Error('Unexpected CPU architecture');
+            transformSync('const value = 1', { minify: true });
+            console.log('Native Node.js and esbuild smoke test passed:', process.arch);
+          "
+          mkdir -p "$RUNNER_TEMP/digests"
+          printf '%s\n' "$IMAGE_DIGEST" > "$RUNNER_TEMP/digests/$ARCH.txt"
+      - name: Retain verified platform digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: image-digest-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/digests/
+          if-no-files-found: error
+          retention-days: 1
 
+  publish:
+    needs: [prepare, build]
+    if: always() && needs.prepare.outputs.version != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use Node.js 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - name: Restore reserved release
+        id: restore
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: reserved-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/danmu-release/
+      - name: Set release directory
+        run: echo "RELEASE_DIR=$RUNNER_TEMP/danmu-release" >> "$GITHUB_ENV"
+      - name: Restore both verified platform digests
+        if: needs.prepare.result == 'success' && needs.build.result == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: image-digest-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/digests/
+          merge-multiple: true
+      - name: Login to GHCR
+        if: needs.prepare.result == 'success' && needs.build.result == 'success'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        if: needs.prepare.result == 'success' && needs.build.result == 'success'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Merge both platforms into one versioned image
+        id: merge
+        if: needs.prepare.result == 'success' && needs.build.result == 'success'
+        run: node .github/scripts/merge-images.mjs "$RELEASE_DIR" "$RUNNER_TEMP/digests"
       - name: Verify both published platforms by digest
         id: verify
+        if: needs.prepare.result == 'success' && needs.build.result == 'success'
         env:
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.merge.outputs.digest }}
         run: node .github/scripts/build-release.mjs verify "$RELEASE_DIR"
-
       - name: Record outcome and publish only verified images
-        if: always() && steps.release.outcome == 'success'
+        if: always() && steps.restore.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           JOB_STATUS: ${{ job.status }}
-          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          BUILD_OUTCOME: ${{ needs.build.result == 'success' && steps.merge.outcome || needs.build.result }}
           VERIFY_OUTCOME: ${{ steps.verify.outcome }}
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_DIGEST: ${{ steps.merge.outputs.digest }}
         run: node .github/scripts/build-release.mjs finish "$RELEASE_DIR"
-
       - name: Retain version and update notes for troubleshooting
-        if: always() && steps.release.outcome == 'success'
+        if: always() && steps.restore.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-record-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.RELEASE_DIR }}/
+          if-no-files-found: error
           retention-days: 90
+      - name: Report failed platform builds
+        if: always() && needs.build.result != 'success'
+        run: |
+          echo "::error::Native platform builds did not both succeed; latest was not promoted."
+          exit 1

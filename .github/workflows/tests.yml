@@ -12,7 +12,11 @@ permissions:
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,5 +34,11 @@ jobs:
         run: |
           docker compose -f compose.nas.yml config --quiet
           docker compose -f compose.nas.yml config --images | grep -Fx 'ghcr.io/xlmc/danmu_api:latest'
-      - name: Build Docker image (amd64 smoke build, no publishing)
-        run: docker build --tag danmu-api-ci:${{ github.sha }} .
+      - name: Build and smoke test native Docker image
+        run: |
+          docker build --tag danmu-api-ci:${{ github.sha }} .
+          docker run --rm danmu-api-ci:${{ github.sha }} node --input-type=module -e "
+            import { transformSync } from 'esbuild';
+            transformSync('const value = 1', { minify: true });
+            console.log('Native runtime passed:', process.arch);
+          "
