@@ -11,7 +11,7 @@ import {
   resolveAutoMatchMapping,
 } from './utils/auto-match-mapping-util.js';
 import { extractEpisodeNumberFromTitle, strictTitleMatch } from './utils/common-util.js';
-import { resolveLocalTitleMapping } from './utils/title-mapping-url-util.js';
+import { resolveLocalTitleMapping, applyTitleMappingWithLog, applyRemoteTitleMappingText, resolveCachedRemoteTitleMapping } from './utils/title-mapping-url-util.js';
 import { parseVerifiedRemoteRules } from './utils/auto-match-mapping-url-util.js';
 
 test('标题映射兼容加号、逗号和空格', () => {
@@ -19,6 +19,19 @@ test('标题映射兼容加号、逗号和空格', () => {
   const result = resolveLocalTitleMapping('标题 年份 第一季');
   assert.equal(result.matched, true);
   assert.equal(result.title, '目标作品');
+});
+
+test('紧凑季号映射优先于裸标题，且不泄漏到其他季度', () => {
+  Globals.init({ TITLE_MAPPING_TABLE: '诛仙->默认标题;诛仙S04->诛仙 最终季;诛仙2026S03->第三季标题' });
+  assert.equal(resolveLocalTitleMapping('诛仙', 4).title, '诛仙 最终季');
+  assert.equal(applyTitleMappingWithLog('诛仙', 'test', 4), '诛仙 最终季');
+  assert.equal(resolveLocalTitleMapping('诛仙', 3, 2026).title, '第三季标题');
+  assert.equal(resolveLocalTitleMapping('诛仙', 2).title, '默认标题');
+  Globals.init({ TITLE_MAPPING_TABLE: '诛仙S04->诛仙 最终季', TITLE_MAPPING_TABLE_URL: 'https://example.test/mapping.txt' });
+  assert.equal(resolveLocalTitleMapping('诛仙', 3).matched, false);
+  applyRemoteTitleMappingText('https://example.test/mapping.txt', '诛仙S04->远程最终季');
+  assert.equal(resolveCachedRemoteTitleMapping('诛仙', 4).title, '远程最终季');
+  assert.equal(applyTitleMappingWithLog('诛仙', 'test', 4), '诛仙 最终季');
 });
 
 test('剧集标题下划线编号按标题集数解析', () => {
