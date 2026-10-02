@@ -166,7 +166,7 @@ function updateFilterUI() {
         const ai = tagOrderMap[a] ?? 99999, bi = tagOrderMap[b] ?? 99999;
         return ai !== bi ? ai - bi : a.localeCompare(b);
     }).forEach(tag => {
-        html += \`<button class="filter-btn \${currentLogFilter === tag ? 'active' : ''}" onclick="setLogFilter('\${tag}')">\${tag === 'blocked-words' ? '黑名单屏蔽' : tag}</button>\`;
+        html += \`<button class="filter-btn \${currentLogFilter === tag ? 'active' : ''}" onclick="setLogFilter('\${tag}')">\${tag}</button>\`;
     });
     
     filterContainer.innerHTML = html;
