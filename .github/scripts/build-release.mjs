@@ -3,7 +3,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-const VERSION = /^custom-\d{4}\.\d{2}\.\d{2}\.[1-9]\d*$/;
+const VERSION = /^xdanmu-v0\.[1-9]\d*$/;
+const LEGACY_VERSION = /^custom-\d{4}\.\d{2}\.\d{2}\.[1-9]\d*$/;
 const MARKER = '<!-- danmu-self-use-release -->';
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 
@@ -22,13 +23,9 @@ function list(endpoint) {
   return JSON.parse(command('gh', ['api', '--paginate', '--slurp', endpoint]).stdout).flat();
 }
 
-export function nextVersion(tags, now = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(now);
-  const get = type => parts.find(p => p.type === type).value;
-  const prefix = `custom-${get('year')}.${get('month')}.${get('day')}.`;
-  const numbers = tags.filter(t => VERSION.test(t) && t.startsWith(prefix)).map(t => Number(t.slice(prefix.length)));
+export function nextVersion(tags) {
+  const prefix = 'xdanmu-v0.';
+  const numbers = tags.filter(t => VERSION.test(t)).map(t => Number(t.slice(prefix.length)));
   const next = Math.max(0, ...numbers) + 1;
   if (!Number.isSafeInteger(next)) throw new Error('Version counter overflow');
   return `${prefix}${next}`;
@@ -39,7 +36,7 @@ export function collectChanges({ cwd = process.cwd(), sha, releases = [] }) {
   const git = (...args) => command('git', args, { cwd }).stdout.trim();
   let previous;
   for (const release of [...releases].sort((a, b) => b.id - a.id)) {
-    if (release.draft || release.prerelease || !VERSION.test(release.tag_name) || !release.body?.includes(MARKER)) continue;
+    if (release.draft || release.prerelease || !(VERSION.test(release.tag_name) || LEGACY_VERSION.test(release.tag_name)) || !release.body?.includes(MARKER)) continue;
     const resolved = command('git', ['rev-parse', '--verify', `${release.tag_name}^{commit}`], { cwd, allowFailure: true });
     if (resolved.status !== 0) continue;
     const previousSha = resolved.stdout.trim();
@@ -124,8 +121,8 @@ export function prepare({ env = process.env, now = new Date(), cwd = process.cwd
   if (sha !== env.GITHUB_SHA) throw new Error('Checkout differs from workflow source');
   if (request(`repos/${repository}/git/ref/heads/main`).object.sha !== sha) throw new Error('This main run is superseded; do not publish old code as latest');
   releases ??= list(`repos/${repository}/releases?per_page=100`);
-  tags ??= list(`repos/${repository}/git/matching-refs/tags/custom-`).map(t => t.ref.slice('refs/tags/'.length));
-  const version = nextVersion([...tags, ...releases.map(r => r.tag_name)], now);
+  tags ??= list(`repos/${repository}/git/matching-refs/tags/xdanmu-v`).map(t => t.ref.slice('refs/tags/'.length));
+  const version = nextVersion([...tags, ...releases.map(r => r.tag_name)]);
   const record = {
     version, repository, sha, image: `ghcr.io/${repository.toLowerCase()}`,
     createdAt: now.toISOString(),

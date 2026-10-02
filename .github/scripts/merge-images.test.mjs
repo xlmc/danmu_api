@@ -10,7 +10,7 @@ const combined = 'sha256:' + 'c'.repeat(64);
 
 test('merge rejects missing, invalid or duplicate platform digests before docker runs', () => {
   for (const digests of [{ amd64 }, { amd64, arm64: 'sha256:bad' }, { amd64, arm64: amd64 }]) {
-    assert.throws(() => mergeImages({ image, version: 'custom-2026.10.02.2' }, digests, () => assert.fail('must not run docker')));
+    assert.throws(() => mergeImages({ image, version: 'xdanmu-v0.2' }, digests, () => assert.fail('must not run docker')));
   }
   assert.throws(() => platformSources('untrusted:latest', { amd64, arm64 }), /repository/);
   assert.throws(() => mergeImages({ image, version: 'latest' }, { amd64, arm64 }, () => assert.fail('must not run docker')), /version/);
@@ -18,18 +18,18 @@ test('merge rejects missing, invalid or duplicate platform digests before docker
 
 test('merge creates only the reserved version from both exact digests, never latest', () => {
   const commands = [];
-  const digest = mergeImages({ image, version: 'custom-2026.10.02.2' }, { amd64: amd64 + '\n', arm64 }, args => {
+  const digest = mergeImages({ image, version: 'xdanmu-v0.2' }, { amd64: amd64 + '\n', arm64 }, args => {
     commands.push(args);
     return args.includes('inspect') ? JSON.stringify({ digest: combined }) : '';
   });
   assert.equal(digest, combined);
-  assert.deepEqual(commands[0], ['buildx', 'imagetools', 'create', '--tag', image + ':custom-2026.10.02.2', image + '@' + amd64, image + '@' + arm64]);
-  assert.deepEqual(commands[1], ['buildx', 'imagetools', 'inspect', image + ':custom-2026.10.02.2', '--format', '{{json .Manifest}}']);
+  assert.deepEqual(commands[0], ['buildx', 'imagetools', 'create', '--tag', image + ':xdanmu-v0.2', image + '@' + amd64, image + '@' + arm64]);
+  assert.deepEqual(commands[1], ['buildx', 'imagetools', 'inspect', image + ':xdanmu-v0.2', '--format', '{{json .Manifest}}']);
 });
 
 test('merge failure or invalid combined digest cannot supply a promotion digest', () => {
-  assert.throws(() => mergeImages({ image, version: 'custom-2026.10.02.2' }, { amd64, arm64 }, () => { throw new Error('registry failed'); }), /registry failed/);
-  assert.throws(() => mergeImages({ image, version: 'custom-2026.10.02.2' }, { amd64, arm64 }, args => args.includes('inspect') ? '{}' : ''), /merged image digest/);
+  assert.throws(() => mergeImages({ image, version: 'xdanmu-v0.2' }, { amd64, arm64 }, () => { throw new Error('registry failed'); }), /registry failed/);
+  assert.throws(() => mergeImages({ image, version: 'xdanmu-v0.2' }, { amd64, arm64 }, args => args.includes('inspect') ? '{}' : ''), /merged image digest/);
 });
 
 test('workflow builds both native architectures, merges only successful builds, and records failures', () => {

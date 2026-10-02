@@ -486,7 +486,9 @@ export function filterDanmusByBlockedNames(danmus, names, options = {}) {
   if (!Array.isArray(danmus) || danmus.length === 0) {
     return { danmus: Array.isArray(danmus) ? danmus : [], removedCount: 0, hits: [] };
   }
-  const matchers = buildBlockedNameMatchers(names);
+  // 当前作品角色表中的完整名字直接匹配；演员二字名仍保留语境保护。
+  const characterMatchers = buildBlockedNameMatchers(options.characterNames).map(matcher => ({ ...matcher, regex: null }));
+  const matchers = [...characterMatchers, ...buildBlockedNameMatchers(names)];
   const surnameMatchers = buildBlockedSurnameMatchers(options.surnameNames, options.surnameMatcherOptions);
   const regionMatchers = buildBlockedRegionMatchers(options.regionNames);
   if (matchers.length === 0 && surnameMatchers.length === 0 && regionMatchers.length === 0) {

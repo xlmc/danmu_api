@@ -4,13 +4,24 @@
 
 ## 版本规则
 
-- **一个版本号**：`custom-YYYY.MM.DD.N` 同时标识源码 Git 标签、镜像标签和 Release 更新说明。日期按北京时间，当日序号由 Actions 自动分配。
+- **一个版本号**：`xdanmu-v0.N` 同时标识源码 Git 标签、镜像标签和 Release 更新说明。从 `xdanmu-v0.1` 开始，序号由 Actions 自动递增，不使用日期。
 - 日常部署只填写 `ghcr.io/xlmc/danmu_api:latest`；镜像通过构建与双架构检查后才更新 latest。上游版本是背景信息，不是另一套自用版本号。
 - main 更新自动预留源码标签和 Release 草稿；失败不公开 Release、不更新 latest，预留编号不复用，因此允许空缺。标签不再触发重复构建。
 - [GitHub Releases](https://github.com/xlmc/danmu_api/releases) 是成功版本目录；本文件记录人工功能说明，不在每次构建后自动回写 main。
 - 状态分开记录：源码合并、镜像发布、NAS 部署；源码测试与镜像清单检查不能替代 NAS 验收。SHA/digest 仅用于精确追溯。
 
 ## 未发布 · 2026-10-02 仓库整理与上游同步
+
+### 人物屏蔽与日志分类
+
+- 当前作品角色表中的完整角色名直接匹配，修复二字角色名在连续中文句子中漏过的问题；二字演员名继续保留语境保护。
+- 人物名单加载、人物与地区命中统计统一归入“黑名单屏蔽”日志分类，分类入口固定显示。
+
+### 自用版本编号
+
+- 新版本统一使用 `xdanmu-v0.N`，首个版本为 `xdanmu-v0.1`，后续序号自动递增，不再按日期命名。
+- Git 标签、GHCR 镜像标签与 Release 使用同一个版本号；成功发布后更新 `latest`。
+- 旧日期版本仅保留作历史发布和回滚记录，新版本更新说明继续以上次成功发布为基线。
 
 ### Bangumi 代理访问与代码清理（2026-10-02）
 
@@ -42,7 +53,7 @@
 
 ### 发布构建修复（2026-10-02）
 
-- 源码 Git 标签、镜像标签和 Release 仍共用一个 `custom-YYYY.MM.DD.N` 版本号，NAS 继续使用 `ghcr.io/xlmc/danmu_api:latest`。
+- 源码 Git 标签、镜像标签和 Release 仍共用一个 `xdanmu-v0.N` 版本号，NAS 继续使用 `ghcr.io/xlmc/danmu_api:latest`。
 - 首次统一版本发布在 ARM64 QEMU 模拟构建中出现 Illegal instruction 并超时；预留编号不复用，不把失败草稿当作成功版本。
 - 改用 AMD64、ARM64 原生 runner 并行构建，分别测试 Node.js 与 esbuild，再按两份精确 digest 合成同一版本镜像。两边均成功且清单验证通过后才更新 latest、公开同名更新说明。
 - PR 回归检查增加 ARM64 原生镜像构建与冒烟测试；发布仍不自动部署 NAS。
@@ -52,7 +63,7 @@
 
 | 项目 | 记录 |
 | --- | --- |
-| 自用标签 | 尚未创建；发布时确定 `custom-*` 标签 |
+| 自用标签 | 尚未创建；发布时确定 `xdanmu-v0.N` 标签 |
 | 上游版本 | `1.21.3` |
 | 上游基线 | `fc1b7ff6add61d8af24c9bf978253273833f5afc`（2026-09-26） |
 | 上游合并提交 | `d1cb965598c738ba9018ef6b706f8b42ab8ff8e3`；发布时以 Git 标签所指最终提交为准 |
@@ -75,7 +86,7 @@
 | 本地/远程剧名映射 | `TITLE_MAPPING_TABLE` / `TITLE_MAPPING_TABLE_URL` | 本地优先、缓存读取、定时更新和手动刷新 |
 | 季集与发布组匹配瀑布 | `AUTO_MATCH_MAPPING_TABLE` / `AUTO_MATCH_MAPPING_TABLE_URL` | 目标实际成功才结束；规则与发布组可组合 |
 | 严格标题/季号保护 | 普通匹配及 FongMi 入口 | 排除无关标题及明确的其他季候选 |
-| 人名/地区语境过滤 | `BLOCKED_WORDS`、`BLOCK_DOMESTIC_CELEBRITIES`、`BLOCK_DOMESTIC_REGIONS` | 保留二字人名/地区上下文保护；演员数据来自当前作品 TMDB |
+| 人名/地区语境过滤 | `BLOCKED_WORDS`、`BLOCK_DOMESTIC_CELEBRITIES`、`BLOCK_DOMESTIC_REGIONS` | 二字演员名/地区保留语境保护；角色名按完整名字匹配；名单来自当前作品 TMDB/Bangumi |
 | 渐变弹幕与 danmux 格式 | 自用功能文档中的格式/渐变配置 | 保留服务器转换功能，播放器是否支持需单独验证 |
 | 可选内网免 TOKEN | `TOKEN_AUTH_DISABLED` | 默认仍鉴权；仅受信内网主动开启 |
 | 收藏能力检测和独立映射日志 | 管理界面 / API | 保留自用能力检测、刷新与日志入口 |
@@ -114,7 +125,7 @@
 
 ### 统一源码、镜像和更新说明版本（2026-10-02，待合并发布）
 
-- 自动分配 `custom-YYYY.MM.DD.N`，Git 标签、镜像标签和 Release 同名；NAS 仍然使用 latest。
+- 自动分配 `xdanmu-v0.N`，Git 标签、镜像标签和 Release 同名；NAS 仍然使用 latest。
 - 发布流水线先测试、推送版本镜像并检查双架构清单，再提升 latest；失败/取消不公开成功 Release，旧 latest 不因构建失败而更新。
 - 自动生成相对上次成功发布的提交摘要、文件统计和本文件增量，记录上游版本、源码 SHA、镜像 digest、Actions 链接；首次运行不伪造历史。
 - 自动发布只从 main 运行，串行分配编号；不回写源码、不重复触发标签构建、不自动升级 NAS。旧 SHA 镜像保留，新构建不再使用额外的 build/sha 版本号。
