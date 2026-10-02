@@ -32,15 +32,15 @@ function fixture(t) {
   return { cwd, git, commit, root };
 }
 function successfulRecord() {
-  return { version: 'custom-2026.10.02.1', repository: 'owner/repo', sha: 'a'.repeat(40), image: 'ghcr.io/owner/repo', releaseId: 42,
+  return { version: 'xdanmu-v0.1', repository: 'owner/repo', sha: 'a'.repeat(40), image: 'ghcr.io/owner/repo', releaseId: 42,
     buildOutcome: 'success', verifyOutcome: 'success', digest, runUrl: 'https://github.com/owner/repo/actions/runs/1', upstreamVersion: '1.21.3' };
 }
 
-test('one CalVer identifier uses Beijing date and daily numeric counter', () => {
-  const date = new Date('2026-10-01T16:01:00Z');
-  assert.equal(nextVersion([], date), 'custom-2026.10.02.1');
-  assert.equal(nextVersion(['custom-2026.10.02.2', 'custom-2026.10.02.10', 'custom-2026.10.01.99', 'build-2026.10.02.50.1', 'custom-2026.10.02.bad'], date), 'custom-2026.10.02.11');
-  assert.equal(nextVersion(['custom-2026.10.02.1'], new Date('2026-10-02T16:01:00Z')), 'custom-2026.10.03.1');
+test('xdanmu uses a numeric counter independent of dates and legacy tags', () => {
+  assert.equal(nextVersion([]), 'xdanmu-v0.1');
+  assert.equal(nextVersion(['xdanmu-v0.2', 'xdanmu-v0.10', 'custom-2026.10.02.99', 'xdanmu-v0.bad', 'xdanmu-v0.01']), 'xdanmu-v0.11');
+  assert.equal(nextVersion(['xdanmu-v0.1'], new Date('2027-01-01')), 'xdanmu-v0.2');
+  assert.throws(() => nextVersion(['xdanmu-v0.9007199254740991']), /overflow/);
 });
 
 test('first publication has no invented baseline', t => {
@@ -56,12 +56,12 @@ test('comparison skips failed drafts and unrelated releases, includes all interv
   const f = fixture(t);
   f.git('tag', 'custom-2026.10.02.1');
   f.commit('SELF_USE_CHANGELOG.md', '新增映射规则\n', 'add mapping');
-  f.git('tag', 'custom-2026.10.02.2');
+  f.git('tag', 'xdanmu-v0.2');
   const sha = f.commit('fix.txt', 'fix\n', 'fix source');
   const releases = [
     { id: 1, tag_name: 'custom-2026.10.02.1', body: marker },
-    { id: 2, tag_name: 'custom-2026.10.02.2', body: marker, draft: true },
-    { id: 3, tag_name: 'custom-2026.10.02.2', body: 'not an automated release' },
+    { id: 2, tag_name: 'xdanmu-v0.2', body: marker, draft: true },
+    { id: 3, tag_name: 'xdanmu-v0.2', body: 'not an automated release' },
   ];
   const result = collectChanges({ ...f, sha, releases });
   assert.equal(result.previous.sha, f.root);
@@ -73,13 +73,13 @@ test('comparison skips failed drafts and unrelated releases, includes all interv
 
 test('a newer release on a different branch cannot be the baseline', t => {
   const f = fixture(t);
-  f.git('tag', 'custom-2026.10.02.1');
+  f.git('tag', 'xdanmu-v0.1');
   f.git('checkout', '-b', 'other');
   f.commit('other.txt', 'other', 'other branch');
-  f.git('tag', 'custom-2026.10.02.2');
+  f.git('tag', 'xdanmu-v0.2');
   f.git('checkout', 'main');
   const sha = f.commit('main.txt', 'main', 'main branch');
-  const releases = [1, 2].map(id => ({ id, tag_name: `custom-2026.10.02.${id}`, body: marker }));
+  const releases = [1, 2].map(id => ({ id, tag_name: `xdanmu-v0.${id}`, body: marker }));
   assert.equal(collectChanges({ ...f, sha, releases }).previous.sha, f.root);
 });
 
@@ -87,18 +87,18 @@ test('prepare reserves matching source tag and draft, including previously faile
   const f = fixture(t);
   const calls = [];
   const env = { GITHUB_REPOSITORY: 'owner/repo', GITHUB_REF: 'refs/heads/main', GITHUB_SHA: f.root, GITHUB_RUN_ID: '7', GITHUB_RUN_ATTEMPT: '2' };
-  const options = { ...f, env, now: new Date('2026-10-02T01:00:00Z'), tags: ['custom-2026.10.02.1'], releases: [{ tag_name: 'custom-2026.10.02.2', draft: true }], request: (endpoint, method, data) => {
+  const options = { ...f, env, now: new Date('2026-10-02T01:00:00Z'), tags: ['xdanmu-v0.1'], releases: [{ tag_name: 'xdanmu-v0.2', draft: true }], request: (endpoint, method, data) => {
     calls.push({ endpoint, method, data });
     return method === 'POST' ? { id: 12 } : { object: { sha: f.root } };
   } };
   const record = prepare(options);
-  assert.equal(record.version, 'custom-2026.10.02.3');
-  assert.deepEqual(calls[1].data, { ref: 'refs/tags/custom-2026.10.02.3', sha: f.root });
+  assert.equal(record.version, 'xdanmu-v0.3');
+  assert.deepEqual(calls[1].data, { ref: 'refs/tags/xdanmu-v0.3', sha: f.root });
   assert.equal(calls[2].data.tag_name, record.version);
   assert.equal(calls[2].data.target_commitish, f.root);
   assert.equal(calls[2].data.draft, true);
   assert.equal(record.releaseId, 12);
-  assert.throws(() => prepare({ ...options, env: { ...env, GITHUB_REF: 'refs/tags/custom-2026.10.02.3' } }), /Only main/);
+  assert.throws(() => prepare({ ...options, env: { ...env, GITHUB_REF: 'refs/tags/xdanmu-v0.3' } }), /Only main/);
   assert.throws(() => prepare({ ...options, request: () => ({ object: { sha: 'b'.repeat(40) } }) }), /superseded/);
 });
 
@@ -164,7 +164,7 @@ test('Release API failure after promotion keeps truthful recovery evidence', () 
 });
 
 test('Release response must confirm the exact published version before success is recorded', () => {
-  for (const response of [{ tag_name: 'untagged-temporary', draft: false }, { tag_name: 'custom-2026.10.02.1', draft: true }]) {
+  for (const response of [{ tag_name: 'untagged-temporary', draft: false }, { tag_name: 'xdanmu-v0.1', draft: true }]) {
     const r = successfulRecord();
     assert.throws(() => publish(r, {
       request: (endpoint, method, body) => body?.draft === false ? response : method ? {} : { object: { sha: r.sha } },
@@ -178,7 +178,7 @@ test('Release response must confirm the exact published version before success i
 test('Actions details retain upstream version, NAS status, exact source and digest', () => {
   const r = { ...successfulRecord(), commits: 'abc ``` injected title', imageVerified: true };
   const notes = renderBuildRecord(r);
-  assert.match(notes, /custom-2026\.10\.02\.1/);
+  assert.match(notes, /xdanmu-v0\.1/);
   assert.match(notes, /不是自用版编号/); assert.match(notes, /NAS：未部署/);
   assert.match(notes, new RegExp(`/blob/${r.sha}/SELF_USE_CHANGELOG.md`));
   assert.match(notes, /````text/); assert.doesNotMatch(notes, /build-2026/);

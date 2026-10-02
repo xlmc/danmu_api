@@ -73,6 +73,7 @@ async function applyDomesticCelebrityFilter(danmus, animeTitle) {
   const blockedNames = blockCelebrities ? metadata.names : [];
   if (blockCelebrities) log(metadata.names.length ? 'info' : 'warn', `[system] [danmu] [person-filter] 演员 ${metadata.actorNames.length} 个，角色 ${metadata.characterNames.length} 个，状态 ${metadata.status}${animeTitle ? '' : '（此请求无作品标题）'}`);
   const result = filterDanmusByBlockedNames(danmus, blockedNames, {
+    characterNames: blockCelebrities ? metadata.characterNames : [],
     surnameNames: blockCelebrities ? metadata.actorNames : [],
     surnameMatcherOptions: { bareSurname: false },
     regionNames: blockRegions ? DOMESTIC_REGION_NAMES : []

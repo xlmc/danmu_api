@@ -28,7 +28,7 @@ function getLogCategory(message) {
     if (tags.some(t => t === 'title-mapping')) {
         return 'title-mapping';
     }
-    if (tags.some(t => t === 'blocked-words')) {
+    if (tags.some(t => ['blocked-words', 'person-filter', 'person-metadata', 'domestic-filter'].includes(t))) {
         return 'blocked-words';
     }
     
@@ -149,7 +149,7 @@ function updateFilterUI() {
     const filterContainer = document.getElementById('log-filters');
     let html = \`<button class="filter-btn \${currentLogFilter === 'ALL' ? 'active' : ''}" onclick="setLogFilter('ALL')">ALL</button>\`;
     
-    const currentTags = new Set(['remote-mapping']);
+    const currentTags = new Set(['remote-mapping', 'blocked-words']);
     let lastCategory = 'system';
     logs.forEach(log => {
         let category = log._category;
@@ -166,7 +166,7 @@ function updateFilterUI() {
         const ai = tagOrderMap[a] ?? 99999, bi = tagOrderMap[b] ?? 99999;
         return ai !== bi ? ai - bi : a.localeCompare(b);
     }).forEach(tag => {
-        html += \`<button class="filter-btn \${currentLogFilter === tag ? 'active' : ''}" onclick="setLogFilter('\${tag}')">\${tag}</button>\`;
+        html += \`<button class="filter-btn \${currentLogFilter === tag ? 'active' : ''}" onclick="setLogFilter('\${tag}')">\${tag === 'blocked-words' ? '黑名单屏蔽' : tag}</button>\`;
     });
     
     filterContainer.innerHTML = html;

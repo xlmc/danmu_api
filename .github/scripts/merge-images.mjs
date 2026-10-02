@@ -17,7 +17,7 @@ export function platformSources(image, digests) {
 }
 
 export function mergeImages(record, digests, run) {
-  if (!/^custom-\d{4}\.\d{2}\.\d{2}\.[1-9]\d*$/.test(record.version)) throw new Error('Invalid release version');
+  if (!/^xdanmu-v0\.[1-9]\d*$/.test(record.version)) throw new Error('Invalid release version');
   const sources = platformSources(record.image, digests);
   const target = `${record.image}:${record.version}`;
   run(['buildx', 'imagetools', 'create', '--tag', target, ...sources]);

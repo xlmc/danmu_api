@@ -91,7 +91,7 @@ git fetch /path/to/danmu-api-before-cleanup-2026-10-02.bundle refs/remotes/origi
 
 ### 一个版本号，三个对应位置
 
-`custom-YYYY.MM.DD.N` 同时用于源码 Git 标签、GHCR 镜像标签和 GitHub Release；北京时间日期 + 当天自动序号。`latest` 是部署入口，不是另一个版本号；运行编号/重试次数仅保存在 Actions 中。
+`xdanmu-v0.N` 同时用于源码 Git 标签、GHCR 镜像标签和 GitHub Release；从 `xdanmu-v0.1` 开始自动递增，不使用日期。`latest` 是部署入口，不是另一个版本号；运行编号/重试次数仅保存在 Actions 中。
 
 1. 功能/修复在 PR 中更新 `SELF_USE_CHANGELOG.md` 的“未发布”，记录入口、配置、行为、上游基线、风险和验证结果。
 2. 工作分支运行 `npm test` 并检查 PR CI；审阅后合并 main。

@@ -22,13 +22,13 @@
 例如（不是已发布版本声明）：
 
 ```text
-仓库标签：custom-2026.10.02.1
-镜像标签：ghcr.io/xlmc/danmu_api:custom-2026.10.02.1
+仓库标签：xdanmu-v0.1
+镜像标签：ghcr.io/xlmc/danmu_api:xdanmu-v0.1
 更新说明：GitHub Releases 中同名版本
 NAS 配置：ghcr.io/xlmc/danmu_api:latest（不用跟着改）
 ```
 
-版本格式是 `custom-YYYY.MM.DD.N`，日期使用北京时间，序号自动分配。main 更新后由 Actions 运行测试、构建并检查 `linux/amd64` 和 `linux/arm64` 镜像，成功后更新 latest 并发布同名更新说明。**构建或检查失败不会更新 latest，草稿和预留标签不代表成功发布。**
+版本格式是 `xdanmu-v0.N`，从 `xdanmu-v0.1` 开始，后续按 `v0.2、v0.3…` 递增，不使用日期。main 更新后由 Actions 运行测试、构建并检查 `linux/amd64` 和 `linux/arm64` 镜像，成功后更新 latest 并发布同名更新说明。**构建或检查失败不会更新 latest，草稿和预留标签不代表成功发布。**
 
 - **看版本与更新内容**：[GitHub Releases](https://github.com/xlmc/danmu_api/releases)，包含源码提交、变更摘要、镜像 digest 和构建链接。
 - **看失败/进行中的构建**：[Actions](https://github.com/xlmc/danmu_api/actions/workflows/docker-image.yml)，摘要与附件保留当次状态。
