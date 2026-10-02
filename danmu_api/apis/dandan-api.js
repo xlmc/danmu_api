@@ -86,7 +86,7 @@ async function applyDomesticCelebrityFilter(danmus, animeTitle) {
   }
   if (blockDates) {
     const count = result.hits.filter(hit => hit.name.startsWith('日期:')).reduce((sum, hit) => sum + hit.count, 0);
-    log('info', `[system] [danmu] [blocked-words] 日期规则已拦截 ${count} 条`);
+    log('info', `[system] [danmu] [blocked-words] 日期时间规则已拦截 ${count} 条`);
   }
   if (result.removedCount > 0) {
     log('info', `[system] [danmu] [domestic-filter] 已拦截 ${result.removedCount}/${danmus.length} 条弹幕，命中 ${result.hits.length} 条规则`);
