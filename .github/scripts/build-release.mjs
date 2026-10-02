@@ -53,12 +53,30 @@ export function collectChanges({ cwd = process.cwd(), sha, releases = [] }) {
     previous,
     upstreamVersion: source.match(/VERSION:\s*['"]([^'"]+)['"]/)?.[1] || '未识别',
     commits: git('log', previous ? '-80' : '-1', '--format=%h %s', range),
+    commitSubjects: git('log', '--no-merges', previous ? '-80' : '-1', '--format=%s', range),
     files: previous ? git('diff', '--stat', range) : '',
     changelogDelta: previous ? git('diff', '--unified=2', range, '--', 'SELF_USE_CHANGELOG.md') : '',
   };
 }
 
 export function renderNotes(record) {
+  const additions = (record.changelogDelta || '').split('\n')
+    .filter(line => line.startsWith('+') && !line.startsWith('+++'))
+    .map(line => line.slice(1).trim())
+    .filter(line => /^-\s+\S/.test(line))
+    .map(line => line.replace(/^-\s+/, ''));
+  const subjects = (record.commitSubjects ?? record.commits ?? '').split('\n')
+    .map(line => line.replace(/^[a-f0-9]{7,40}\s+/, '').trim())
+    .filter(line => line && !/^Merge\b/.test(line))
+    .map(line => line.replace(/^(?:feat|fix|docs|test|chore|refactor|perf|build|ci)(?:\([^)]*\))?!?:\s*/i, '')
+      .replace(/</g, '&lt;').replace(/>/g, '&gt;'));
+  const updates = [...new Set(additions.length ? additions : subjects)];
+  return `${MARKER}\n## 更新内容\n\n${updates.length
+    ? updates.slice(0, 80).map(text => `- ${text}`).join('\n')
+    : '- 重新构建镜像，源码无新增提交。'}\n`;
+}
+
+export function renderBuildRecord(record) {
   const base = `https://github.com/${record.repository}`;
   const block = (text, language = 'text') => {
     const clipped = text.length > 16000 ? `${text.slice(0, 16000)}\n[已截断，请查看完整比较链接]` : text;
@@ -161,6 +179,7 @@ function main() {
   const save = record => {
     fs.writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`);
     fs.writeFileSync(path.join(directory, 'release-notes.md'), renderNotes(record));
+    fs.writeFileSync(path.join(directory, 'build-details.md'), renderBuildRecord(record));
   };
   if (mode === 'prepare') {
     const record = prepare();
@@ -187,7 +206,7 @@ function main() {
       });
     } finally {
       save(record);
-      fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n${renderNotes(record)}\n\nRelease 记录状态：${record.releaseRecorded ? '已发布' : '未发布；检查本次日志，草稿不代表成功'}。\n`);
+      fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n${renderBuildRecord(record)}\n\nRelease 记录状态：${record.releaseRecorded ? '已发布' : '未发布；检查本次日志，草稿不代表成功'}。\n`);
     }
   } else throw new Error('Expected prepare, verify or finish');
 }
