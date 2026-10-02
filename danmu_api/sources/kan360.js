@@ -1,3 +1,4 @@
+import { canonicalPlatformName } from '../utils/platform-util.js';
 import BaseSource from './base.js';
 import { globals } from '../configs/globals.js';
 import { log } from "../utils/log-util.js";
@@ -44,7 +45,7 @@ export default class Kan360Source extends BaseSource {
           links.push({
               "name": episodeInfo.id,
               "url": episodeInfo.url,
-              "title": `【${site}】 ${episodeInfo.name} ${episodeInfo.period}`,
+              "title": `【${canonicalPlatformName(site)}】 ${episodeInfo.name} ${episodeInfo.period}`,
               "sort": epNum || episodeInfo.sort || null
           });
         }
@@ -272,11 +273,11 @@ export default class Kan360Source extends BaseSource {
           let links = [];
           if (anime.cat_name === "电影") {
             for (const key of Object.keys(anime.playlinks)) {
-              if (globals.vodAllowedPlatforms.includes(key)) {
+              if (globals.vodAllowedPlatforms.includes(canonicalPlatformName(key))) {
                 links.push({
                   "name": key.toString(),
                   "url": anime.playlinks[key],
-                  "title": `【${key}】 ${anime.titleTxt}(${anime.year})`
+                  "title": `【${canonicalPlatformName(key)}】 ${anime.titleTxt}(${anime.year})`
                 });
               }
             }
@@ -291,7 +292,7 @@ export default class Kan360Source extends BaseSource {
 
             // 尝试使用 seriesPlaylinks（常规情况）
             if (Array.isArray(anime.seriesPlaylinks) && anime.seriesPlaylinks.length > 0) {
-              if (globals.vodAllowedPlatforms.includes(anime.seriesSite)) {
+              if (globals.vodAllowedPlatforms.includes(canonicalPlatformName(anime.seriesSite))) {
                 for (let i = 0; i < anime.seriesPlaylinks.length; i++) {
                   const item = anime.seriesPlaylinks[i];
                   let epUrl = "";
@@ -315,14 +316,14 @@ export default class Kan360Source extends BaseSource {
                   links.push({
                     "name": (i + 1).toString(),
                     "url": epUrl,
-                    "title": `【${anime.seriesSite}】 第${i + 1}集`
+                    "title": `【${canonicalPlatformName(anime.seriesSite)}】 第${i + 1}集`
                   });
                 }
               }
             } else if (anime.playlinks && typeof anime.playlinks === 'object') {
               // 对 playlinks 中的每个 siteKey 优先尝试使用 episodesv2 获取完整分集列表
               for (const siteKey of Object.keys(anime.playlinks)) {
-                if (!globals.vodAllowedPlatforms.includes(siteKey)) continue;
+                if (!globals.vodAllowedPlatforms.includes(canonicalPlatformName(siteKey))) continue;
                 try {
                   const detailId = anime.en_id;
                   const eps = await this.getEpisodesV2(cat, detailId, siteKey);
@@ -331,7 +332,7 @@ export default class Kan360Source extends BaseSource {
                       links.push({
                         name: ep.name,
                         url: ep.url,
-                        title: `【${siteKey}】 第${ep.name}集`,
+                        title: `【${canonicalPlatformName(siteKey)}】 第${ep.name}集`,
                         sort: ep.name
                       });
                     }
@@ -346,7 +347,7 @@ export default class Kan360Source extends BaseSource {
                             links.push({
                               name: ep.name,
                               url: ep.url,
-                              title: `【${siteKey}】 第${ep.name}集`,
+                              title: `【${canonicalPlatformName(siteKey)}】 第${ep.name}集`,
                               sort: ep.name
                             });
                           }
@@ -364,7 +365,7 @@ export default class Kan360Source extends BaseSource {
           } else if (anime.cat_name === "综艺") {
             const zongyiLinks = await Promise.all(
                 Object.keys(anime.playlinks_year).map(async (site) => {
-                  if (globals.vodAllowedPlatforms.includes(site)) {
+                  if (globals.vodAllowedPlatforms.includes(canonicalPlatformName(site))) {
                     const yearLinks = await Promise.all(
                         anime.playlinks_year[site].map(async (year) => {
                           return await this.get360Zongyi(anime.titleTxt, anime.id, site, year);

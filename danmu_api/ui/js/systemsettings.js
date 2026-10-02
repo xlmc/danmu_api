@@ -1,8 +1,10 @@
+import { PLATFORM_ALIASES } from '../../utils/platform-util.js';
 // language=JavaScript
 export const systemSettingsJsContent = /* javascript */ `
 // 全局变量定义
 let isMergeMode = false;
 let stagingTags = [];
+const platformNameAliases = ${JSON.stringify(PLATFORM_ALIASES)};
 
 const UI_THEMES = {
     lavender: '经典默认',
@@ -717,6 +719,24 @@ function getEnvTypeLabel(type) {
            type === 'multi-select' ? '多选' : '文本';
 }
 
+// 平台排序直接复用当前源合并组，旧名称只在读取时规范化。
+function getConfiguredMergePlatforms(options) {
+    const aliases = platformNameAliases;
+    return [...new Set(readLocalEnvValue('MERGE_SOURCE_PAIRS').split(/[,;]/)
+        .map(group => [...new Set(group.split('&').map(source => source.trim()).filter(Boolean)
+            .map(source => aliases[source] || source))])
+        .filter(parts => parts.length > 0 && parts.every(platform => options.includes(platform)))
+        .map(parts => parts.join('&')))];
+}
+
+function useConfiguredMergeOrder() {
+    const item = Object.values(envVariables).flat().find(entry => entry.key === 'PLATFORM_ORDER');
+    if (!item) return;
+    const groups = getConfiguredMergePlatforms(item.options || []);
+    if (groups.length === 0) return;
+    renderValueInput({ ...item, value: groups.join(',') });
+}
+
 // 渲染值输入控件
 function renderValueInput(item) {
     const container = document.getElementById('value-input-container');
@@ -801,11 +821,14 @@ function renderValueInput(item) {
         const stringValue = typeof value === 'string' ? value : String(value || '');
         // 排序配置中重复项没有语义，渲染时顺便清理历史脏数据。
         const selectedValues = stringValue
-            ? [...new Set(stringValue.split(',').map(v => v.trim()).filter(v => v))]
+            ? [...new Set(stringValue.split(',').map(v => v.trim()).filter(v => v)
+                .map(v => currentKey === 'PLATFORM_ORDER' ? [...new Set(v.split('&').map(p => p.trim()).map(p => platformNameAliases[p] || p))].join('&') : v))]
             : [];
         
         // 检查是否为 SOURCE_ORDER，如果是则不显示合并模式
-        const shouldShowMergeMode = currentKey === 'MERGE_SOURCE_PAIRS' || currentKey === 'PLATFORM_ORDER';
+        const shouldShowMergeMode = currentKey === 'MERGE_SOURCE_PAIRS';
+        const configuredMergePlatforms = currentKey === 'PLATFORM_ORDER'
+            ? getConfiguredMergePlatforms(options) : [];
         
         // 每次渲染时重置合并模式状态
         isMergeMode = false;
@@ -845,6 +868,19 @@ function renderValueInput(item) {
                 <div class="staging-area" id="staging-area">
                     <button type="button" class="confirm-merge-btn" onclick="confirmMergeGroup()" title="确认添加该组">\${uiIcon('check')}</button>
                 </div>
+                \` : ''}
+
+                \${currentKey === 'PLATFORM_ORDER' ? \`
+                <label>已配置的源合并组 (点击添加)</label>
+                <div class="form-help">来自 MERGE_SOURCE_PAIRS，点击添加后可拖动排序，保存后生效。</div>
+                <div class="available-tags" id="configured-merge-tags">
+                    \${configuredMergePlatforms.map(group => \`
+                        <div class="available-tag" data-value="\${group}" onclick="addSelectedTag(this)">\${group}</div>
+                    \`).join('')}
+                </div>
+                \${configuredMergePlatforms.length ? \`
+                    <button type="button" class="btn btn-secondary" onclick="useConfiguredMergeOrder()">使用合并组顺序</button>
+                \` : '<div class="form-help">尚未配置源合并组，可先保存 MERGE_SOURCE_PAIRS。</div>'}
                 \` : ''}
 
                 <label>可选项 (点击添加)</label>
@@ -1659,7 +1695,9 @@ function updateTagStates() {
             // [普通模式逻辑]
             // 排序配置按组成源判断，其他多选配置保持完整值精准匹配。
             const isAlreadySelected = preventDuplicateSources
-                ? selectedSourceTokens.has(value)
+                ? (value.includes('&')
+                    ? selectedTagElements.some(el => el.dataset.value === value)
+                    : selectedSourceTokens.has(value))
                 : selectedTagElements.some(el => el.dataset.value === value);
             if (isAlreadySelected) {
                 shouldDisable = true;
@@ -2665,7 +2703,7 @@ document.getElementById('env-form').addEventListener('submit', async function(e)
             getSelectedTagElements().map(el => el.dataset.value).filter(Boolean)
         )];
         value = selectedTags.join(',');
-        const options = Array.from(document.querySelectorAll('.available-tag')).map(el => el.dataset.value);
+        const options = Array.from(document.querySelectorAll('#available-tags .available-tag')).map(el => el.dataset.value);
         itemData = { key, value, description, type, options };
     } else if (type === 'map') {
         // 获取映射表值

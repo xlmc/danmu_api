@@ -171,24 +171,24 @@ WidgetMetadata = {
     // 匹配配置
     {
       name: "platformOrder",
-      title: "平台优选配置，可选['qiyi', 'bilibili1', 'imgo', 'youku', 'qq', 'migu', 'sohu', 'leshi, 'xigua', 'maiduidui', 'aiyifan', 'hongguo', 'renren', 'hanjutv', 'bahamut', 'dandan', 'custom']",
+      title: "平台优选配置，可选['iqiyi', 'bilibili', 'imgo', 'youku', 'tencent', 'migu', 'sohu', 'leshi, 'xigua', 'maiduidui', 'aiyifan', 'hongguo', 'renren', 'hanjutv', 'bahamut', 'dandan', 'custom']",
       type: "input",
       placeholders: [
         {
           title: "配置1",
-          value: "qq,qiyi,imgo,bilibili1,youku,migu,sohu,leshi,xigua,maiduidui,aiyifan,renren,hanjutv,bahamut,dandan,custom",
+          value: "tencent,iqiyi,imgo,bilibili,youku,migu,sohu,leshi,xigua,maiduidui,aiyifan,renren,hanjutv,bahamut,dandan,custom",
         },
         {
           title: "配置2",
-          value: "bilibili1,qq,qiyi,imgo",
+          value: "bilibili,tencent,iqiyi,imgo",
         },
         {
           title: "配置3",
-          value: "dandan,bilibili1,bahamut",
+          value: "dandan,bilibili,bahamut",
         },
         {
           title: "配置4",
-          value: "imgo,qiyi,qq,youku,bilibili1",
+          value: "imgo,iqiyi,tencent,youku,bilibili",
         },
       ],
     },

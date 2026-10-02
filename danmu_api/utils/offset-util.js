@@ -1,14 +1,9 @@
+import { canonicalPlatformName } from './platform-util.js';
 import { normalizeTitleForMatch } from './common-util.js';
 
 // 弹幕时间偏移独立模块
 // 职责：解析链接 @偏移 与偏移规则、匹配偏移量、应用偏移到弹幕
 
-// 来源→平台别名映射（source 名和 platform 名不一致时扩展匹配）
-const SOURCE_ALIASES = {
-  tencent: 'qq',
-  iqiyi: 'qiyi',
-  bilibili: 'bilibili1'
-};
 
 // 规范化季/集编号（S1→S01, E3→E03）
 function normalizeSegment(segment) {
@@ -58,7 +53,7 @@ export function parseOffsetRules(env) {
         sources = null;
         all = true;
       } else {
-        sources = sourcePart.split('&').map(s => s.trim()).filter(Boolean);
+        sources = sourcePart.split('&').map(canonicalPlatformName).filter(Boolean);
         all = false;
         if (sources.length === 0) return null;
       }
@@ -87,7 +82,7 @@ export function parseOffsetRules(env) {
  * @param {string} ctx.anime 剧名
  * @param {string} ctx.season 季（如 S01）
  * @param {string} ctx.episode 集（如 E03）
- * @param {string} ctx.source 来源（如 'bilibili' 或合并来源 'dandan&bilibili1'）
+ * @param {string} ctx.source 来源（如 'bilibili' 或合并来源 'dandan&bilibili'）
  * @returns {number} 偏移秒数，无匹配返回 0
  */
 export function resolveOffset(rules, { anime, season, episode, source }) {
@@ -104,14 +99,13 @@ export function resolveOffset(rules, { anime, season, episode, source }) {
 export function resolveOffsetRule(rules, { anime, season, episode, source }) {
   if (!Array.isArray(rules) || rules.length === 0 || !anime) return null;
 
-  // 拆分合并来源，并展开别名
+  // 拆分合并来源，将旧别名规范化为统一名称
   const sourceKeys = new Set();
   if (source) {
     for (const s of source.split('&')) {
-      const trimmed = s.trim().toLowerCase();
+      const trimmed = canonicalPlatformName(s.trim().toLowerCase());
       if (trimmed) {
         sourceKeys.add(trimmed);
-        if (SOURCE_ALIASES[trimmed]) sourceKeys.add(SOURCE_ALIASES[trimmed]);
       }
     }
   }

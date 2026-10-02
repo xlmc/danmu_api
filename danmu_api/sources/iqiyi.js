@@ -801,7 +801,7 @@ export default class IqiyiSource extends BaseSource {
             links.push({
               "name": ep.order.toString(),
               "url": fullUrl,
-              "title": `【qiyi】 ${ep.title}`
+              "title": `【iqiyi】 ${ep.title}`
             });
           }
 
@@ -911,7 +911,7 @@ export default class IqiyiSource extends BaseSource {
       if (!idMatch) {
         log("error", "[iqiyi] 无法从 URL 中提取 tvid");
         return new SegmentListResponse({
-          "type": "qiyi",
+          "type": "iqiyi",
           "segmentList": []
         });
       }
@@ -933,7 +933,7 @@ export default class IqiyiSource extends BaseSource {
     } catch (error) {
       log("error", "[iqiyi] 请求解码信息失败:", error);
       return new SegmentListResponse({
-        "type": "qiyi",
+        "type": "iqiyi",
         "segmentList": []
       });
     }
@@ -954,7 +954,7 @@ export default class IqiyiSource extends BaseSource {
       if (videoInfo.displayBarrage === false) {
         log("info", "[iqiyi] 爱奇艺视频未开启弹幕");
         return new SegmentListResponse({
-          "type": "qiyi",
+          "type": "iqiyi",
           "duration": duration,
           "segmentList": []
         });
@@ -989,7 +989,7 @@ export default class IqiyiSource extends BaseSource {
     }
     if (!duration) {
       return new SegmentListResponse({
-        "type": "qiyi",
+        "type": "iqiyi",
         "segmentList": []
       });
     }
@@ -1008,7 +1008,7 @@ export default class IqiyiSource extends BaseSource {
       const sign = md5(`${tvid}_${segmentDuration}_${pageNo}cbzuw1259a`).slice(-8);
       const api_url = `https://cmts.iqiyi.com/bullet/${bulletPath}/${tvid}_${segmentDuration}_${pageNo}_${sign}.br`;
       segmentList.push({
-        "type": "qiyi",
+        "type": "iqiyi",
         "segment_start": i * segmentDuration,
         "segment_end": Math.min((i + 1) * segmentDuration, duration),
         "url": api_url
@@ -1016,7 +1016,7 @@ export default class IqiyiSource extends BaseSource {
     }
 
     return new SegmentListResponse({
-      "type": "qiyi",
+      "type": "iqiyi",
       "duration": duration,
       "segmentList": segmentList
     });

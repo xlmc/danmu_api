@@ -595,7 +595,7 @@ export default class TencentSource extends BaseSource {
             links.push({
               "name": (i + 1).toString(),
               "url": fullUrl,
-              "title": `【qq】 ${epTitle}`
+              "title": `【tencent】 ${epTitle}`
             });
           }
 
@@ -765,13 +765,13 @@ export default class TencentSource extends BaseSource {
     } catch (error) {
       if (error.response?.status === 404) {
         return new SegmentListResponse({
-          "type": "qq",
+          "type": "tencent",
           "segmentList": []
         });
       }
       log("error", "[tencent] 请求弹幕基础数据失败:", error);
       return new SegmentListResponse({
-        "type": "qq",
+        "type": "tencent",
         "segmentList": []
       });
     }
@@ -784,7 +784,7 @@ export default class TencentSource extends BaseSource {
     const segmentItems = Object.values(data.segment_index);
     for (const item of segmentItems) {
       segmentList.push({
-        "type": "qq",
+        "type": "tencent",
         "segment_start": (() => {
           const start = Number(item.segment_start) || 0;
           return start / 1000;
@@ -798,7 +798,7 @@ export default class TencentSource extends BaseSource {
     }
 
     return new SegmentListResponse({
-      "type": "qq",
+      "type": "tencent",
       "segmentList": segmentList
     });
   }
