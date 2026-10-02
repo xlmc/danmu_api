@@ -1,3 +1,4 @@
+import { canonicalPlatformName } from '../utils/platform-util.js';
 import { globals } from '../configs/globals.js';
 import { getPageTitle, jsonResponse, httpGet, sourceLogContext, runWithHttpCache, httpCacheContext } from '../utils/http-util.js';
 import { log } from '../utils/log-util.js'
@@ -189,16 +190,16 @@ async function resolveUrlDuration(url) {
     let segmentResult = null;
 
     if (targetUrl.includes('.qq.com')) {
-      segmentResult = await sourceLogContext.run('tencent', () => tencentSource.getComments(targetUrl, 'qq', true));
+      segmentResult = await sourceLogContext.run('tencent', () => tencentSource.getComments(targetUrl, 'tencent', true));
     } else if (targetUrl.includes('.iqiyi.com')) {
-      segmentResult = await sourceLogContext.run('iqiyi', () => iqiyiSource.getComments(targetUrl, 'qiyi', true));
+      segmentResult = await sourceLogContext.run('iqiyi', () => iqiyiSource.getComments(targetUrl, 'iqiyi', true));
     } else if (targetUrl.includes('.mgtv.com')) {
       segmentResult = await sourceLogContext.run('mango', () => mangoSource.getComments(targetUrl, 'imgo', true));
     } else if (targetUrl.includes('.bilibili.com') || targetUrl.includes('b23.tv')) {
       if (targetUrl.includes('b23.tv')) {
         targetUrl = await sourceLogContext.run('bilibili', () => bilibiliSource.resolveB23Link(targetUrl));
       }
-      segmentResult = await sourceLogContext.run('bilibili', () => bilibiliSource.getComments(targetUrl, 'bilibili1', true));
+      segmentResult = await sourceLogContext.run('bilibili', () => bilibiliSource.getComments(targetUrl, 'bilibili', true));
     } else if (targetUrl.includes('.youku.com')) {
       segmentResult = await sourceLogContext.run('youku', () => youkuSource.getComments(targetUrl, 'youku', true));
     } else if (targetUrl.includes('.miguvideo.com')) {
@@ -364,7 +365,7 @@ function checkEpisodeSatisfied(animesList, querySeason, queryEpisode, requestAni
 
   let targetPlatforms = [];
   if (targetPlatform) {
-    targetPlatforms = targetPlatform.split('&').map(s => s.trim().toLowerCase()).filter(s => s);
+    targetPlatforms = targetPlatform.split('&').map(s => canonicalPlatformName(s.trim().toLowerCase())).filter(s => s);
   }
 
   if (targetPlatforms.length === 0) {
@@ -381,7 +382,7 @@ function checkEpisodeSatisfied(animesList, querySeason, queryEpisode, requestAni
     const providedSources = new Set();
 
     for (const anime of animesList) {
-      // 候选平台由番剧身份标签(标题 from 段或 source)与所挂集标签共同决定，使身份名(如tencent)与优选平台名(如qq)不一致但集上挂有目标标签的源也能被正确识别为该平台有数据
+      // 候选平台由番剧身份标签(标题 from 段或 source)与所挂集标签共同决定，同时兼容旧缓存中的平台别名
       const identityPlatform = extractPlatformFromTitle(anime.animeTitle) || anime.source;
       const bData = getBangumiDataForMatch(anime, requestAnimeDetailsMap);
       const epPlatforms = new Set();
@@ -392,7 +393,7 @@ function checkEpisodeSatisfied(animesList, querySeason, queryEpisode, requestAni
         }
       }
       const actualPlatform = [...new Set([identityPlatform, ...epPlatforms].filter(Boolean)
-          .flatMap(p => p.split(/[&＆]/).map(s => s.trim().toLowerCase())).filter(s => s))].join('&');
+          .flatMap(p => p.split(/[&＆]/).map(s => canonicalPlatformName(s.trim().toLowerCase()))).filter(s => s))].join('&');
 
       if (tPlat !== '_any_' && getPlatformMatchScore(actualPlatform, tPlat) === 0) {
         continue;
@@ -753,15 +754,15 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
 
     let platform = "unknown";
     if (queryTitle.includes(".qq.com")) {
-      platform = "qq";
+      platform = "tencent";
     } else if (queryTitle.includes(".iqiyi.com")) {
-      platform = "qiyi";
+      platform = "iqiyi";
     } else if (queryTitle.includes(".mgtv.com")) {
       platform = "imgo";
     } else if (queryTitle.includes(".youku.com")) {
       platform = "youku";
     } else if (queryTitle.includes(".bilibili.com") || queryTitle.includes('b23.tv')) {
-      platform = "bilibili1";
+      platform = "bilibili";
     } else if (queryTitle.includes('.miguvideo.com')) {
       platform = "migu";
     } else if (queryTitle.includes('.sohu.com')) {
@@ -1092,15 +1093,15 @@ export function filterSameEpisodeTitle(filteredTmpEpisodes) {
 /**
  * 计算平台匹配得分 (新增函数 - 用于支持合并源模糊匹配和杂质过滤)
  * @param {string} candidatePlatform 候选平台字符串 (e.g., "bilibili&dandan")
- * @param {string} targetPlatform 目标配置字符串 (e.g., "bilibili1&dandan")
+ * @param {string} targetPlatform 目标配置字符串 (e.g., "bilibili&dandan")
  * @returns {number} 得分：越高越好，0表示不匹配
  */
 function getPlatformMatchScore(candidatePlatform, targetPlatform) {
   if (!candidatePlatform || !targetPlatform) return 0;
 
   // 预处理：按半角/全角 & 分割，转小写去空格并去重，避免合并标题重复标签抬高杂质长度导致评分失真
-  const cParts = [...new Set(candidatePlatform.split(/[&＆]/).map(s => s.trim().toLowerCase()).filter(s => s))];
-  const tParts = [...new Set(targetPlatform.split(/[&＆]/).map(s => s.trim().toLowerCase()).filter(s => s))];
+  const cParts = [...new Set(candidatePlatform.split(/[&＆]/).map(s => canonicalPlatformName(s.trim().toLowerCase())).filter(s => s))];
+  const tParts = [...new Set(targetPlatform.split(/[&＆]/).map(s => canonicalPlatformName(s.trim().toLowerCase())).filter(s => s))];
 
   let matchCount = 0;
 
@@ -1648,11 +1649,11 @@ export async function matchAniAndEp(season, episode, year, searchData, title, re
     // 3. 匹配结果处理与评分比较
     if (matchedEpisode) {
         // 计算当前匹配的得分
-        // 候选平台由番剧身份标签（标题 from 段或 source）与命中集所挂平台标签共同决定，使身份名（如 tencent）与优选平台名（如 qq）不一致但集上挂有该标签的源也能正确加分
+        // 候选平台由番剧身份标签（标题 from 段或 source）与命中集所挂平台标签共同决定，同时兼容旧缓存中的平台别名
         const identityPlatform = extractPlatformFromTitle(anime.animeTitle) || anime.source;
         const epPlatform = matchedEpisode ? extractEpisodeTitle(matchedEpisode.episodeTitle) : null;
         const candidatePlatform = [...new Set([identityPlatform, epPlatform].filter(Boolean)
-            .flatMap(p => p.split(/[&＆]/).map(s => s.trim().toLowerCase())).filter(s => s))].join('&');
+            .flatMap(p => p.split(/[&＆]/).map(s => canonicalPlatformName(s.trim().toLowerCase()))).filter(s => s))].join('&');
         let currentScore = 0;
 
         if (platform) {
@@ -1703,7 +1704,7 @@ export async function matchAniAndEp(season, episode, year, searchData, title, re
       const spillIdentity = extractPlatformFromTitle(spilloverRes.resAnime.animeTitle) || spilloverRes.resAnime.source;
       const spillEpPlatform = spilloverRes.resEpisode ? extractEpisodeTitle(spilloverRes.resEpisode.episodeTitle) : null;
       const spillCandidate = [...new Set([spillIdentity, spillEpPlatform].filter(Boolean)
-          .flatMap(p => p.split(/[&＆]/).map(s => s.trim().toLowerCase())).filter(s => s))].join('&');
+          .flatMap(p => p.split(/[&＆]/).map(s => canonicalPlatformName(s.trim().toLowerCase()))).filter(s => s))].join('&');
       bestRes = {
         episode: spilloverRes.resEpisode,
         anime: spilloverRes.resAnime,
@@ -3192,9 +3193,9 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
 
     // 根据URL域名判断平台并获取弹幕
     if (url.includes('.qq.com')) {
-      danmus = await sourceLogContext.run('tencent', () => tencentSource.getComments(cleanUrl, "qq", segmentFlag));
+      danmus = await sourceLogContext.run('tencent', () => tencentSource.getComments(cleanUrl, "tencent", segmentFlag));
     } else if (url.includes('.iqiyi.com')) {
-      danmus = await sourceLogContext.run('iqiyi', () => iqiyiSource.getComments(cleanUrl, "qiyi", segmentFlag));
+      danmus = await sourceLogContext.run('iqiyi', () => iqiyiSource.getComments(cleanUrl, "iqiyi", segmentFlag));
     } else if (url.includes('.mgtv.com')) {
       danmus = await sourceLogContext.run('mango', () => mangoSource.getComments(cleanUrl, "imgo", segmentFlag));
     } else if (url.includes('.bilibili.com') || url.includes('b23.tv')) {
@@ -3203,7 +3204,7 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
       if (resolvedUrl.includes('b23.tv')) {
         resolvedUrl = await sourceLogContext.run('bilibili', () => bilibiliSource.resolveB23Link(resolvedUrl));
       }
-      danmus = await sourceLogContext.run('bilibili', () => bilibiliSource.getComments(resolvedUrl, "bilibili1", segmentFlag));
+      danmus = await sourceLogContext.run('bilibili', () => bilibiliSource.getComments(resolvedUrl, "bilibili", segmentFlag));
     } else if (url.includes('.youku.com')) {
       danmus = await sourceLogContext.run('youku', () => youkuSource.getComments(cleanUrl, "youku", segmentFlag));
     } else if (url.includes('.miguvideo.com')) {
@@ -3272,7 +3273,7 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
 export async function getSegmentComment(segment, queryFormat) {
   try {
     let url = segment.url;
-    let platform = segment.type;
+    let platform = canonicalPlatformName(segment.type);
 
     // 验证URL参数
     if (!url || typeof url !== 'string') {
@@ -3311,13 +3312,13 @@ export async function getSegmentComment(segment, queryFormat) {
     let danmus = [];
 
     // 根据平台调用相应的分段弹幕获取方法
-    if (platform === "qq") {
+    if (platform === "tencent") {
       danmus = await sourceLogContext.run('tencent', () => tencentSource.getSegmentComments(segment));
-    } else if (platform === "qiyi") {
+    } else if (platform === "iqiyi") {
       danmus = await sourceLogContext.run('iqiyi', () => iqiyiSource.getSegmentComments(segment));
     } else if (platform === "imgo") {
       danmus = await sourceLogContext.run('mango', () => mangoSource.getSegmentComments(segment));
-    } else if (platform === "bilibili1") {
+    } else if (platform === "bilibili") {
       danmus = await sourceLogContext.run('bilibili', () => bilibiliSource.getSegmentComments(segment));
     } else if (platform === "youku") {
       danmus = await sourceLogContext.run('youku', () => youkuSource.getSegmentComments(segment));

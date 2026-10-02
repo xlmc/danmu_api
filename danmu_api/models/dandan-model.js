@@ -1,3 +1,4 @@
+import { canonicalPlatformName, canonicalPlatformTitle } from '../utils/platform-util.js';
 import { validateType } from "../utils/common-util.js";
 
 // =====================
@@ -61,7 +62,7 @@ class Link {
     validateType(id, "number");
 
     // 直接解构并赋值给 this
-    Object.assign(this, { name, url, title, id });
+    Object.assign(this, { name, url, title: canonicalPlatformTitle(title), id });
   }
 
   // ---- 静态方法：从 JSON 创建 Link 对象 ----
@@ -119,7 +120,7 @@ export class AnimeMatch {
 export class Episode {
   constructor({ episodeId = "", episodeTitle = "", url = "" } = {}) {
     this.episodeId = episodeId;
-    this.episodeTitle = episodeTitle;
+    this.episodeTitle = canonicalPlatformTitle(episodeTitle);
     this.url = url;
   }
 }
@@ -291,7 +292,7 @@ export class SegmentListResponse {
     this.segmentList = segmentList.map(segmentData => Segment.fromJson(segmentData));
 
     // 直接解构并赋值给 this
-    Object.assign(this, { type, duration });
+    Object.assign(this, { type: canonicalPlatformName(type), duration });
   }
 
   // ---- 静态方法：从 JSON 创建 SegmentListResponse 对象 ----
@@ -332,7 +333,7 @@ export class Segment {
     if (_m_h5_tk_enc !== undefined) validateType(_m_h5_tk_enc, "string", "_m_h5_tk_enc");
 
     // 直接解构并赋值给 this
-    Object.assign(this, { type, segment_start, segment_end, url, data, _m_h5_tk, _m_h5_tk_enc, animeTitle, sourceUrl });
+    Object.assign(this, { type: canonicalPlatformName(type), segment_start, segment_end, url, data, _m_h5_tk, _m_h5_tk_enc, animeTitle, sourceUrl });
   }
 
   // ---- 静态方法：从 JSON 创建 Segment 对象 ----

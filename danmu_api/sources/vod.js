@@ -1,3 +1,4 @@
+import { canonicalPlatformName } from '../utils/platform-util.js';
 import BaseSource from './base.js';
 import { globals } from '../configs/globals.js';
 import { log } from "../utils/log-util.js";
@@ -186,8 +187,7 @@ export default class VodSource extends BaseSource {
           let vodPlayFromList = anime.vod_play_from.split("$$$");
           vodPlayFromList = vodPlayFromList.map(item => {
             if (item === "mgtv") return "imgo";
-            if (item === "bilibili") return "bilibili1";
-            return item;
+            return canonicalPlatformName(item);
           });
 
           const vodPlayUrlList = anime.vod_play_url.split("$$$");

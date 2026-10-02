@@ -1,3 +1,4 @@
+import { canonicalPlatformName } from './platform-util.js';
 const NON_RULE_TITLE_CHARACTERS = (() => {
   try {
     return new RegExp('[^\\p{L}\\p{N}]', 'gu');
@@ -120,7 +121,7 @@ function parseEpisodeSide(value, { allowPlatform = false, allowReleaseGroup = fa
   if (allowPlatform) {
     const platformMatch = text.match(/\s+@([a-zA-Z0-9_-]+)\s*$/);
     if (platformMatch) {
-      platform = platformMatch[1].toLowerCase();
+      platform = canonicalPlatformName(platformMatch[1].toLowerCase());
       text = text.slice(0, platformMatch.index).trim();
     }
   }
@@ -176,7 +177,7 @@ function parseTargetTitle(value) {
 export function parseAutoMatchMappingRules(value, allowedPlatforms = []) {
   const rules = [];
   const warnings = [];
-  const allowed = new Set((allowedPlatforms || []).map(item => String(item).toLowerCase()));
+  const allowed = new Set((allowedPlatforms || []).map(item => canonicalPlatformName(String(item).toLowerCase())));
 
   for (const [index, rawRule] of splitRuleEntries(value).entries()) {
     const text = rawRule.trim();

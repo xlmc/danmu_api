@@ -78,7 +78,7 @@ test('真实命名：紧凑标题映射命中后，腾讯分集季号证据选�
     const result = await match();
     assert.equal(result.isMatched, true);
     assert.equal(result.matches[0].animeId, 7001);
-    assert.equal(result.matches[0].episodeTitle, '【qq】 诛仙4_09');
+    assert.equal(result.matches[0].episodeTitle, '【tencent】 诛仙4_09');
     assert.ok(Globals.logBuffer.some(line => JSON.stringify(line).includes('本机标题映射')));
     assert.equal(networkCalls, 0);
   } finally { restore(); }
