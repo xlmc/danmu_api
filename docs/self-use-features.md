@@ -56,7 +56,7 @@
 
 - 收藏列表接口返回 `favoriteSupported`，用于声明当前部署是否具备持久化收藏能力。
 
-- 在 serverless 平台未配置 Redis 时，收藏相关 UI 会禁用并提示配置 `UPSTASH_REDIS_REST_URL` 与 `UPSTASH_REDIS_REST_TOKEN`。
+- NAS 部署挂载 `/app/.cache` 以持久化收藏；接口仍保留上游的能力检测，避免存储不可用时误报支持。
 
 ## 渐变彩色弹幕
 

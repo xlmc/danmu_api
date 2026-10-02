@@ -1,4 +1,6 @@
-# 自用版部署、迁移与回滚
+# NAS 自用版部署、迁移与回滚
+
+本仓库仅维护 NAS Docker Compose 部署，统一使用根目录的 [compose.nas.yml](../compose.nas.yml)。首次部署和启动命令见 [README](../README.md#nas-部署唯一维护方式)；本文补充已有 NAS 的迁移、独立测试和回滚步骤。
 
 ## 镜像来源
 
@@ -14,21 +16,12 @@
 
 共享目录：`\\192.168.31.9\docker\logvar`；NAS 实际路径：`/volume1/docker/logvar`。
 
-原配置的核心部分：
+既有生产镜像是 `logvar/danmu-api:latest`（仅为迁移前的历史记录，不是本仓库发布镜像）。原端口 `29321:9321`，原挂载如下，升级时保持不变：
 
-```yaml
-services:
-  danmu-api:
-    image: logvar/danmu-api:latest
-    ports:
-      - "29321:9321"
-    volumes:
-      - /volume1/docker/logvar/data/config:/app/config
-      - /volume1/docker/logvar/data/.cache:/app/.cache
-    restart: unless-stopped
-```
+- `/volume1/docker/logvar/data/config:/app/config`
+- `/volume1/docker/logvar/data/.cache:/app/.cache`
 
-这段是旧生产状态说明，不是推荐继续使用 Docker Hub。
+不要把新模板直接作为第二个生产项目启动：两个容器不能同时写这些目录。保留旧 Compose 中已有的环境变量、网络或其他自定义设置；新模板是最小配置，不覆盖旧配置。
 
 ## 迁移顺序
 
@@ -37,7 +30,7 @@ services:
 3. 准备已经构建成功的 GHCR SHA/custom 标签，把旧数据**复制**到独立测试目录。
 4. 用独立容器名、端口 `29322` 和独立数据副本测试；不要让两个容器共享生产可写目录。
 5. 测试管理端登录/鉴权、已知剧名和季集规则、弹幕获取、收藏、过滤及本地弹幕上传；记录异常与版本。
-6. 验收后停止旧容器，仅替换生产 compose 中的 `image` 行，保留 `29321:9321` 和原挂载路径；拉取后重建容器。
+6. 验收后停止旧容器，仅替换生产 compose 中的 `image` 行（使用本仓库模板时设置 `DANMU_API_IMAGE`），保留 `29321:9321` 和原挂载路径；拉取后重建容器。
 7. 将实际部署标签、digest、日期及结果补充到版本说明或 GitHub Release。
 
 测试 compose 示例（先替换占位镜像；测试数据需预先准备）：

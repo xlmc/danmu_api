@@ -1,0 +1,11 @@
+# NAS 唯一部署模板；在 NAS 上设置已验证的 SHA/custom 镜像或 digest 后再运行。
+# 迁移前备份；不要与旧生产容器同时使用这些可写挂载。
+services:
+  danmu-api:
+    image: ${DANMU_API_IMAGE:?请设置已验证的 GHCR 镜像标签或 digest}
+    ports:
+      - "29321:9321"
+    volumes:
+      - /volume1/docker/logvar/data/config:/app/config
+      - /volume1/docker/logvar/data/.cache:/app/.cache
+    restart: unless-stopped

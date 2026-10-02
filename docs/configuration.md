@@ -1,57 +1,18 @@
-<!-- 上游配置参考：huangxd-/danmu_api@fc1b7ff6add61d8af24c9bf978253273833f5afc。自用差异见 self-use-features.md。 -->
+# NAS 自用版配置参考
 
-> 这是上游手册的参考快照，其中 Docker Hub 镜像、发布链接和社区信息属于上游。自用 GHCR 部署请看 [部署说明](deployment.md)，自用功能差异请看 [自用功能说明](self-use-features.md)。
+以已合入上游 `1.21.3`（`fc1b7ff6add61d8af24c9bf978253273833f5afc`）的 API 与配置说明为基础整理，不再保留上游多平台部署教程、部署按钮及官方镜像启动脚本。
 
-<div align="center">
-  <img src="https://i.mji.rip/2025/09/27/eedc7b701c0fa5c1f7c175b22f441ad9.jpeg" alt="Clash" width="128" style="border-radius: 16px;" />
-</div>
+部署统一见 [README](../README.md#nas-部署唯一维护方式) 和 [NAS 迁移与回滚](deployment.md)。自用差异见 [自用功能](self-use-features.md)，配置示例见 [config/.env.example](../config/.env.example)。下次同步上游时按 API/配置变动更新本页，不整段复制上游部署说明。
 
-<h2 align="center">
-LogVar 弹幕 API 服务器
-</h2>
-
-[![GitHub](https://img.shields.io/badge/-GitHub-181717?logo=github)](https://github.com/huangxd-/danmu_api)
-![GitHub forks](https://img.shields.io/github/forks/huangxd-/danmu_api)
-![GitHub Repo stars](https://img.shields.io/github/stars/huangxd-/danmu_api)
-![GitHub License](https://img.shields.io/github/license/huangxd-/danmu_api)
-![Docker Image Version](https://img.shields.io/docker/v/logvar/danmu-api?sort=semver)
-![Docker Pulls](https://img.shields.io/docker/pulls/logvar/danmu-api)
-[![telegram](https://img.shields.io/static/v1?label=telegram&message=telegram_channel&color=blue)](https://t.me/logvar_danmu_channel)
-[![telegram](https://img.shields.io/static/v1?label=telegram&message=telegram_group&color=blue)](https://t.me/logvar_danmu_group)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/huangxd-/danmu_api)
-
----
-
-一个人人都能部署的基于 js 的弹幕 API 服务器，支持爱优腾芒哔咪人韩巴狐乐西埋帆红弹幕直接获取，兼容弹弹play的搜索、详情查询和弹幕获取接口规范，并提供日志记录，支持vercel/netlify/edgeone/cloudflare/docker/hf等部署方式，不用提前下载弹幕，没有nas或小鸡也能一键部署。
-
-本项目仅为个人学习爱好开发，代码开源。如有任何侵权行为，请联系本人删除。
-
-有问题提issue或 [私信机器人](https://t.me/ddjdd_bot) 都ok。
-
-新加了 [tg频道](https://t.me/logvar_danmu_channel) ，方便发送更新通知，以及群组，太多人私信咨询了，索性增加一个 [互助群](https://t.me/logvar_danmu_group) ，大家有问题可以在群里求助。
-
-> 请不要在国内媒体平台宣传本项目！
-
-# 目录
+## 目录
 
 - [功能](#功能)
-- [前置条件](#前置条件)
-- [本地运行](#本地运行)
-- [使用 Docker 运行](#使用-docker-运行)
-- [Docker 一键启动 【推荐】](#docker-一键启动-推荐)
-- [部署到 Vercel 【推荐】](#部署到-vercel-推荐)
-- [部署到 Netlify](#部署到-netlify)
-- [部署到 腾讯云 edgeone pages](#部署到-腾讯云-edgeone-pages)
-- [部署到 Cloudflare](#部署到-cloudflare)
-- [部署到 Hugging Face Spaces](#部署到-hugging-face-spaces)
-- [API食用指南](#api食用指南)
+- [API 食用指南](#api食用指南)
 - [环境变量列表](#环境变量列表)
 - [采集源及对应平台列表](#采集源及对应平台列表)
-- [项目结构](#项目结构)
 - [注意事项](#注意事项)
-- [关联项目](#关联项目)
-- [特别感谢](#特别感谢)
-- [贡献者](#贡献者)
+
+下文“平台”包含弹幕来源与保留的上游兼容字段，不代表本仓库仍提供对应的云部署方式。部署平台专用变量无需为 NAS 额外配置。
 
 ## 功能
 - **API 接口**：
@@ -75,7 +36,7 @@ LogVar 弹幕 API 服务器
   - `GET /api/v2/local-danmu/list`：获取已上传的本地弹幕资源及按标题、年份、类型、季分组的列表。
   - `GET /api/v2/local-danmu/:resourceKey`：获取指定本地弹幕资源的元数据；`DELETE /api/v2/local-danmu/:resourceKey`：删除资源。
   - `PATCH /api/v2/local-danmu/:resourceKey`：编辑本地弹幕元数据；`scope=resource` 修改集数和显示文件名，`scope=group` 修改当前季的标题、年份、类型和季数。目标资源已存在时返回冲突错误，不会覆盖原文件。
-  - 本地弹幕接口需要 `TOKEN` 或 `ADMIN_TOKEN`。默认仅管理员可上传和删除；设置 `LOCAL_DANMU_NOT_REQUIRE_ADMIN=true` 后，普通 `TOKEN` 也可执行上传和删除。Node/Docker 将资源保存到 `.cache/local-danmu`，云端部署使用 Redis 持久化。
+  - 本地弹幕接口需要 `TOKEN` 或 `ADMIN_TOKEN`。默认仅管理员可上传和删除；设置 `LOCAL_DANMU_NOT_REQUIRE_ADMIN=true` 后，普通 `TOKEN` 也可执行上传和删除。Node/Docker 将资源保存到 `.cache/local-danmu`。
 - **弹幕格式输出**：支持 JSON 和 XML 及 [@dan-uni/dan-any](https://github.com/ani-uni/dan-any)支持的全部输出格式 输出，通过以下方式配置：
   - 环境变量：`DANMU_OUTPUT_FORMAT=json|xml|artplayer.json|baha.json|bili.xml|danuni.json|danuni.binpb|ddplay.json|dplayer.json|vod.json`（默认：json）
   - 查询参数：`?format=xml` 或 `?format=json` ...（优先级最高）
@@ -92,7 +53,7 @@ LogVar 弹幕 API 服务器
   - 收藏不受 `SEARCH_CACHE_MINUTES`、普通搜索缓存 500 条上限或过期清理影响。
   - 支持定时刷新收藏：在“收藏”标签页点击“定时刷新”按钮，选择每天或每周（1-7 对应周一至周日）与执行时间，固定按北京时间（`Asia/Shanghai`）运行；已配置的条目按钮会显示类似“每天 03:00”“周一 03:00”，条目下方显示下次执行时间和最近状态。
   - 定时刷新失败会保留旧缓存并在 10 分钟后自动重试一次，仍失败则等待下一个正常周期，不再继续重试；服务停机错过执行时间时，重启后只补执行一次并重新计算下一周期。
-  - 定时刷新计划随收藏一起保存在 `.cache/favoritesCache` 或 Redis 中，Node/Docker 重启后如需保留请挂载 `.cache` 目录或配置 Upstash Redis；纯内存收藏及计划会随进程重启丢失。Vercel、Cloudflare、Netlify、EdgeOne、Hugging Face 等 serverless 平台不启动调度器，按钮会禁用并提示“仅支持 Node/Docker 部署”。
+  - 定时刷新计划随收藏一起保存在 `.cache/favoritesCache` 或 Redis 中，Node/Docker 重启后如需保留请挂载 `.cache` 目录或配置 Upstash Redis；纯内存收藏及计划会随进程重启丢失。
   - Node/Docker 部署会写入 `.cache/favoritesCache` 永久保存，请挂载 `.cache` 目录；serverless 平台必须配置 Redis 才启用收藏按钮，否则界面会置灰并提示配置 `UPSTASH_REDIS_REST_URL`、`UPSTASH_REDIS_REST_TOKEN`。配置 Redis 后可跨冷启动和实例恢复。
 - **智能缓存管理**：支持内存缓存搜索结果和弹幕数据，避免短期内重复的不必要API请求。包括：
   - 搜索结果缓存（可通过 `SEARCH_CACHE_MINUTES` 配置，默认1分钟）
@@ -102,7 +63,7 @@ LogVar 弹幕 API 服务器
   - Redis 分布式缓存支持，包括本地redis和upstash redis（可选）
   - 配置redis可持久化原有查询信息和永久收藏；搜索结果与弹幕缓存仍只保存在实例内存中，不会写入 Redis
   - 本地和Docker部署支持实时保存缓存到文件（挂载.cache目录即可）
-- **部署支持**：支持本地运行、Docker 容器化、Vercel 一键部署、Netlify 一键部署、Edgeone 一键部署、Cloudflare 一键部署、Hugging Face Spaces部署和 Docker 一键启动。
+- **部署支持**：本自用版仅维护 NAS Docker Compose，见 [README](../README.md)。
 - **手动选择记忆**：支持记住之前搜索title时手动选择的anime，并在后续的match自动匹配时优选该anime，支持记住集episode，下次自动匹配时会对集进行偏移【实验性】。
 - **手动搜索支持输入播放链接获取弹幕**：支持手动搜索的播放器输入爱优腾芒哔咪狐乐西埋巴Ani红播放链接可获取弹幕，如`senplayer`。
   - 支持空格分隔多个链接合并弹幕，例如：`https://www.iqiyi.com/v_xxx.html https://v.qq.com/x/cover/xxx.html`
@@ -127,270 +88,6 @@ LogVar 弹幕 API 服务器
   - 请求记录
   - 本地弹幕上传、列表管理和删除
   - 系统管理
-
-## 前置条件
-- Node.js（v18.0.0 或更高版本；理论兼容更低版本，请自行测试）
-- npm
-- Docker（可选，用于容器化部署）
-
-## 本地运行
-1. **克隆仓库**：
-   ```bash
-   git clone <仓库地址>
-   cd <项目目录>
-   ```
-
-2. **安装依赖**：
-   ```bash
-   npm install
-   ```
-
-3. **配置应用**（可选）：
-
-   本项目支持两种配置方式，优先级从高到低：
-   1. **系统环境变量**（最高优先级）
-   2. **.env 文件**（低优先级）- 复制 `config/.env.example` 为 `config/.env` 并修改
-
-4. **启动服务器**：
-   ```bash
-   npm start
-   ```
-   服务器将在 `http://{ip}:9321` 运行，默认token是`87654321`。Node 服务默认通过 `::` 同时监听 IPv6 和 IPv4；不支持 IPv6 绑定时会自动回退到 `0.0.0.0`。IPv6 地址访问格式为 `http://[IPv6地址]:9321`。若操作系统强制启用了 `IPV6_V6ONLY`，需调整系统网络策略后才能通过同一监听端口接受 IPv4 连接。
-   如需修改端口，可设置环境变量 `DANMU_API_PORT`（例如 `DANMU_API_PORT=8080 npm start`）。
-   HTTPS 反向代理应传递 `X-Forwarded-Proto`；无法传递时可设置 `DANMU_API_PUBLIC_PROTO=https`，用于生成正确的对外弹幕链接。
-
-   **热更新支持**：修改 `config/.env`，应用会自动检测并重新加载配置（无需重启应用）。
-
-   或者使用下面的命令
-   ```bash
-   # 启动
-   node ./danmu_api/server.js
-   # 测试
-   node --test ./danmu_api/worker.test.js
-   # 构建forward弹幕插件
-   node build-forward-widget.js
-   # 测试forward弹幕插件
-   node forward/forward-widget.test.js
-   ```
-
-5. **测试 API**：
-   使用 Postman 或 curl 测试：
-   - `GET http://{ip}:9321/87654321`
-   - `GET http://{ip}:9321/87654321/api/v2/search/anime?keyword=生万物`
-   - `POST http://{ip}:9321/87654321/api/v2/match`
-   - `GET http://{ip}:9321/87654321/api/v2/search/episodes?anime=生万物`
-   - `GET http://{ip}:9321/87654321/api/v2/bangumi/1`
-   - `GET http://{ip}:9321/87654321/api/v2/comment/1?format=json`
-   - `GET http://{ip}:9321/87654321/api/v2/comment/1?format=json&duration=true`
-   - `GET http://{ip}:9321/87654321/api/v2/comment?url=https://v.qq.com/x/cover/xxx.html&format=json`
-   - `GET http://{ip}:9321/87654321/api/v2/extcomment?url=https://v.qq.com/x/cover/xxx.html&format=json`
-   - `POST http://{ip}:9321/87654321/api/v2/segmentcomment?format=json` (请求体包含segment类JSON数据，示例 `{"type": "qq","segment_start":0,"segment_end":30000,"url":"https://dm.video.qq.com/barrage/segment/j0032ubhl9s/t/v1/0/30000"}` )
-   - `GET http://{ip}:9321/87654321/api/logs`
-   > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`http://{ip}:9321/api/v2/search/anime?keyword=生万物`
-
-### Forward 真机调试
-
-在电脑上启动实时日志接收服务：
-
-```bash
-node danmu_api/server.js
-```
-
-再在另一个终端生成可与正式插件并存的 debug bundle：
-
-```bash
-node build-forward-widget.js --debug
-```
-
-在 Forward 中安装 `dist/logvar-danmu.debug.js`，将 `debugEndpoint` 配置为带 token 的电脑局域网地址，例如 `http://192.168.1.10:9321/87654321`。不要填写 `127.0.0.1`，它在手机上指向手机自身。
-
-真机复现时，handler 开始/结束、参数、结果摘要、`info/warn/error`、直接 `console` 输出，以及所有 HTTP GET/POST 的 URL、状态、耗时和异常会实时显示在服务端终端。相同内容也会以 `[ForwardRemote]` 前缀写入 `/api/logs`：
-
-```text
-GET http://127.0.0.1:9321/87654321/api/logs
-```
-
-服务端不会保存 trace session，也不提供回放接口。正式 bundle 不包含日志回传代码；Cookie、token 和 API key 会在上传前脱敏。日志回传失败不会影响弹幕主流程。
-
-## 使用 Docker 运行
-1. **构建 Docker 镜像**：
-   ```bash
-   docker build -t danmu-api .
-   ```
-
-2. **运行容器**：
-   ```bash
-   docker run -d -p 9321:9321 --name danmu-api -e TOKEN=87654321 danmu-api
-   ```
-   - 使用`-e TOKEN=87654321`设置`TOKEN`环境变量，覆盖Dockerfile中的默认值。
-   - 或使用 `--env-file .env` 加载 .env 文件中的所有环境变量：`docker run -d -p 9321:9321 --name danmu-api --env-file .env danmu-api`
-
-   > 容器内服务默认启用 IPv4/IPv6 双栈监听。通过 IPv6 从宿主机访问时，Docker 守护进程及容器网络也需要启用 IPv6；否则仍可正常使用 IPv4。
-
-   **热更新支持**：如需支持环境变量热更新（修改 `.env` 文件后无需重启容器），请使用 Volume 挂载：
-   ```bash
-   docker run -d -p 9321:9321 --name danmu-api -v $(pwd)/.env:/app/.env --env-file .env danmu-api
-   ```
-
-   > **推荐**：使用 docker compose 部署可以更方便地管理配置和支持热更新，详见下方"Docker 一键启动"部分。
-
-3. **测试 API**：
-   使用 `http://{ip}:9321/{TOKEN}` 访问上述 API 接口。
-   > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`http://{ip}:9321/api/v2/search/anime?keyword=生万物`
-
-## Docker 一键启动 【推荐】
-1. **拉取镜像**：
-   ```bash
-   docker pull logvar/danmu-api:latest
-   ```
-
-2. **运行容器**：
-   ```bash
-   docker run -d -p 9321:9321 --name danmu-api -e TOKEN=87654321 logvar/danmu-api:latest
-   ```
-   - 使用`-e TOKEN=87654321`设置`TOKEN`环境变量。
-   - 或使用 `--env-file .env` 加载 .env 文件中的所有环境变量：`docker run -d -p 9321:9321 --name danmu-api --env-file .env logvar/danmu-api:latest`
-
-   **热更新支持**：如需支持环境变量热更新（修改 `config/.env` 文件后无需重启容器），请使用 Volume 挂载：
-   ```bash
-   docker run -d -p 9321:9321 --name danmu-api -v $(pwd)/config:/app/config --env-file .env logvar/danmu-api:latest
-   ```
-
-   或使用 docker compose 部署（**推荐，支持环境变量热更新**）：
-   ```yaml
-   services:
-     danmu-api:
-       image: logvar/danmu-api:latest
-       ports:
-         - "9321:9321"
-       # 热更新支持：挂载 config/.env 文件，修改后容器会自动重新加载配置（无需重启容器）
-       volumes:
-         - ./config:/app/config    # config目录下需要创建.env
-         - ./.chche:/app/.cache    # 配置.chche目录，会将缓存实时保存在本地文件
-       restart: unless-stopped
-   ```
-
-   可以使用 watchtower 监控有新版本自动更新：
-   ```yaml
-   services:
-     watchtower:
-       image: nickfedor/watchtower
-       container_name: watchtower-gx
-       restart: always
-       volumes:
-         - /var/run/docker.sock:/var/run/docker.sock
-       environment:
-         - TZ=Asia/Shanghai  # 保持时区正确
-       command:
-         - --cleanup         # 更新后清理旧镜像
-         - --interval        # 间隔参数
-         - "12600"           # 30分钟（1800秒），适合测试
-         - danmu-api         # 监控的目标容器名
-   ```
-
-3. **测试 API**：
-   使用 `http://{ip}:9321/{TOKEN}` 访问上述 API 接口。
-   > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`http://{ip}:9321/api/v2/search/anime?keyword=生万物`
-
-### 一键安装脚本
-`bash <(curl -fsSL https://raw.githubusercontent.com/dukiii1928/danmu-install/refs/heads/main/install.sh)`
-
-## 安卓App
-请前往 @lilixu3 的项目 [danmu-api-android](https://github.com/lilixu3/danmu-api-android/releases) 下载
-
-## 部署到 Vercel 【推荐】
-
-### 一键部署
-点击以下按钮即可将项目快速部署到 Vercel：
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/huangxd-/danmu_api&project-name=danmu_api&repository-name=danmu_api)
-
-**注意**：请将按钮链接中的 `https://github.com/huangxd-/danmu_api` 替换为你的实际 Git 仓库地址。编辑 `README.md` 并更新链接后，推送到仓库，点击按钮即可自动克隆和部署。
-- **设置环境变量**：部署后，在 Vercel 仪表板中：
-  1. 转到你的项目设置。
-  2. 在“Environment Variables”部分添加 `TOKEN` 变量，输入你的 API 令牌值。
-  3. 保存更改并重新部署。
-- 示例请求：`https://{your_domain}.vercel.app/87654321/api/v2/search/anime?keyword=子夜归`
-  > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`https://{your_domain}.vercel.app/api/v2/search/anime?keyword=子夜归`
-
-### 优化点
-- Settings > Functions > Advanced Setting > Function Region 切换为 新加坡/韩国/日本等，能提高访问速度，体验更优
-  > hk有可能访问不了360或其他源，可以尝试切其他region
-- vercel在国内被墙，请配合代理或绑定自定义域名使用
-
-## 部署到 Netlify
-
-> ⚠️ **风险提示：Netlify 存在封号风险！**
->
-> Netlify 对将免费额度用于「API 代理 / 弹幕转发」这类服务的容忍度较低，此类用途可能被判定为违反其服务条款（ToS），轻则限速，重则**直接封禁账号**。请在知悉风险后再决定是否使用：不要把重要域名或长期服务完全押在 Netlify 上，更稳妥可优先选择 Vercel 或自建 Docker 部署。
-
-### 一键部署
-点击以下按钮即可将项目快速部署到 Netlify：
-
-<a href="https://app.netlify.com/start/deploy?repository=https://github.com/huangxd-/danmu_api"><img src="https://www.netlify.com/img/deploy/button.svg"></a>
-
-> 默认访问domain：https://{你的部署项目名}.netlify.app
-> > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`https://{你的部署项目名}.netlify.app/api/v2/search/anime?keyword=子夜归`
-
-- **设置环境变量**：部署后，在 Netlify 仪表板中：
-  1. 点击Project configuration。
-  2. 在“Environment variables”部分点击 “Add a variable” 添加 `TOKEN` 变量，输入你的 API 令牌值。
-  3. 保存更改并重新部署。
-
-## 部署到 腾讯云 edgeone pages
-
-### 一键部署
-[![使用 EdgeOne Pages 部署](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://console.cloud.tencent.com/edgeone/pages/new?template=https://github.com/huangxd-/danmu_api&project-name=danmu-api&root-directory=.%2F&env=TOKEN)
-
-> 注意：部署时请在环境变量配置区域填写你的TOKEN值，该变量将用于API服务的身份验证相关功能
->
-> 示例请求：`https://{your_domain}/{TOKEN}/api/v2/search/anime?keyword=子夜归`确认是否部署成功
-> > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`https://{your_domain}.vercel.app/api/v2/search/anime?keyword=子夜归`
->
-> 部署的时候项目加速区域最好设置为"全球可用区（不含中国大陆）"，不然不绑定自定义域名貌似只能生成3小时的预览链接？[相关文档](https://edgeone.cloud.tencent.com/pages/document/175191784523485184)
->
-> 也可直接用国际站的部署按钮一键部署，默认选择"全球可用区（不含中国大陆）" [![使用 EdgeOne Pages 部署](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://edgeone.ai/pages/new?template=https://github.com/huangxd-/danmu_api&project-name=danmu-api&root-directory=.%2F&env=TOKEN)
->
-<img src="https://i.mji.rip/2025/09/17/3a675876dabb92e4ce45c10d543ce66b.png" style="width:400px" />
-
-> 如果每次访问都遇到404等问题，可能是edgeone pages修改了访问策略，每次接口请求都转发到了新的环境，没有缓存，导致获取不到对应的弹幕，推荐用vercel/netlify部署。
->
-> 解决方法：请配置环境变量`UPSTASH_REDIS_REST_URL`和`UPSTASH_REDIS_REST_TOKEN`，开启upstash redis存储
-
-## 部署到 Cloudflare
-
-### 一键部署
-点击以下按钮即可将项目快速部署到 Cloudflare：
-
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/huangxd-/danmu_api)
-
-**注意**：请将按钮链接中的 `https://github.com/huangxd-/danmu_api` 替换为你的实际 Git 仓库地址。编辑 `README.md` 并更新链接后，推送到仓库，点击按钮即可自动克隆和部署。
-- **设置环境变量**：部署后，在 Cloudflare 仪表板中：
-  1. 转到你的 Workers 项目。
-  2. 转到“Settings” > “Variables”。
-  3. 添加 `TOKEN` 环境变量，输入你的 API 令牌值。
-  4. 保存并部署。
-- 示例请求：`https://{your_domain}.workers.dev/87654321/api/v2/search/anime?keyword=子夜归`
-  > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`https://{your_domain}.workers.dev/api/v2/search/anime?keyword=子夜归`
-
-### ~~手动部署~~
-~~创建一个worker，将`danmu_api/worker.js`里的代码直接拷贝到你创建的`worker.js`里，然后点击部署。~~
-
-> cf部署可能不稳定，推荐用vercel/netlify部署。
-
-## 部署到 Hugging Face Spaces
-
-### Docker 部署
-1. 在 Hugging Face 创建 Space，SDK 选择 **Docker**。
-2. 将仓库代码推送到 Space 仓库，或在 Space 中连接/同步你的 Git 仓库。
-3. 在 Space Settings > Variables and secrets 中至少添加 `TOKEN` 环境变量。
-4. 如果需要在 UI 中保存环境变量并触发重启，额外添加：
-   - `DEPLOY_PLATFROM_ACCOUNT`: Hugging Face 用户名或组织名
-   - `DEPLOY_PLATFROM_PROJECT`: Space 名称
-   - `DEPLOY_PLATFROM_TOKEN`: 具备目标 Space 写入权限的 User Access Token
-
-- 示例请求：`https://{account}-{space}.hf.space/87654321/api/v2/search/anime?keyword=子夜归`
-  > 注意：TOKEN为默认87654321的情况下，可不带{TOKEN}请求，如`https://{account}-{space}.hf.space/api/v2/search/anime?keyword=子夜归`
 
 ## API食用指南
 支持 forward/senplayer/hills/小幻/yamby/eplayerx/afusekt/uz影视/dscloud/lenna/danmaku-anywhere/omnibox/ChaiChaiEmbyTV/moontv/capyplayer/kerkerker/LinPlayer/peekpili/FengMi影视 等支持弹幕API的播放器。
@@ -492,12 +189,12 @@ API 支持返回 Bilibili 标准 XML 格式的弹幕数据，通过查询参数 
 | DANMU_SIMPLIFIED_TRADITIONAL    | 【可选】弹幕简繁体转换设置：default（默认不转换）、simplified（繁转简）、traditional（简转繁）       |
 | DANMU_OFFSET      | 【可选】弹幕时间偏移配置，用于解决弹幕与视频不同步的问题。格式：剧名:秒（全剧偏移）或 剧名/季:秒（整季偏移）或 剧名/季/集:秒（单集偏移），支持指定来源：剧名@来源:秒 或 剧名/季@来源1&来源2:秒（不指定来源则对所有来源生效），多条用逗号分隔。例如：`overlord/S01:90, re-zero/S02@bilibili:120, re-zero/S02/E03@dandan&bilibili:10`。正数表示弹幕延后（向右），负数表示弹幕提前（向左）。支持百分比模式，在路径/来源末尾添加 `%`，例如：`东方/S03/E02@tencent%:11`，按 `原时间 * (视频时长 + 偏移秒数) / 视频时长` 计算新的弹幕发送时间。       |
 | UI_THEME    | 【可选】管理界面默认主题，默认为 `lavender`（经典默认）。浏览器中选择的主题会保存在本地并优先使用。可选值：`lavender`（经典默认）、`shinyo`（新叶绿）、`sakura`（哔哩粉）、`tianyi`（天依蓝）、`hatsune`（初音青）、`sakuragi`（樱木红）、`violet`（罗兰紫）、`amber`（LCL橘）       |
-| PROXY_URL    | 【可选】代理/反代地址，目前只对巴哈姆特、TMDB API、bilibili、animeko生效，支持格式：<br> 正常代理：`http://127.0.0.1:7890` <br> 万能反代：`@http://127.0.0.1` <br> 特定反代：`源字段@http://127.0.0.1`，目前支持的字段有：`bahamut,tmdb,bilibili,animeko`（bilibili字段会启用阿b的港澳台番剧的搜索与获取）<br> 混合配置/示例：`http://你的代理地址:28233,bahamut@你的巴哈反代地址,tmdb@你的tmdb反代地址,@你的万能反代地址` <br> 优先级：特定反代 > 万能反代 > 正常代理，高优先级覆盖低优先级使用。 <br> （注意：如果巴哈姆特请求不通，会拖慢搜索返回速度，如需使用bahamut源请在SOURCE_ORDER环境变量中手动添加`bahamut`）如果你使用docker部署并且访问不了 bahamut / animeko 源或 TMDB API ，请配置代理/反代地址（animeko 也可通过开启 Bangumi Data 解决）（[Netlify反代教程](https://github.com/wan0ge/bahamut-api-proxy)）；vercel/netlify/cf中理应都自然能联通，不用填写       |
+| PROXY_URL    | 【可选】代理/反代地址，目前只对巴哈姆特、TMDB API、bilibili、animeko生效，支持格式：<br> 正常代理：`http://127.0.0.1:7890` <br> 万能反代：`@http://127.0.0.1` <br> 特定反代：`源字段@http://127.0.0.1`，目前支持的字段有：`bahamut,tmdb,bilibili,animeko`（bilibili字段会启用阿b的港澳台番剧的搜索与获取）<br> 混合配置/示例：`http://你的代理地址:28233,bahamut@你的巴哈反代地址,tmdb@你的tmdb反代地址,@你的万能反代地址` <br> 优先级：特定反代 > 万能反代 > 正常代理，高优先级覆盖低优先级使用。 <br> （注意：如果巴哈姆特请求不通，会拖慢搜索返回速度，如需使用bahamut源请在SOURCE_ORDER环境变量中手动添加`bahamut`）如果你使用docker部署并且访问不了 bahamut / animeko 源或 TMDB API ，请配置代理/反代地址（animeko 也可通过开启 Bangumi Data 解决）       |
 | TMDB_API_KEY    | 【可选】TMDB API Key地址，目前只对巴哈姆特生效，配置后并行从TMDB获取日语原名搜索巴哈（如果TMDB条目类型不是动画或制作地区不是jp则不会进行巴哈搜索）可以解决巴哈译名不同导致的搜索无结果问题，例如大陆常用译名`间谍过家家`在巴哈译名为`間諜家家酒`，正常搜索无法搜索到，配置后可以解决这一问题但会稍微影响请求速度，[TMDBAPI](https://www.themoviedb.org/settings/api)获取方法参考：[TMDB API Key申请 - 绿联NAS私有云](https://www.ugnas.com/tutorial-detail/id-226.html)       |
 | RATE_LIMIT_MAX_REQUESTS    | 【可选】限流配置：1分钟内同一IP最大请求次数，默认为`3`，设置为`0`表示不限流       |
 | IP_BLACKLIST    | 【可选】IP 黑名单列表，命中则拒绝请求。支持逗号/分号/换行分隔，支持 `/regex/` 或 `/regex/i` 正则，支持 IPv4/IPv6 CIDR，例如：`192.168.1.10,10.0.0.0/24,2001:db8::/64,/^203\.0\.113\./`       |
 | LOG_LEVEL    | 【可选】日志级别，默认为`info`，可选值：`error`（仅错误）、`warn`（错误和警告）、`info`（所有日志），生产环境建议使用`warn`，调试时使用`info`       |
-| SEARCH_CACHE_MINUTES    | 【可选】搜索结果缓存时间（分钟），默认为`3`，避免短期内重复的不必要API请求，同时保证获取最新的结果列表，可根据需要调整：Vercel/Cloudflare建议`1-5`分钟，Docker可设置`5-30`分钟，设置为`0`表示不缓存       |
+| SEARCH_CACHE_MINUTES    | 【可选】搜索结果缓存时间（分钟），默认为`3`，避免短期内重复的不必要API请求，同时保证获取最新的结果列表，可根据需要调整：NAS 可按更新频率设置`5-30`分钟，设置为`0`表示不缓存       |
 | COMMENT_CACHE_MINUTES    | 【可选】弹幕缓存时间（分钟），默认为`3`，弹幕数据的缓存时间，独立于搜索结果缓存，设置为`0`表示不缓存       |
 | COMMENT_CACHE_MIN_COUNT    | 【可选】弹幕缓存最少条数，默认为`100`。缓存弹幕少于该数量时忽略缓存时间并重新获取最新弹幕，设置为`0`可关闭此机制       |
 | HONGGUO_MERGE_ALL_EPISODES | 【可选】红果短剧是否将所有集弹幕按集号合并为一集返回，默认为`false`。启用后每集弹幕时间会累加前面各集时长，并在剧集列表中显示为“全集”       |
@@ -508,9 +205,6 @@ API 支持返回 Bilibili 标准 XML 格式的弹幕数据，通过查询参数 
 | UPSTASH_REDIS_REST_URL    | 【可选】Upstash redis url，需配合UPSTASH_REDIS_REST_TOKEN使用，用于持久化原有查询信息和收藏缓存，避免 serverless 冷启动丢失收藏；搜索结果和弹幕缓存不会写入 Redis（会稍微影响收藏操作和冷启动请求速度），获取方法请参考：`https://cloud.tencent.cn/developer/article/2424508`       |
 | UPSTASH_REDIS_REST_TOKEN    | 【可选】Upstash redis token，需配合UPSTASH_REDIS_REST_URL使用，用于持久化原有查询信息和收藏缓存，避免 serverless 冷启动丢失收藏；搜索结果和弹幕缓存不会写入 Redis（会稍微影响收藏操作和冷启动请求速度），获取方法请参考：`https://cloud.tencent.cn/developer/article/2424508`       |
 | LOCAL_REDIS_URL    | 【可选】本地Redis连接URL，用于本地缓存存储，适用于docker和本地部署环境，格式：`redis://:password@127.0.0.1:6379/0`，默认为空（不使用本地Redis）       |
-| DEPLOY_PLATFROM_ACCOUNT    | 【可选】部署账号ID，调用部署服务API需要，配置后可使用UI界面配置服务，不同部署平台获取方式可查看 [部署平台环境变量配置指南](https://github.com/huangxd-/danmu_api/tree/main/danmu_api/ui/README.md#部署平台环境变量配置指南) ，docker部署和本地node部署并不需要配置      |
-| DEPLOY_PLATFROM_PROJECT    | 【可选】部署项目名称，调用部署服务API需要，配置后可使用UI界面配置服务，不同部署平台获取方式可查看 [部署平台环境变量配置指南](https://github.com/huangxd-/danmu_api/tree/main/danmu_api/ui/README.md#部署平台环境变量配置指南) ，docker部署和本地node部署并不需要配置       |
-| DEPLOY_PLATFROM_TOKEN    | 【可选】部署平台token，调用部署服务API需要，配置后可使用UI界面配置服务，不同部署平台获取方式可查看 [部署平台环境变量配置指南](https://github.com/huangxd-/danmu_api/tree/main/danmu_api/ui/README.md#部署平台环境变量配置指南) ，docker部署和本地node部署并不需要配置       |
 | NODE_TLS_REJECT_UNAUTHORIZED      | 【可选】在建立 HTTPS 连接时是否验证服务器的 SSL/TLS 证书，0表示忽略，默认为1       |
 | AI_BASE_URL      | 【可选】AI服务的基础URL地址，用于配置AI相关功能的API端点，不填默认为https://api.openai.com/v1       |
 | AI_MODEL      | 【可选】AI模型名称，指定使用的AI模型，不填默认为gpt-4o       |
@@ -626,147 +320,10 @@ API 支持返回 Bilibili 标准 XML 格式的弹幕数据，通过查询参数 
 | custom   | custom |
 | local    | 本地上传弹幕（无播放平台） |
 
-## 项目结构
-```
-├── .gitignore
-├── .github/
-│   └── workflows/
-│       ├── docker-image.yml     # Docker 镜像构建与推送
-│       ├── sync_fork.yml        # Fork 仓库自动同步
-│       └── sync_hf.yml          # Hugging Face Space 同步
-├── build-forward-widget.js     # 构建forward弹幕插件脚本
-├── Dockerfile
-├── edgeone.json                # edgeone pages 配置文件
-├── LICENSE
-├── netlify.toml                # netlify 配置文件
-├── package.json
-├── README.hf.md                # Hugging Face Space 部署说明
-├── README.md
-├── vercel.json                 # vercel 配置文件
-├── wrangler.toml               # cloudflare worker 配置文件
-├── config/
-│   └── .env.example            # .env 配置文件示例
-├── danmu_api/
-│   ├── esm-shim.cjs            # Node.js低版本兼容层
-│   ├── server.js               # 本地node启动脚本
-│   ├── worker.js               # 主 API 服务器代码
-│   ├── worker.test.js          # 测试文件（包含本地弹幕接口、源和 UI 测试）
-│   ├── apis/
-│   │   ├── clients/
-│   │   │   └── fongmi-api.js   # FongMi影视兼容接口
-│   │   ├── dandan-api.js       # 弹弹play兼容接口函数
-│   │   ├── local-danmu-api.js  # 本地弹幕上传、列表、读取和删除接口
-│   │   ├── env-api.js          # 环境变量接口函数
-│   │   ├── favorite-api.js     # 永久收藏的新增、列表、刷新、删除和定时刷新接口
-│   │   ├── forward-trace-api.js # Forward 调试日志回传接口
-│   │   └── system-api.js       # 系统管理接口函数
-│   ├── configs/
-│   │   ├── envs.js             # 环境变量处理脚本
-│   │   ├── globals.js          # 全局变量处理脚本
-│   │   └── handlers/           # 部署平台API调用及环境变量处理类
-│   │       ├── base-handler.js
-│   │       ├── cloudflare-handler.js
-│   │       ├── edgeone-handler.js
-│   │       ├── handler-factory.js
-│   │       ├── huggingface-handler.js
-│   │       ├── netlify-handler.js
-│   │       ├── node-handler.js
-│   │       └── vercel-handler.js
-│   ├── models/
-│   │   └── dandan-model.js     # 弹弹play数据模型
-│   ├── sources/
-│   │   ├── aiyifan.js          # 爱壹帆源
-│   │   ├── animeko.js          # Animeko源
-│   │   ├── bahamut.js          # 巴哈姆特源
-│   │   ├── base.js             # 弹幕源获取基类
-│   │   ├── bilibili.js         # b站源
-│   │   ├── custom.js           # 自定义弹幕源
-│   │   ├── dandan.js           # 弹弹play源
-│   │   ├── douban.js           # 豆瓣源
-│   │   ├── hanjutv.js          # 韩剧TV源
-│   │   ├── hongguo.js          # 红果短剧源
-│   │   ├── iqiyi.js            # 爱奇艺源
-│   │   ├── kan360.js           # 360看源
-│   │   ├── leshi.js            # 乐视视频源
-│   │   ├── maiduidui.js        # 埋堆堆源
-│   │   ├── mango.js            # 芒果TV源
-│   │   ├── migu.js             # 咪咕视频源
-│   │   ├── other.js            # 第三方弹幕服务器
-│   │   ├── renren.js           # 人人视频源
-│   │   ├── sohu.js             # 搜狐视频源
-│   │   ├── tencent.js          # 腾讯视频源
-│   │   ├── tmdb.js             # TMDB源
-│   │   ├── vod.js              # vod源
-│   │   ├── xigua.js            # 西瓜视频源
-│   │   ├── youku.js            # 优酷源
-│   │   ├── local.js            # 本地弹幕源
-│   │   └── registry.js         # 弹幕源注册与实例管理
-│   ├── ui/
-│   │   ├── README.md           # UI系统使用说明
-│   │   ├── template.js         # UI模板文件
-│   │   ├── css/
-│   │   │   ├── base.css.js     # 基础样式
-│   │   │   ├── components.css.js # 组件样式
-│   │   │   ├── forms.css.js    # 表单样式
-│   │   │   ├── responsive.css.js # 响应式样式
-│   │   │   └── themes.css.js   # 管理界面主题样式
-│   │   └── js/
-│   │       ├── apitest.js      # API测试脚本
-│   │       ├── localdanmu.js   # 本地弹幕上传与管理脚本
-│   │       ├── logview.js      # 日志查看脚本
-│   │       ├── main.js         # UI主脚本
-│   │       ├── preview.js      # 预览功能脚本
-│   │       ├── pushdanmu.js    # 推送弹幕脚本
-│   │       ├── requestrecords.js # 请求记录脚本
-│   │       └── systemsettings.js # 系统设置脚本
-│   └── utils/
-│       ├── ai-util.js          # AI相关处理工具
-│       ├── aiyifan-util.js     # 爱壹帆签名工具
-│       ├── auto-match-mapping-util.js # 自动匹配映射规则解析与候选筛选工具
-│       ├── bangumi-data-util.js # Bangumi Data管理工具
-│       ├── cache-util.js       # 缓存数据处理工具
-│       ├── codec-util.js       # 编解码工具
-│       ├── common-util.js      # 通用工具
-│       ├── cookie-util.js      # b站 cookie获取工具
-│       ├── dan-any.js          # dan-any 弹幕格式转换工具
-│       ├── danmu-util.js       # 弹幕处理工具
-│       ├── douban-util.js      # 豆瓣API请求工具
-│       ├── favorite-schedule-util.js # 定时刷新的校验、时间计算与调度工具
-│       ├── favorite-util.js    # 永久收藏缓存的匹配、增删、刷新及序列化工具
-│       ├── hanjutv-util.js     # 韩剧tv加解密工具
-│       ├── http-util.js        # 请求工具
-│       ├── imdb-util.js        # IMDB API请求工具
-│       ├── local-redis-util.js # 本地redis工具
-│       ├── log-util.js         # 日志工具
-│       ├── local-danmu-parser.js # 本地弹幕文件解析与资源键工具
-│       ├── local-danmu-store.js # 本地弹幕文件/Redis存储工具
-│       ├── merge-util.js       # 源合并处理工具
-│       ├── migu-util.js        # 咪咕工具
-│       ├── nipaplay-util.js    # NipaPlay 中转弹弹play服务端工具
-│       ├── offset-util.js      # 弹幕偏移工具
-│       ├── redis-util.js       # redis工具
-│       ├── server-listen-util.js # IPv4/IPv6 双栈监听与 IPv4 回退工具
-│       ├── time-util.js        # 时间日期工具
-│       ├── tmdb-util.js        # TMDB API请求处理工具
-│       └── zh-util.js          # 中文繁简转换工具
-├── forward/
-│   ├── custom-polyfill.js      # 自定义polyfill
-│   ├── forward-widget.js       # forward弹幕插件
-│   └── forward-widget.test.js  # forward弹幕插件测试文件
-├── netlify/
-│   └── functions/
-│       └── api.js              # netlify 中间处理逻辑
-└── node-functions/
-    ├── [[...path]]..js         # edgeone pages 所有路由跳转指向index
-    └── index.js                # edgeone pages 中间处理逻辑
-```
-
 ## 注意事项
 
 ### 热更新相关
-- **本地运行**：修改 `config/.env` 文件后，应用会自动检测并重新加载配置（无需重启应用）。
-- **Docker 部署**：需要使用 Volume 挂载 `config/.env` 文件才能支持热更新。推荐使用 docker compose 部署（见"Docker 一键启动"部分），配置 Volume 后修改配置文件容器会自动重新加载配置。
-- **Vercel/Netlify/Cloudflare**：需要在平台的环境变量设置中修改，然后重新部署才能生效。
+- **NAS 配置热更新**：挂载整个 `data/config` 到 `/app/config` 后，修改其中的 `.env` 会触发重新加载。Compose 的环境变量优先级高于文件，修改 Compose 环境变量需重建容器。
 - **配置优先级**：系统环境变量 > .env 文件
 
 ### 其他注意事项
@@ -774,21 +331,16 @@ API 支持返回 Bilibili 标准 XML 格式的弹幕数据，通过查询参数 
 - `/api/logs` 中的 JSON 日志会格式化显示，带缩进以提高可读性。
 - 搜索结果和弹幕数据存储在内存中，服务器重启后会清空，可通过配置 `UPSTASH_REDIS_REST_URL` 和 `UPSTASH_REDIS_REST_TOKEN` 启用 Redis 持久化存储，启用 Redis 后，收藏功能也可用。
 - 已支持本地redis，可通过配置 `LOCAL_REDIS_URL` 启用，只支持docker和本地部署环境。
-- 搜索结果缓存默认时间为 1 分钟，可通过环境变量 `SEARCH_CACHE_MINUTES` 调整（设置为 0 表示不缓存）。
+- 搜索结果缓存默认时间为 3 分钟，可通过环境变量 `SEARCH_CACHE_MINUTES` 调整（设置为 0 表示不缓存）。
 - 确保 `package.json` 中包含 `node-fetch` 依赖。
-- 一键部署需要将项目推送到公开的 Git 仓库（如 GitHub），并更新按钮中的仓库地址。
-- 运行 Docker 容器时，需通过 `-e TOKEN=87654321` 传递 `TOKEN` 环境变量。
-- cloudflare貌似被哔风控了。
-- cloudflare貌似有单次请求数量限制，会导致后半部分没有弹幕。
 - 如果想更换兜底第三方弹幕服务器，请添加环境变量`OTHER_SERVER`，示例`https://api.danmu.icu`。
 - 如果想使用自定义弹幕源，请添加环境变量`CUSTOM_SOURCE_API_URL`，并在`SOURCE_ORDER`环境变量中添加`custom`源。
 - 本地弹幕上传的标题、年份和类型为必填项。年份从今年向下排列至 `1900` 年，默认值和最大值均为打开页面时的当前年份；类型仅可选 `tv` 或 `movie`。`tv` 的季和集均默认 `1`，`movie` 的季和集可留空。管理列表按标题、年份、类型、季归为一个剧集，支持按标题关键词搜索，展开后缩进显示各集，可编辑剧集或单集信息、单独删除文件、重新上传文件或一次删除整个剧集；编辑不会重新解析弹幕内容，同一季同一集重新上传会替换原文件，不同季独立保存。编辑后若目标资源已存在会拒绝保存。旧资源继续兼容，未填写季数的资源沿用第 1 季处理。在 `SOURCE_ORDER` 中添加 `local` 后即可搜索已上传的剧集。
 - 同一部电视剧支持多选弹幕文件批量导入，共用标题、年份和季。页面从 `S01E02`、`EP02`、`第02集`、`02.xml` 等文件名识别集数，并支持逐个修改；未识别或重复的集数需要先修正。文件逐个上传，每个文件不超过 10 MB，失败后继续处理其余文件，并显示各文件结果及成功、失败数量。电影仍逐个导入。
-- Node/Docker 部署的本地弹幕文件保存在 `.cache/local-danmu`，使用 Docker 时请挂载 `.cache` 目录以持久化；Vercel、Netlify、Cloudflare、EdgeOne、Hugging Face 等云端部署需要可用的 Redis 才能保存本地弹幕资源。
+- Node/Docker 部署的本地弹幕文件保存在 `.cache/local-danmu`，使用 Docker 时请挂载 `.cache` 目录以持久化。
 - 如果想搜索bilibili港澳台番剧，请开启`Bangumi Data`匹配或添加环境变量`PROXY_URL`并填写`bilibili@`字段的解析/反代服务地址，示例：`bilibili@https://233.233.233`，支持部分[公共解析服务器](https://github.com/yujincheng08/BiliRoaming/wiki/%E5%85%AC%E5%85%B1%E8%A7%A3%E6%9E%90%E6%9C%8D%E5%8A%A1%E5%99%A8)，另外港澳台区域搜索最好在`BILIBILI_COOKIE`环境变量中加入包含`bili_jct`或`access_key`字段的cookie使用App接口，如果没有会使用不稳定的web接口进行搜索。（如果你填写的服务器遇到了App接口报错说明不支持App接口，Web接口报错-500、502正常，风控严重，但只要一直搜索总会成功）
 - 如果想更换vod站点，请添加环境变量`VOD_SERVERS`，示例`金蝉@https://zy.jinchancaiji.com,789@https://www.caiji.cyou,听风@https://gctf.tfdh.top`（支持多个服务器并发查询）。
 - 当配置多个VOD站点时，可通过`VOD_RETURN_MODE`环境变量控制返回结果方式：`all`（返回所有站点结果）或`fastest`（默认，只返回最快的站点结果，避免结果过多）。
-- 推荐vercel/netlify部署，cloudflare/edgeone不稳定，当然最稳定还是自己本地docker部署最佳。
 - /api/v2/comment接口默认限流：1分钟内同一IP只能请求3次，可通过环境变量`RATE_LIMIT_MAX_REQUESTS`调整（设置为0表示不限流）。
 - TMDB源请求逻辑：search tmdb -> tmdbId -> imdbId -> doubanId -> playUrl；优点：emby通过tmdb刮削，标题通过tmdb搜索，返回的信息可能更加匹配；缺点：链条过长，请求时长5-10s左右，中间一环数据有缺失，就没有返回结果。
 - TMDB源在SOURCE_ORDER添加tmdb的同时，需要添加TMDB_API_KEY环境变量
@@ -803,17 +355,6 @@ API 支持返回 Bilibili 标准 XML 格式的弹幕数据，通过查询参数 
 3. 播放器请求后，查看 `http://192.168.1.7:9321/87654321/api/logs` 日志，看请求是否有报错，比如有用户在自己软路由上搭建，但走了全局代理，导致人人等访问不了，请确保走直连
 4. 如果你播放的影片片名不规范，很可能搜不到，请确保片名规范
 
-### 关联项目
-[喂饭教程1：danmu_api vercel 自动同步部署方案 - 永远保持最新版本！实时同步原作者更新](https://github.com/xiaoyao20084321/log-var-danmu-deployment-guide)
-
-[喂饭教程2：Docker版弹幕danmu_api图文部署教程（面板安装版）](https://github.com/nekokit/danmu_api-docker-deployment-guide)
-
-[喂饭教程3：使用Netlify反向代理巴哈姆特api，实现danmu_api项目国内直连获取巴哈姆特弹幕](https://github.com/wan0ge/bahamut-api-proxy)
-
-[喂饭教程4：使用Vercel搭建万能反向代理，部署后请绑定自定义域名使用](https://github.com/souying/vercel-api-proxy)
-
-[喂饭教程5：非常详细的 danmu_api 图文教程](https://bks.indevs.in)
-
 ### 特别感谢
 - 开源项目 [danmaku-anywhere](https://github.com/Mr-Quin/danmaku-anywhere) 提供的[弹弹play开放平台](https://doc.dandanplay.com/open/)接口
 
@@ -824,13 +365,4 @@ API 支持返回 Bilibili 标准 XML 格式的弹幕数据，通过查询参数 
 - 开源项目 [bangumi-data](https://github.com/bangumi-data/bangumi-data) 提供的平台动画元数据
 
 - 开源项目 [Bangumi-syncer](https://github.com/SanaeMio/Bangumi-syncer) 提供的 UI 灵感
-
-### 贡献者
-<a href="https://github.com/huangxd-/danmu_api/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=huangxd-/danmu_api" alt="contributors" />
-</a>
-
-### 📈项目 Star 数增长趋势
-#### Star History
-[![Star History Chart](https://api.star-history.com/svg?repos=huangxd-/danmu_api&type=Date)](https://www.star-history.com/#huangxd-/danmu_api&Date)
 
