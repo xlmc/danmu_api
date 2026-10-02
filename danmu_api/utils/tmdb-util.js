@@ -333,6 +333,7 @@ export async function getDomesticPersonMetadataForTitle(title) {
           log('warn', `[system] [person-metadata] Bangumi 角色补充失败: ${error.message}`);
         }
       }
+      if (resolved.characterNames.length === 0) incomplete = true;
       resolved.names = [...new Set([...resolved.actorNames, ...resolved.characterNames])];
       const status = resolved.names.length === 0 ? 'unavailable' : incomplete ? 'partial' : 'ready';
       log('info', `[system] [person-metadata] 「${title}」TMDB ${candidate.media_type}/${candidate.id}${bangumiSubjectId ? ` + Bangumi ${bangumiSubjectId}` : ''}，演员 ${resolved.actorNames.length} 个，角色 ${resolved.characterNames.length} 个，状态 ${status}`);
