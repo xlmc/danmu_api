@@ -912,6 +912,25 @@ test('worker.js API endpoints', async (t) => {
     resetSearchState();
   });
 
+  await t.test('日期时间过滤覆盖常见写法且保留无效日期及普通数字', () => {
+    const blocked = [
+      '10月1日二刷', '2026 9月30号报道', '10.1国庆节快乐',
+      '2026.9.30 8点35一刷', '26年9月30已看', '2026.10月1日',
+      '10月1日2点留', '19时18分看的', '19：18分看的', '8点半',
+      '2024.2.29', '2月29日',
+    ];
+    const kept = [
+      '普通小数10.1', 'v2026.9.30', '2026.2.29', '2026年 2月29日',
+      '2026 2月29日', '2026.13.1', '13月1日', '2月30日',
+      '26年2月29日', '25:00', '8点65', '24点35', '127.0.0.1:29321',
+    ];
+    const items = [...blocked, ...kept].map(m => ({ m }));
+    const result = filterDanmusByBlockedNames(items, [], { blockDates: true });
+    assert.deepEqual(result.danmus.map(item => item.m), kept);
+    assert.equal(result.removedCount, blocked.length);
+    assert.equal(filterDanmusByBlockedNames(items, []).removedCount, 0);
+  });
+
   await t.test('地区过滤默认关闭且启用后按名称包含匹配', () => {
     Globals.init({});
     assert.equal(Globals.envs.blockDomesticRegions, false);
