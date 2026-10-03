@@ -605,7 +605,7 @@ export class Envs {
       // 缓存配置
       'LOCAL_CACHE_ENABLED': { category: 'cache', type: 'boolean', description: '通用文件缓存开关，默认开启且仍需已有 .cache 目录；关闭后不读取或写入通用文件缓存，包括收藏与定时计划；已配置 Upstash 时仍可持久化。不影响本地弹幕文件、Bangumi Data 或 Redis' },
       'SEARCH_CACHE_MINUTES': { category: 'cache', type: 'number', description: '搜索结果缓存时间(分钟)，默认3', min: 1, max: 120 },
-      'MATCH_SEARCH_BUDGET_MS': { category: 'match', type: 'number', description: '自动匹配快速搜索等待时间，默认1500毫秒。优先平台组已有准确季集时提前返回，慢源继续完成完整搜索；没有准确候选仍等待回退。0关闭目录复用和提前返回，等待全部来源及合并。手动搜索不受影响。', min: 0, max: 10000 },
+      'MATCH_SEARCH_BUDGET_MS': { category: 'match', type: 'number', description: '自动匹配快速搜索等待时间，默认1500毫秒。优先平台组已有准确季集时提前返回，已启动的慢源继续完成搜索；没有准确候选仍等待回退。配置合并源时先等待配置来源完成合并与验证，命中后不启动组外源，该路径不受预算影响。0关闭快速目录复用和提前返回。手动搜索不受影响。', min: 0, max: 10000 },
       'COMMENT_CACHE_MINUTES': { category: 'cache', type: 'number', description: '弹幕缓存时间(分钟)，默认3', min: 1, max: 120 },
       'COMMENT_CACHE_MIN_COUNT': { category: 'cache', type: 'number', description: '弹幕缓存最少条数，低于该值时重新获取，默认100，设置0关闭', min: 0, max: 10000 },
       'REMEMBER_LAST_SELECT': { category: 'cache', type: 'boolean', description: '记住明确手动选择的结果；自动匹配后直接获取其返回结果不会写入偏好' },

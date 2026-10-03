@@ -504,15 +504,19 @@ async function executeSourceHandlers(resultData, queryTitle, targetAnimesList, r
 }
 
 // Extracted function for GET /api/v2/search/anime
-export async function searchAnime(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null, sourceSearches = null) {
+export async function searchAnime(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null, sourceSearches = null, searchSources = null) {
   // 单次搜索请求内启用 HTTP 响应复用缓存: 作为各源通用的请求级复用安全网, 借助 AsyncLocalStorage 做请求级隔离
   if (httpCacheContext.getStore()) {
-    return searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress, sourceSearches);
+    return searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress, sourceSearches, searchSources);
   }
-  return runWithHttpCache(() => searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress, sourceSearches));
+  return runWithHttpCache(() => searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress, sourceSearches, searchSources));
 }
 
-async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null, sourceSearches = null) {
+async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null, sourceSearches = null, searchSources = null) {
+  const sourceOrder = searchSources ?? globals.sourceOrderArr;
+  // Scoped searches never masquerade as complete manual-search caches.
+  const scopedKey = key => searchSources
+    ? JSON.stringify(['match-sources', sourceOrder, globals.mergeSourcePairs, globals.customMergeRules, key]) : key;
   let queryTitle = url.searchParams.get("keyword");
   const skipTitleMapping = url.searchParams.get('_skipTitleMapping') === '1';
 
@@ -583,11 +587,11 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
   const requestAnimeDetailsMap = detailStore instanceof Map ? detailStore : new Map();
   const cacheKey = querySeason !== null ? `${queryTitle}_S${querySeason}` : queryTitle;
 
-  let cachedResults = forceRefresh ? null : getSearchCache(cacheKey, requestAnimeDetailsMap);
+  let cachedResults = forceRefresh ? null : getSearchCache(scopedKey(cacheKey), requestAnimeDetailsMap);
 
   // 如果带季度的特定缓存未命中，尝试获取不带季度的通用搜索缓存
   if (cachedResults === null && querySeason !== null) {
-    const genericCachedResults = getSearchCache(queryTitle, requestAnimeDetailsMap);
+    const genericCachedResults = getSearchCache(scopedKey(queryTitle), requestAnimeDetailsMap);
     if (genericCachedResults !== null) {
       log("info", `[system] [searchAnime] Cache miss for ${cacheKey}, fallback to generic cache for ${queryTitle}`);
       cachedResults = genericCachedResults;
@@ -613,7 +617,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
 
       while (!satisfied && !cacheMissed) {
         const nextCacheKey = `${queryTitle}_S${currentS}`;
-        const nextCache = getSearchCache(nextCacheKey, requestAnimeDetailsMap);
+        const nextCache = getSearchCache(scopedKey(nextCacheKey), requestAnimeDetailsMap);
         if (nextCache !== null && nextCache.length > 0) {
           combinedCachedResults.push(...nextCache);
           satisfied = checkEpisodeSatisfied(combinedCachedResults, querySeason, queryEpisode, requestAnimeDetailsMap, targetPlatform);
@@ -788,14 +792,14 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
 
   try {
     // 根据 sourceOrderArr 动态构建逐源管道：每个源形成独立的 search → handleAnimes 流水线
-    log("info", `[system] [LogVar-API] Search sourceOrderArr: ${globals.sourceOrderArr}`);
+    log("info", `[system] [LogVar-API] Search sourceOrderArr: ${sourceOrder}`);
 
     // 存储各源搜索结果的容器，供S2+季度扩展逻辑读取
     const resultData = {};
 
     // 源Key到对应搜索Promise的映射：统一从注册表查实例与日志标签，新增源无需改此处分发
     const sourceSearchMap = {};
-    for (const source of globals.sourceOrderArr) {
+    for (const source of sourceOrder) {
       const meta = getSourceMetaByKey(source);
       if (!meta) {
         log("warn", `[system] [LogVar-API] 未注册的源键 "${source}"，已跳过`);
@@ -816,7 +820,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
     // 构建逐源管道：每个源 search 完成后，通过 executeSourceHandlers 处理 handleAnimes
     // 传入仅含当前源数据的 resultData，使 executeSourceHandlers 仅处理该源
     const completedSources = new Map();
-    const pipelineTasks = globals.sourceOrderArr.filter(source => sourceSearchMap[source]).map(source => {
+    const pipelineTasks = sourceOrder.filter(source => sourceSearchMap[source]).map(source => {
       const isolatedAnimes = [];
       const isolatedDetailStore = new Map();
       const pipelinePromise = sourceSearchMap[source].then(async searchResult => {
@@ -829,7 +833,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
         if (onProgress) {
           const readyAnimes = [];
           const readyDetails = new Map();
-          for (const key of globals.sourceOrderArr) {
+          for (const key of sourceOrder) {
             const ready = completedSources.get(key);
             if (!ready) continue;
             readyAnimes.push(...ready.animes);
@@ -876,8 +880,8 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
     }
 
     // 缓存首季/默认请求结果，剥离附加链接
-    if (curAnimes.length > 0) {
-      setSearchCache(cacheKey, curAnimes.map(({ links, ...pureAnime }) => pureAnime), requestAnimeDetailsMap);
+    if (curAnimes.length > 0 && !searchSources) {
+      setSearchCache(scopedKey(cacheKey), curAnimes.map(({ links, ...pureAnime }) => pureAnime), requestAnimeDetailsMap);
     }
 
     // 判断当前获取的季度是否已包含用户指定的集数
@@ -887,7 +891,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
     // 若未包含且用户指定了季度，推导最大季并扩展至后续季以辅助跨季匹配
     if (!isEpisodeSatisfied && querySeason !== null) {
       let maxSeason = querySeason;
-      for (const source of globals.sourceOrderArr) {
+      for (const source of sourceOrder) {
         const rawAnimes = resultData[source];
         if (Array.isArray(rawAnimes)) {
           for (const item of rawAnimes) {
@@ -925,7 +929,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
         const expansionEnd = targetSeasons.length > 0 ? Math.max(...targetSeasons) : maxSeason;
 
         const expandPromises = [];
-        for (const source of globals.sourceOrderArr) {
+        for (const source of sourceOrder) {
           if (!resultData[source]) continue;
           // 在PLATFORM_ORDER模式下，跳过已满足平台的对应源；unsatisfied为空时不跳过
           if (targetPlatform && unsatisfiedPlatforms.size > 0 && !unsatisfiedPlatforms.has(source)) continue;
@@ -935,8 +939,8 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
             for (let s = expansionStart; s <= expansionEnd; s++) {
               const seasonAnimes = [];
               await executeSourceHandlers({ [source]: resultData[source] }, queryTitle, seasonAnimes, requestAnimeDetailsMap, s, preferAnimeId, preferSource);
-              if (seasonAnimes.length > 0) {
-                setSearchCache(`${queryTitle}_S${s}`, seasonAnimes.map(({ links, ...pureAnime }) => pureAnime), requestAnimeDetailsMap);
+              if (seasonAnimes.length > 0 && !searchSources) {
+                setSearchCache(scopedKey(`${queryTitle}_S${s}`), seasonAnimes.map(({ links, ...pureAnime }) => pureAnime), requestAnimeDetailsMap);
               }
               sourceResults.push(seasonAnimes);
             }
@@ -1019,7 +1023,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
     // 缓存搜索结果
     if (responseAnimes.length > 0) {
       const cacheKey = querySeason !== null ? `${queryTitle}_S${querySeason}` : queryTitle;
-      setSearchCache(cacheKey, responseAnimes, requestAnimeDetailsMap);
+      setSearchCache(scopedKey(cacheKey), responseAnimes, requestAnimeDetailsMap);
     }
 
     logMappingSearchOutcome(responseAnimes, false);
@@ -1657,7 +1661,42 @@ function confidentCandidates(animes, { title, season, episode, year, mapping, tm
   return candidates;
 }
 
-async function executeMatchAttempt({ req, title, season, episode, year, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false, tmdbIdentity = null, sourceSearches = null }) {
+async function executeMatchAttempt(options) {
+  // Explicit platform mappings/preferences take precedence over the merge-first path.
+  const groups = globals.mergeSourcePairs || [];
+  const sources = new Set(groups.flatMap(group => [group.primary, ...group.secondaries]));
+  const preferredSources = String(options.preferredPlatform || '').split('&').map(canonicalPlatformName).filter(Boolean);
+  if (sources.size && preferredSources.every(source => sources.has(source)) &&
+      !options.mapping?.targetPlatform && !options.preferAnimeId && !options.preferSource) {
+    // Include custom merge dependencies connected to the selected groups.
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const rule of globals.customMergeRules || []) {
+        if (rule.action === 'block') continue;
+        const related = [rule.primary.source, rule.secondary.source].flatMap(source => source.split('&'));
+        if (!related.some(source => sources.has(source))) continue;
+        for (const source of related) if (!sources.has(source)) { sources.add(source); changed = true; }
+      }
+    }
+    const searchSources = globals.sourceOrderArr.filter(source => sources.has(source));
+    if (searchSources.length) {
+      const sourceSearches = options.sourceSearches ?? new Map();
+      log('info', '[system] [match-search] 先搜索配置合并源: ' + searchSources.join(','));
+      const selected = await executeMatchAttemptBody({ ...options, sourceSearches, searchSources });
+      if (selected.resAnime && selected.resEpisode) {
+        log('info', '[system] [match-search] 配置合并源匹配成功，跳过组外来源');
+        return selected;
+      }
+      if (searchSources.length === globals.sourceOrderArr.length) return selected;
+      log('info', '[system] [match-search] 配置合并源无可用匹配，回退全部来源');
+      return executeMatchAttemptBody({ ...options, sourceSearches });
+    }
+  }
+  return executeMatchAttemptBody(options);
+}
+
+async function executeMatchAttemptBody({ req, title, season, episode, year, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false, tmdbIdentity = null, sourceSearches = null, searchSources = null }) {
   const startedAt = Date.now();
   // A platform-qualified rule describes that platform's numbering. Never
   // apply its offset to another source if the platform has no matching episode.
@@ -1669,9 +1708,10 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
   const searchUrl = buildSearchAnimeUrl(req.url, title, season, episode, true);
   const budget = globals.matchSearchBudgetMs;
   const catalogKey = `${title}_S${season}`;
-  const canUseReady = budget > 0 && season && episode && targetPlatform && !preferAnimeId && !offsets &&
+  const canUseReady = !searchSources && budget > 0 && season && episode && targetPlatform && !preferAnimeId && !offsets &&
     !(mapping?.targetYear || mapping?.targetType || (mapping?.targetTmdbId && !tmdbIdentity));
   const fastDisabledReasons = [];
+  if (searchSources) fastDisabledReasons.push('先完成配置源合并');
   if (!(budget > 0)) fastDisabledReasons.push('搜索预算关闭');
   if (!season || !episode) fastDisabledReasons.push('缺少明确季集');
   if (!targetPlatform) fastDisabledReasons.push('缺少优先平台');
@@ -1722,7 +1762,7 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
     void checkReady().catch(error => log('warn', `[system] [match-fast] ${error.message}`));
   }, budget) : null;
   const fullSearch = traceMatchStep(log, '完整搜索（含目录处理与缓存）', () =>
-    searchAnime(searchUrl, preferAnimeId, preferSource, detailStore, targetPlatform, false, onProgress, sourceSearches));
+    searchAnime(searchUrl, preferAnimeId, preferSource, detailStore, targetPlatform, false, onProgress, sourceSearches, searchSources));
   // 完整搜索继续完成合并与缓存；部分搜索结果绝不写成完整搜索缓存。
   fullSearch.catch(error => log('warn', `[system] [match-fast] 完整搜索失败: ${error.message}`));
   let outcome;
