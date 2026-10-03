@@ -31,6 +31,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   const url = new URL(req.url);
   let path = url.pathname;
   const method = req.method;
+  const isLogReadRequest = method === 'GET' && /(?:^|\/)api\/logs(?:\/remote-mapping)?\/?$/.test(path);
 
   globals.deployPlatform = deployPlatform;
   if (deployPlatform === "node") {
@@ -53,9 +54,11 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     }
   }
 
-  log("info", `[system] [server] request url: ${JSON.stringify(url)}`);
-  log("info", `[system] [server] request path: ${path}`);
-  log("info", `[system] [server] client ip: ${clientIp}`);
+  if (!isLogReadRequest) {
+    log("info", `[system] [server] request url: ${JSON.stringify(url)}`);
+    log("info", `[system] [server] request path: ${path}`);
+    log("info", `[system] [server] client ip: ${clientIp}`);
+  }
 
   // --- IP 黑名单拦截 ---
   if (globals.ipBlacklist?.length) {
@@ -304,7 +307,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     return handleReqRecords();
   }
 
-  log("info", `[system] [server] ${path}`);
+  if (!isLogReadRequest) log("info", `[system] [server] ${path}`);
 
   // 智能处理API路径前缀，确保最终有一个正确的 /api/v2
   if (path !== "/" && path !== "/danmaku" && path !== "/api/logs" && !path.startsWith('/api/env') 
@@ -570,7 +573,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   // GET /api/logs
   if (path === "/api/logs" && method === "GET") {
-    return handleLogs();
+    return handleLogs(url.searchParams.get('format'));
   }
 
   // GET /api/logs/remote-mapping - 远程映射表专用日志（独立缓冲区，不被源站日志冲掉）

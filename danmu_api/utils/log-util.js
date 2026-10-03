@@ -1,11 +1,21 @@
 import { globals } from '../configs/globals.js';
 import { getMatchTracePrefix } from './match-trace-util.js';
+import { getLogMetadata, normalizeLogSource } from './log-metadata-util.js';
+
+let logSequence = 0;
+const logSession = Date.now().toString(36);
+export function logEvent(level, event, message, data = {}) {
+  log(level, message, { __logEvent: event, data });
+}
 
 // =====================
 // 日志记录工具
 // =====================
 
 export function log(level, ...args) {
+  const metadataArg = args.at(-1);
+  const event = metadataArg?.__logEvent;
+  if (event) args.pop();
   // 根据日志级别决定是否输出
   const levels = { error: 0, warn: 1, info: 2 };
   const currentLevelValue = levels[globals.logLevel] !== undefined ? levels[globals.logLevel] : 1;
@@ -36,7 +46,13 @@ export function log(level, ...args) {
   const shanghaiTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
   const timestamp = shanghaiTime.toISOString().replace('Z', '+08:00');
 
-  globals.logBuffer.push({ timestamp, level, message });
+  const metadata = getLogMetadata(message);
+  const data = event ? JSON.parse(hideSensitiveInfo(JSON.stringify(metadataArg.data))) : undefined;
+  if (data?.source) data.source = normalizeLogSource(data.source);
+  const source = data?.source || metadata.source;
+  if (source && !metadata.categories.includes('source')) metadata.categories.push('source');
+  globals.logBuffer.push({ id: `${logSession}-${++logSequence}`, timestamp, level, message,
+    ...metadata, source, ...(event ? { event, data } : {}) });
   if (globals.logBuffer.length > globals.MAX_LOGS) globals.logBuffer.shift();
   console[level](...processedArgs);
 }

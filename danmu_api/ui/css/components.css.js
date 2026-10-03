@@ -3222,6 +3222,57 @@ body[data-theme$="-dark"] .heatmap-bar {
 }
 
 /* ============ 环境变量配置工具栏 ============ */
+.lv-tabs,.lv-reading,.lv-toolbar,.lv-actions { display:flex;align-items:center;gap:10px;flex-wrap:wrap; }
+.lv-tabs { margin:14px 0; }
+.lv-reading .btn,.lv-actions .btn { flex:0 0 auto;white-space:nowrap; }
+.lv-toolbar { margin:14px 0;align-items:flex-start; }
+.lv-toolbar input[type=search] { flex:1;min-width:180px; }
+.lv-toolbar input,.lv-toolbar select,.lv-source-picker>summary { background:var(--theme-input-bg);color:var(--theme-text);border:1px solid var(--theme-border);border-radius:8px;padding:9px 10px;font:inherit;max-width:100%; }
+.lv-toolbar select { max-width:240px; }
+.lv-source-picker { min-width:180px; }
+.lv-source-picker>summary { cursor:pointer; }
+#log-sources { display:flex;gap:10px;flex-wrap:wrap;padding:12px;background:var(--theme-input-bg);border:1px solid var(--theme-border);border-radius:8px;max-width:380px; }
+#log-sources label,.lv-reading label { display:flex;align-items:center;gap:5px; }
+.lv-note { color:var(--theme-muted);font-size:12px;overflow-wrap:anywhere; }
+#logs-section #log-container { background:var(--theme-panel-bg);color:var(--theme-text);padding:0;max-height:650px;border:1px solid var(--theme-border);font-family:inherit; }
+.lv-entry,.lv-request { border-bottom:1px solid var(--theme-border);background:var(--theme-input-bg); }
+.lv-entry summary { display:grid;grid-template-columns:74px 54px 86px 72px minmax(0,1fr);gap:10px;padding:12px;cursor:pointer;align-items:start;font-size:12px; }
+.lv-column-head { display:grid;grid-template-columns:74px 54px 86px 72px minmax(0,1fr);gap:10px;padding:8px 12px;color:var(--theme-muted);font-size:12px; }
+.lv-column-head[hidden] { display:none; }
+.lv-entry summary,.lv-request summary { list-style:none; }
+.lv-entry summary::-webkit-details-marker,.lv-request summary::-webkit-details-marker { display:none; }
+.lv-entry[open] summary,.lv-request[open]>summary { background:var(--theme-accent-soft); }
+.lv-entry time,.lv-source,.lv-class { color:var(--theme-muted); }
+.lv-level { font-weight:600; }
+.lv-entry.warn .lv-level,.lv-entry.error .lv-level { color:var(--theme-danger,#c65757); }
+.lv-summary { white-space:pre-wrap;overflow-wrap:anywhere; }
+.lv-detail { padding:14px 16px;border-top:1px solid var(--theme-border); }
+.lv-detail pre { background:var(--theme-code-bg);color:var(--theme-code-text);padding:12px;border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.7 ui-monospace,Consolas,monospace; }
+.lv-request>summary { display:grid;grid-template-columns:minmax(0,1fr) 92px 100px;gap:12px;align-items:center;cursor:pointer;padding:15px; }
+.lv-request>summary strong { text-align:right;font-variant-numeric:tabular-nums; }
+.lv-request-name { font-weight:600;overflow-wrap:anywhere; }
+.lv-request-name small { display:block;color:var(--theme-muted);font-size:12px;font-weight:400;margin-top:4px; }
+.lv-status { font-size:12px;color:var(--theme-muted); }
+.lv-status.lv-success { color:var(--theme-accent); }
+.lv-step,.lv-source-time { display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:8px 0;font-size:13px; }
+.lv-source-times { background:var(--theme-panel-strong);padding:12px;border-radius:8px;margin:10px 0; }
+.lv-source-time { display:grid;grid-template-columns:minmax(60px,1fr) minmax(80px,1fr) minmax(70px,1fr); }
+.lv-empty { padding:35px 16px;text-align:center;color:var(--theme-muted); }
+@media(max-width:650px) {
+ .lv-column-head { display:none; }
+ .lv-entry summary { grid-template-columns:66px 50px minmax(0,1fr);gap:6px; }
+ .lv-entry .lv-class { grid-column:3;grid-row:1; }
+ .lv-entry .lv-source { grid-column:1/3;grid-row:2; }
+ .lv-entry .lv-summary { grid-column:3;grid-row:2; }
+ .lv-request>summary { grid-template-columns:minmax(0,1fr) 80px;gap:8px;padding:12px; }
+ .lv-request .lv-status { grid-column:1;grid-row:2; }
+ .lv-request>summary strong { grid-column:2;grid-row:1/3; }
+ .lv-toolbar input[type=search] { flex-basis:100%; }
+ .lv-toolbar input,.lv-toolbar select { font-size:16px; }
+ .lv-source-time { grid-template-columns:minmax(50px,1fr) minmax(80px,1.5fr); }
+ .lv-source-time span:last-child { grid-column:2; }
+ .lv-reading { font-size:13px; }
+}
 .env-config-toolbar {
     /* 继承 preview-toolbar 样式 */
 }

@@ -143,8 +143,25 @@ export const HTML_TEMPLATE = /* html */ `
                         <button class="btn btn-primary" onclick="refreshLogs()">${renderIcon('refresh-cw')} 刷新日志</button>
                         <button class="btn btn-danger" onclick="clearLogs()">${renderIcon('trash-2')} 清空日志</button>
                     </div>
-                    <span style="color: #666;">实时日志监控</span>
+                    <span class="lv-note" id="log-update-state" aria-live="polite">尚未获取日志</span>
                 </div>
+                <div class="lv-tabs" role="tablist" aria-label="日志视图">
+                    <button type="button" class="filter-btn active" data-log-view="all" role="tab" aria-selected="true" aria-controls="log-container">全部日志</button>
+                    <button type="button" class="filter-btn" data-log-view="match" role="tab" aria-selected="false" aria-controls="log-container">匹配追踪</button>
+                </div>
+                <div id="log-categories" class="log-filters-container" aria-label="日志分类"></div>
+                <div class="lv-toolbar">
+                    <input id="log-query" type="search" aria-label="搜索日志" placeholder="搜索作品、错误信息或请求编号…">
+                    <select id="log-level" aria-label="日志级别"><option value="all">全部级别</option><option value="warn">警告及错误</option><option value="error">仅错误</option><option value="info">仅信息</option></select>
+                    <details class="lv-source-picker"><summary id="log-source-label">全部来源（可多选）</summary><div id="log-sources"></div></details>
+                    <select id="log-subtype" aria-label="日志子分类"><option value="">全部子分类 / 标签</option></select>
+                    <select id="log-sort" aria-label="匹配排序" hidden><option value="new">最新匹配优先</option><option value="slow">耗时最长优先</option></select>
+                    <button type="button" class="btn btn-small" id="log-reset">重置筛选</button>
+                </div>
+                <div class="lv-reading"><label><input id="log-auto" type="checkbox"> 自动更新（3秒）</label><label><input id="log-follow" type="checkbox" checked> 跟随最新</label><button type="button" class="btn btn-small" id="log-latest">跳到最新</button><button type="button" class="btn btn-small" id="log-export">导出筛选结果</button></div>
+                <p id="log-context" class="lv-note" hidden>当前只看请求 #<span id="log-context-id"></span> · 点击“重置筛选”恢复全部记录</p>
+                <p id="log-count" class="lv-note" aria-live="polite"></p>
+                <div id="log-column-head" class="lv-column-head" aria-hidden="true"><span>时间</span><span>级别</span><span>分类</span><span>来源</span><span>内容 · 点击展开</span></div>
                 <div class="log-container" id="log-container"></div>
             </div>
 
