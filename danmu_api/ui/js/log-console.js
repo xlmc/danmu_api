@@ -107,7 +107,7 @@ function renderLogFilters() {
   document.querySelectorAll('[data-log-category]').forEach(button=>button.onclick=()=>{logViewState.category=button.dataset.logCategory;logViewState.subtype='';renderLogs();});
   const sources = [...new Set(logs.map(e=>e.source).filter(Boolean))].sort();
   document.getElementById('log-sources').innerHTML = sources.map(source => '<label><input type="checkbox" value="' + escapeLogHTML(source) + '" ' + (logViewState.sources.has(source)?'checked':'') + '> ' + escapeLogHTML(logSources[source] || source) + '</label>').join('') || '<span>暂无来源记录</span>';
-  document.getElementById('log-source-label').textContent = logViewState.sources.size ? '来源 · 已选 ' + logViewState.sources.size : '全部来源（可多选）';
+  document.getElementById('log-source-label').textContent = logViewState.sources.size ? '来源 · ' + logViewState.sources.size : '全部来源';
   document.querySelectorAll('#log-sources input').forEach(input=>input.onchange=()=>{if(input.checked)logViewState.sources.add(input.value);else logViewState.sources.delete(input.value);renderLogs();});
   const tags = [...new Set(logs.filter(e=>logViewState.category==='all'||e.categories.includes(logViewState.category)).flatMap(e=>e.tags))].filter(t=>!['system','请求模拟','网络请求'].includes(t)).sort();
   document.getElementById('log-subtype').innerHTML = '<option value="">全部子分类 / 标签</option>' + tags.map(tag=>'<option value="'+escapeLogHTML(tag)+'">'+escapeLogHTML(tag)+'</option>').join('');
