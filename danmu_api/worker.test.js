@@ -1,3 +1,5 @@
+import { handleSetEnv, handleAddEnv, handleDelEnv } from './apis/env-api.js';
+import { BLOCKED_WORD_PRESETS, migrateLegacyBlockedWords, migrateLegacyBlockedWordsText } from './utils/blocked-word-presets.js';
 // 加载 .env 文件
 import dotenv from 'dotenv';
 dotenv.config();
@@ -48,7 +50,7 @@ import { logviewJsContent } from './ui/js/logview.js';
 import { systemSettingsJsContent } from './ui/js/systemsettings.js';
 import { previewJsContent } from './ui/js/preview.js';
 import { convertToAsciiSum } from "./utils/codec-util.js";
-import { buildBlockedNameMatchers, buildBlockedSurnameMatchers, convertToDanmakuJson, filterDanmusByBlockedNames, formatDanmuResponse, handleDanmusLike, isBlockedNameEntry, isBlockedRegionEntry, parseBlockedNameEntry, parseBlockedRegionEntry, splitBlockedWords, parseBlockedWord } from "./utils/danmu-util.js";
+import { buildBlockedNameMatchers, buildBlockedSurnameMatchers, convertToDanmakuJson, filterDanmusByBlockedWords, filterDanmusByBlockedNames, formatDanmuResponse, handleDanmusLike, isBlockedNameEntry, isBlockedRegionEntry, parseBlockedNameEntry, parseBlockedRegionEntry, splitBlockedWords, parseBlockedWord } from "./utils/danmu-util.js";
 import { convertCommentsToDanmux } from './utils/danmux-adapter.js';
 import { Segment, SegmentListResponse } from "./models/dandan-model.js"
 import { initBangumiData, searchBangumiData, clearBangumiDataCache, dedupeBangumiSearchResults } from "./utils/bangumi-data-util.js";
@@ -1958,7 +1960,8 @@ test('worker.js API endpoints', async (t) => {
 
     Globals.init({ BLOCK_DOMESTIC_CELEBRITIES: 'true', BLOCK_DOMESTIC_REGIONS: 'false' });
     assert.equal(Globals.envs.blockDomesticCelebrities, true);
-    assert.equal(Globals.envs.blockDomesticRegions, false);
+    assert.equal(Globals.envs.blockDomesticRegions, undefined);
+    assert.equal(Globals.envs.blockedWords, '');
     assert.ok(DOMESTIC_REGION_NAMES.length > 300);
     resetSearchState();
   });
@@ -1976,17 +1979,21 @@ test('worker.js API endpoints', async (t) => {
       '26年2月29日', '25:00', '8点65', '24点35', '127.0.0.1:29321',
     ];
     const items = [...blocked, ...kept].map(m => ({ m }));
-    const result = filterDanmusByBlockedNames(items, [], { blockDates: true });
-    assert.deepEqual(result.danmus.map(item => item.m), kept);
-    assert.equal(result.removedCount, blocked.length);
-    assert.equal(filterDanmusByBlockedNames(items, []).removedCount, 0);
+    Globals.init({ BLOCKED_WORDS: BLOCKED_WORD_PRESETS.dates.join(',') });
+    const result = filterDanmusByBlockedWords(items);
+    assert.deepEqual(result.map(item => item.m), kept);
+    assert.equal(items.length - result.length, blocked.length);
+    Globals.init({});
+    assert.equal(filterDanmusByBlockedWords(items).length, items.length);
   });
 
-  await t.test('地区过滤默认关闭且启用后按名称包含匹配', () => {
+  await t.test('旧地区开关迁移成包含名称即屏蔽的正则', () => {
     Globals.init({});
-    assert.equal(Globals.envs.blockDomesticRegions, false);
+    assert.equal(Globals.envs.blockDomesticRegions, undefined);
+    assert.equal(Globals.envs.blockedWords, '');
     Globals.init({ BLOCK_DOMESTIC_REGIONS: 'true' });
-    assert.equal(Globals.envs.blockDomesticRegions, true);
+    assert.equal(Globals.envs.blockDomesticRegions, undefined);
+    assert.equal(Globals.envs.blockedWords, BLOCKED_WORD_PRESETS.regions[0]);
 
     const result = filterDanmusByBlockedNames([
       { m: '来自海南的朋友' },
@@ -6979,3 +6986,144 @@ test('mango variety episodes with trailing part markers should sort 上 before �
   assert.deepEqual(direct.map(ep => ep.t1), ['第3期上', '第3期下']);
 });
 
+
+
+test('地区日期正则迁移保留用户列表，移除旧配置且重复加载稳定', () => {
+  const original = { BLOCKED_WORDS: '@白鹿,/哈{1,2}/u,打卡', BLOCK_DATES: 'true', BLOCK_DOMESTIC_REGIONS: 'true', OTHER: 'keep' };
+  const migrated = migrateLegacyBlockedWords(original);
+  assert.equal(migrated.BLOCKED_WORDS, [original.BLOCKED_WORDS, ...BLOCKED_WORD_PRESETS.regions, ...BLOCKED_WORD_PRESETS.dates].join(','));
+  assert.equal(migrated.OTHER, 'keep');
+  assert.equal(original.BLOCK_DATES, 'true');
+  assert.equal(migrateLegacyBlockedWords(migrated), migrated);
+  assert.equal(migrateLegacyBlockedWords({ ...original, BLOCKED_WORDS: migrated.BLOCKED_WORDS }).BLOCKED_WORDS, migrated.BLOCKED_WORDS);
+  assert.equal(migrateLegacyBlockedWords({ BLOCK_DATES: 'false', BLOCK_DOMESTIC_REGIONS: 'false' }).BLOCKED_WORDS, '');
+  const text = '# 自定义配置\r\nOTHER=keep\r\nBLOCKED_WORDS="@白鹿,/哈{1,2}/u,打卡"\r\nBLOCK_DATES=true\r\nBLOCK_DOMESTIC_REGIONS=true\r\n';
+  const result = migrateLegacyBlockedWordsText(text, Envs.parseRawEnvText(text));
+  assert.equal(Envs.parseRawEnvText(result).BLOCKED_WORDS, migrated.BLOCKED_WORDS);
+  assert.ok(result.includes('# 自定义配置\r\nOTHER=keep\r\n'));
+  assert.doesNotMatch(result, /^BLOCK_(DATES|DOMESTIC_REGIONS)=/m);
+  assert.equal(migrateLegacyBlockedWordsText(result, Envs.parseRawEnvText(result)), result);
+  const removed = result.replace(migrated.BLOCKED_WORDS, original.BLOCKED_WORDS);
+  assert.equal(migrateLegacyBlockedWordsText(removed, Envs.parseRawEnvText(removed)), removed);
+  try {
+    Globals.init(original);
+    assert.equal(Globals.envs.blockedWords, migrated.BLOCKED_WORDS);
+    for (const key of ['BLOCK_DATES', 'BLOCK_DOMESTIC_REGIONS']) {
+      assert.equal(Globals.originalEnvVars[key], undefined);
+      assert.equal(Globals.envs.envVarConfig[key], undefined);
+      assert.ok(!previewJsContent.includes(key));
+    }
+    Globals.init({ BLOCKED_WORDS: BLOCKED_WORD_PRESETS.regions.join(',') });
+    assert.deepEqual(filterDanmusByBlockedWords(['阜阳前来报到', '海南鸡饭', '朝阳升起', '来自臺灣', '深圳片友', '剧情不错'].map(m => ({ m }))).map(x => x.m), ['来自臺灣', '剧情不错']);
+  } finally { Globals.init({}); }
+});
+
+test('日期预设实际正则验证整世纪日期边界和全角日期时间', () => {
+  const regexes = BLOCKED_WORD_PRESETS.dates.map(parseBlockedWord);
+  const matches = text => regexes.some(regex => regex.test(text));
+  for (let year = 1900; year <= 2099; year++) {
+    for (let month = 1; month <= 13; month++) {
+      const days = month <= 12 ? new Date(Date.UTC(year, month, 0)).getUTCDate() : 0;
+      for (const day of [0, 1, 28, 29, 30, 31, 32]) {
+        const valid = day > 0 && day <= days;
+        for (const text of [`${year}.${month}.${day}`, `${year}/${month}/${day}`, `${year}-${month}-${day}`, `${year}年 ${month}月${day}日`, `${year} ${month}月${day}日`]) {
+          assert.equal(matches(text), valid, text);
+        }
+      }
+    }
+  }
+  for (const text of ['２０２４．２．２９', '２０２６／９／４', '２０２６－９－４', '２０２６.９.４', '２０２４年２月２９日', '１９：１８', '8:35:09', '８点３５分', '2026.9.4 23:59']) {
+    assert.equal(matches(text), true, text);
+  }
+  for (const text of ['２０２６年２月２９日', '2026年 2月30日', '2026.2.29', '1900.2.29', '２０２６.１３.１', '２５：００', '23:60', '23:59:60', '２４点３５分', 'v2026.9.30', 'ｖ２０２６．９．３０', '２０２６．２．２９', '10.1', '127.0.0.1:29321']) assert.equal(matches(text), false, text);
+});
+
+test('设置页插入可编辑正则草稿，重复点击去重并通过实际过滤器匹配', () => {
+  const field = { value: '打卡,/哈{1,2}/u' };
+  const container = { innerHTML: '', addEventListener() {}, classList: { toggle() {} } };
+  const context = vm.createContext({
+    document: { body: { dataset: {} }, querySelectorAll: () => [], addEventListener() {}, getElementById(id) { return id === 'text-value' ? field : container; } },
+    window: { addEventListener() {} }, editingKeyName: 'BLOCKED_WORDS', escapeHtml: text => String(text).replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
+  });
+  new vm.Script(systemSettingsJsContent).runInContext(context);
+  vm.runInContext("renderValueInput({ key: 'BLOCKED_WORDS', type: 'text', value: '打卡,<script>' })", context);
+  assert.match(container.innerHTML, /添加地区正则/);
+  assert.match(container.innerHTML, /添加日期时间正则/);
+  assert.match(container.innerHTML, /&lt;script&gt;/);
+  vm.runInContext("appendBlockedWordPreset('regions'); appendBlockedWordPreset('dates')", context);
+  const once = field.value;
+  vm.runInContext("appendBlockedWordPreset('regions'); appendBlockedWordPreset('dates')", context);
+  assert.equal(field.value, once);
+  assert.equal(splitBlockedWords(once).length, 6);
+  try {
+    Globals.init({ BLOCKED_WORDS: field.value });
+    assert.deepEqual(filterDanmusByBlockedWords(['打卡', '哈哈', '深圳', '2026.9.4', '19:18', '普通弹幕'].map(m => ({ m }))).map(x => x.m), ['普通弹幕']);
+  } finally { Globals.init({}); }
+});
+
+test('Node 启动迁移兼顾系统优先级、热更新及写回失败后的配置加载', async () => {
+  const source = await fs.readFile(new URL('./server.js', import.meta.url), 'utf8');
+  const loader = source.slice(source.indexOf('function loadEnv() {'), source.indexOf('// 监听 .env 文件变化'));
+  const rawBefore = Envs.rawEnvValues;
+  const backupBefore = Envs.systemEnvBackup;
+  try {
+    for (const [system, failWrite] of [[{}, false], [{ BLOCKED_WORDS: '系统词' }, false], [{ BLOCK_DATES: 'true' }, false], [{ BLOCK_DATES: 'true' }, true]]) {
+      let file = 'OTHER=keep\nBLOCKED_WORDS="文件词"\nBLOCK_DATES=true\n';
+      const files = new Map([['config.env', file]]);
+      const systemEnvBackup = { ...system };
+      const processMock = { env: { ...system } };
+      const context = vm.createContext({
+        Envs, LEGACY_BLOCKED_WORD_KEYS: ['BLOCK_DOMESTIC_REGIONS', 'BLOCK_DATES'], migrateLegacyBlockedWords, migrateLegacyBlockedWordsText,
+        systemEnvBackup, process: processMock, envPath: 'config.env', console: { log() {} },
+        fs: { existsSync: p => files.has(p), readFileSync: p => files.get(p), writeFileSync: (p, text) => { if (failWrite) throw new Error('read only'); files.set(p, text); }, renameSync: (a, b) => { files.set(b, files.get(a)); files.delete(a); }, unlinkSync: p => files.delete(p) },
+        dotenv: { config() { Object.assign(processMock.env, Envs.parseRawEnvText(files.get('config.env'))); } },
+      });
+      vm.runInContext(loader + '\nloadEnv();', context);
+      Envs.systemEnvBackup = systemEnvBackup;
+      Globals.init(processMock.env);
+      const expected = [system.BLOCKED_WORDS || '文件词', ...BLOCKED_WORD_PRESETS.dates].join(',');
+      assert.equal(Globals.envs.blockedWords, expected);
+      assert.equal(processMock.env.OTHER, 'keep');
+      assert.equal(files.has('config.env.blocked-words.tmp'), false);
+      if (!failWrite && !system.BLOCKED_WORDS) {
+        files.set('config.env', 'OTHER=keep\nBLOCKED_WORDS="编辑后的词"\n');
+        vm.runInContext('loadEnv();', context);
+        Globals.init(processMock.env);
+        assert.equal(Globals.envs.blockedWords, '编辑后的词');
+      }
+    }
+  } finally { Envs.rawEnvValues = rawBefore; Envs.systemEnvBackup = backupBefore; Globals.init({}); }
+});
+
+
+test('配置接口拒绝旧开关，保存或删除屏蔽词后清理遗留变量并反馈清理失败', async () => {
+  const originalFactory = HandlerFactory.getHandler;
+  let failDelete = false;
+  const deleted = [];
+  HandlerFactory.getHandler = async () => ({
+    async setEnv(key, value) { Globals.env[key] = value; Globals.reInit(); return true; },
+    async addEnv(key, value) { Globals.env[key] = value; Globals.reInit(); return true; },
+    async delEnv(key) { deleted.push(key); if (failDelete) return false; delete Globals.env[key]; Globals.reInit(); return true; },
+  });
+  const request = body => ({ json: async () => body });
+  try {
+    for (const operation of [handleSetEnv, handleAddEnv]) {
+      Globals.init({ BLOCK_DATES: 'true', BLOCK_DOMESTIC_REGIONS: 'true' });
+      assert.equal((await operation(request({ key: 'BLOCK_DATES', value: 'true' }))).status, 400);
+      const saved = await operation(request({ key: 'BLOCKED_WORDS', value: '自定义词' }));
+      assert.equal(saved.status, 200);
+      assert.equal(Globals.envs.blockedWords, '自定义词');
+      assert.equal(Globals.env.BLOCK_DATES, undefined);
+      assert.equal(Globals.env.BLOCK_DOMESTIC_REGIONS, undefined);
+    }
+    Globals.init({ BLOCK_DATES: 'true', BLOCKED_WORDS: '自定义词' });
+    assert.equal((await handleDelEnv(request({ key: 'BLOCKED_WORDS' }))).status, 200);
+    assert.equal(Globals.envs.blockedWords, '');
+    Globals.init({ BLOCK_DATES: 'true' });
+    failDelete = true;
+    const failed = await handleSetEnv(request({ key: 'BLOCKED_WORDS', value: '自定义词' }));
+    assert.equal(failed.status, 500);
+    assert.match((await failed.json()).message, /旧配置 BLOCK_DATES 删除失败/);
+    assert.ok(deleted.includes('BLOCK_DOMESTIC_REGIONS'));
+  } finally { HandlerFactory.getHandler = originalFactory; Globals.init({}); }
+});

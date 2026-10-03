@@ -11,6 +11,7 @@ import { Request as NodeFetchRequest } from 'node-fetch';
 import { handleRequest } from './worker.js';
 import { Globals, globals } from './configs/globals.js';
 import { Envs } from './configs/envs.js';
+import { LEGACY_BLOCKED_WORD_KEYS, migrateLegacyBlockedWords, migrateLegacyBlockedWordsText } from './utils/blocked-word-presets.js';
 import { clearBangumiDataCache, initBangumiData, syncBangumiDataLifecycleOnConfigChange } from './utils/bangumi-data-util.js';
 import { judgeRedisValid, initializePersistentCaches } from './utils/redis-util.js';
 import { persistFavorites, refreshFavoriteByKeyword } from './apis/favorite-api.js';
@@ -142,6 +143,36 @@ function checkAndCopyConfigFiles() {
  */
 function loadEnv() {
   try {
+    // 将旧开关迁移为实际正则；写回失败时仍加载原配置，由 Envs 在内存中兼容迁移。
+    const temporaryPath = `${envPath}.blocked-words.tmp`;
+    try {
+      if (fs.existsSync(envPath)) {
+        const content = fs.readFileSync(envPath, 'utf8');
+        const fileValues = Envs.parseRawEnvText(content);
+        const legacyOverrides = Object.fromEntries(LEGACY_BLOCKED_WORD_KEYS
+          .filter(key => Object.hasOwn(systemEnvBackup, key)).map(key => [key, systemEnvBackup[key]]));
+        const migratedText = migrateLegacyBlockedWordsText(content, { ...fileValues, ...legacyOverrides });
+        if (migratedText !== content) {
+          fs.writeFileSync(temporaryPath, migratedText, 'utf8');
+          fs.renameSync(temporaryPath, envPath);
+          console.log('[server] Legacy region/date switches migrated to BLOCKED_WORDS regexes');
+        }
+        // 仅已有系统屏蔽词时保留其最高优先级，否则迁移后的文件列表仍可热更新。
+        if (Object.hasOwn(systemEnvBackup, 'BLOCKED_WORDS')) {
+          systemEnvBackup.BLOCKED_WORDS = migrateLegacyBlockedWords({ ...fileValues, ...systemEnvBackup }).BLOCKED_WORDS;
+        }
+      } else if (LEGACY_BLOCKED_WORD_KEYS.some(key => Object.hasOwn(systemEnvBackup, key))) {
+        systemEnvBackup.BLOCKED_WORDS = migrateLegacyBlockedWords(systemEnvBackup).BLOCKED_WORDS;
+      }
+      for (const key of LEGACY_BLOCKED_WORD_KEYS) {
+        delete systemEnvBackup[key];
+        delete process.env[key];
+      }
+    } catch (error) {
+      try { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); } catch {}
+      console.log('[server] Legacy switch migration could not be saved; using in-memory compatibility:', error.message);
+    }
+
     // 加载 .env 文件（低优先级）
     dotenv.config({ path: envPath, override: true });
 

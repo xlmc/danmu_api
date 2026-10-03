@@ -1,3 +1,4 @@
+import { migrateLegacyBlockedWords, LEGACY_BLOCKED_WORD_KEYS } from '../utils/blocked-word-presets.js';
 import { canonicalPlatformGroup, canonicalPlatformName } from '../utils/platform-util.js';
 /**
  * 环境变量管理模块
@@ -683,6 +684,19 @@ export class Envs {
     return this.accessedEnvVars;
   }
 
+  static resolveBlockedWords() {
+    const raw = this.get('BLOCKED_WORDS', '', 'string');
+    const legacy = {};
+    for (const key of LEGACY_BLOCKED_WORD_KEYS) {
+      if (Object.hasOwn(this.env || {}, key)) legacy[key] = this.env[key];
+      else if (typeof process !== 'undefined' && Object.hasOwn(process.env || {}, key)) legacy[key] = process.env[key];
+    }
+    const value = migrateLegacyBlockedWords({ ...legacy, BLOCKED_WORDS: raw }).BLOCKED_WORDS;
+    this.originalEnvVars.set('BLOCKED_WORDS', value);
+    this.accessedEnvVars.set('BLOCKED_WORDS', value);
+    return value;
+  }
+
   /**
    * 初始化环境变量
    * @param {Object} env 环境对象
@@ -691,6 +705,10 @@ export class Envs {
    */
   static load(env = {}) {
     this.env = env;
+    for (const key of LEGACY_BLOCKED_WORD_KEYS) {
+      this.originalEnvVars.delete(key);
+      this.accessedEnvVars.delete(key);
+    }
 
     // 环境变量分类和描述映射
     const envVarConfig = {
@@ -737,11 +755,9 @@ export class Envs {
       'USE_BANGUMI_DATA': { category: 'match', type: 'boolean', description: 'Bangumi Data 加速匹配开关，开启后将动画元数据缓存至本地或内存中给源调用，提升动画源的检索与匹配速度并解锁隐藏/区域番剧。\n本地和Docker部署使用时请先挂载.cache目录获得最佳体验，云部署使用时会将数据缓存至临时内存中如果体验不佳请关闭。' },
 
       // 弹幕配置
-      'BLOCKED_WORDS': { category: 'danmu', type: 'text', description: '屏蔽词列表：支持 /正则/flags、纯文本词、@人名（按语境分析匹配：二字人名仅在明确人物语境中命中，避免误伤同名词；姓氏仅在被称谓指代时命中，如"杨老师"）及 地区:地区名（仅命中"来自海南""海南网友"等明确地区语境；地区:* 启用全部内置预设地区名单）' },
+      'BLOCKED_WORDS': { category: 'danmu', type: 'text', description: '屏蔽词列表：支持 /正则/flags、纯文本词、@人名（按语境分析匹配：二字人名仅在明确人物语境中命中，避免误伤同名词；姓氏仅在被称谓指代时命中，如"杨老师"）；地区和日期时间可在编辑器中添加预设正则，删除相应规则即可停用。兼容 地区:地区名 和 地区:*（包含名称即屏蔽整条）' },
       'BLOCK_DOMESTIC_CELEBRITIES': { category: 'danmu', type: 'boolean', description: '当前华语作品演员/角色名屏蔽开关，默认关闭。开启后通过 TMDB 获取当前国产/港台作品的中文演员名和角色名；作品角色表中的完整角色名和派生昵称直接匹配（含二字角色名、去姓称呼及单字名的阿/子/儿/哥/姐称呼；同名普通词也会命中）；演员完整名直接匹配，含二字姓名。需要可用的 TMDB_API_KEY，或能够代为认证的 TMDB 反代；动画角色名单同时合并 Bangumi 当前条目及动画前传、续集的角色资料；维基百科补充当前作品演员、角色及表中化名，校验作品名称与首播/上映年份，不遍历演员作品表。各资料源与弹幕拉取并行，返回前完成过滤，匹配兼容简繁中文；查询失败或名单不完整时五分钟后允许重试，完整名单缓存一天。' },
       'PERSON_FILTER_EXCLUDED_TITLES': { category: 'danmu', type: 'text', description: '不屏蔽人物的动漫/作品名单，支持逗号、分号或换行分隔。可填写实际作品名或已有别名，例如“诛仙4”；系统通过现有名称对应关系取得实际作品名后判断是否免屏蔽，名单里只填名字。仅跳过自动演员/角色屏蔽，其他屏蔽词、地区和日期规则继续生效。' },
-      'BLOCK_DATES': { category: 'danmu', type: 'boolean', description: '日期与时间弹幕屏蔽，默认关闭。支持 2026.9.4、2026-09-04、2026/9/4、2026年9月4日 等有效日期，以及 12:30、01:23:45 等时间（含全角冒号）；普通小数、无效日期和带 v 前缀的版本号保留。' },
-      'BLOCK_DOMESTIC_REGIONS': { category: 'danmu', type: 'boolean', description: '中国大陆地区名屏蔽开关，默认关闭。仅匹配“来自海南”“海南网友”“朝阳区”等明确地区语境，不屏蔽“海南鸡饭”“朝阳升起”“身体安康”等无关内容。' },
       'GROUP_MINUTE': { category: 'danmu', type: 'number', description: '分钟内合并去重（0表示不去重），默认1', min: 0, max: 30 },
       'DANMU_LIMIT': { category: 'danmu', type: 'number', description: '弹幕数量限制，单位为k，即千：默认 0，表示不限制弹幕数', min: 0, max: 100 },
       'DANMU_SIMPLIFIED_TRADITIONAL': { category: 'danmu', type: 'select', options: ['default', 'simplified', 'traditional'], description: '弹幕简繁体转换设置：default（默认不转换）、simplified（繁转简）、traditional（简转繁）' },
@@ -809,11 +825,9 @@ export class Envs {
       animeTitleFilter: this.resolveAnimeTitleFilter(), // 剧名正则过滤
       episodeTitleFilter: this.resolveEpisodeTitleFilter(), // 剧集标题正则过滤
       titleNoiseFilter: this.resolveTitleNoiseFilter(), // 剧名杂音清理规则
-      blockedWords: this.get('BLOCKED_WORDS', '', 'string'), // 屏蔽词列表
+      blockedWords: this.resolveBlockedWords(), // 屏蔽词列表
       blockDomesticCelebrities: this.get('BLOCK_DOMESTIC_CELEBRITIES', false, 'boolean'), // 按当前作品演员/角色表屏蔽姓名
       personFilterExcludedTitles: this.get('PERSON_FILTER_EXCLUDED_TITLES', '', 'string'),
-      blockDates: this.get('BLOCK_DATES', false, 'boolean'), // 日期与时间屏蔽
-      blockDomesticRegions: this.get('BLOCK_DOMESTIC_REGIONS', false, 'boolean'), // 仅按明确地区语境屏蔽地区名称
       groupMinute: Math.min(this.get('GROUP_MINUTE', 1, 'number'), 30), // 分钟内合并去重（默认 1，最大值30，0表示不去重）
       danmuLimit: this.get('DANMU_LIMIT', 0, 'number'), // 等间隔采样限制弹幕总数，单位为k，即千：默认 0，表示不限制弹幕数，若改为5，弹幕总数在超过5000的情况下会将弹幕数控制在5000
       uiTheme: this.get('UI_THEME', 'lavender', 'string').toLowerCase(), // 管理界面主题
