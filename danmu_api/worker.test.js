@@ -912,7 +912,26 @@ test('worker.js API endpoints', async (t) => {
     resetSearchState();
   });
 
-  await t.test('地区过滤默认关闭且只匹配明确地区语境', () => {
+  await t.test('日期时间过滤覆盖常见写法且保留无效日期及普通数字', () => {
+    const blocked = [
+      '10月1日二刷', '2026 9月30号报道', '10.1国庆节快乐',
+      '2026.9.30 8点35一刷', '26年9月30已看', '2026.10月1日',
+      '10月1日2点留', '19时18分看的', '19：18分看的', '8点半',
+      '2024.2.29', '2月29日',
+    ];
+    const kept = [
+      '普通小数10.1', 'v2026.9.30', '2026.2.29', '2026年 2月29日',
+      '2026 2月29日', '2026.13.1', '13月1日', '2月30日',
+      '26年2月29日', '25:00', '8点65', '24点35', '127.0.0.1:29321',
+    ];
+    const items = [...blocked, ...kept].map(m => ({ m }));
+    const result = filterDanmusByBlockedNames(items, [], { blockDates: true });
+    assert.deepEqual(result.danmus.map(item => item.m), kept);
+    assert.equal(result.removedCount, blocked.length);
+    assert.equal(filterDanmusByBlockedNames(items, []).removedCount, 0);
+  });
+
+  await t.test('地区过滤默认关闭且启用后按名称包含匹配', () => {
     Globals.init({});
     assert.equal(Globals.envs.blockDomesticRegions, false);
     Globals.init({ BLOCK_DOMESTIC_REGIONS: 'true' });
@@ -930,18 +949,14 @@ test('worker.js API endpoints', async (t) => {
       { m: '白鹿原很好看' },
     ], [], { regionNames: DOMESTIC_REGION_NAMES });
 
-    assert.equal(result.removedCount, 4);
+    assert.equal(result.removedCount, 8);
     assert.deepEqual(result.danmus.map(item => item.m), [
-      '海南鸡饭真好吃',
-      '来自海南鸡饭的厨师',
-      '朝阳升起来了',
-      '祝大家身体安康',
       '白鹿原很好看'
     ]);
     resetSearchState();
   });
 
-  await t.test('BLOCKED_WORDS 支持 地区: 条目并按地区语境匹配', () => {
+  await t.test('BLOCKED_WORDS 支持 地区: 条目并按名称包含匹配', () => {
     const raw = '地区:海南, 地区:朝阳, 打卡';
     const segments = splitBlockedWords(raw);
     assert.deepEqual(segments, ['地区:海南', '地区:朝阳', '打卡']);
@@ -960,19 +975,16 @@ test('worker.js API endpoints', async (t) => {
       { p: '1,1,16777215,[test]', m: '来自海南的朋友' },   // "来自"+地区语境 → 拦截
       { p: '2,1,16777215,[test]', m: '海南网友来了' },      // "网友"后缀 → 拦截
       { p: '3,1,16777215,[test]', m: '朝阳区天气不错' },     // "区"后缀 → 拦截
-      { p: '4,1,16777215,[test]', m: '海南鸡饭真好吃' },     // 无地区语境 → 保留
-      { p: '5,1,16777215,[test]', m: '朝阳升起来了' },       // 无地区语境 → 保留
+      { p: '4,1,16777215,[test]', m: '海南鸡饭真好吃' },     // 地区名称包含 → 拦截
+      { p: '5,1,16777215,[test]', m: '朝阳升起来了' },       // 地区名称包含 → 拦截
       { p: '6,1,16777215,[test]', m: '今天打卡第三天' },     // 纯文本字面匹配 → 拦截
     ], 'test');
-    assert.deepEqual(out.map(item => item.m), [
-      '海南鸡饭真好吃',
-      '朝阳升起来了'
-    ]);
+    assert.deepEqual(out.map(item => item.m), []);
 
     resetSearchState();
   });
 
-  await t.test('地区:* 展开为内置预设地区名单并按地区语境匹配', () => {
+  await t.test('地区:* 展开为内置预设地区名单并按名称包含匹配', () => {
     Globals.init({
       BLOCKED_WORDS: '地区:*, 地区:雄安',
       GROUP_MINUTE: '0',
@@ -983,13 +995,11 @@ test('worker.js API endpoints', async (t) => {
       { p: '1,1,16777215,[test]', m: '来自四川的网友' },   // 内置预设(四川) + "来自"语境 → 拦截
       { p: '2,1,16777215,[test]', m: '长沙网友现身说法' },  // 内置预设(长沙) + "网友"后缀 → 拦截
       { p: '3,1,16777215,[test]', m: '雄安网友留言' },      // 自定义地区(雄安) + "网友"后缀 → 拦截
-      { p: '4,1,16777215,[test]', m: '海南鸡饭真好吃' },     // 语境不符 → 保留
-      { p: '5,1,16777215,[test]', m: '朝阳升起来了' },       // 语境不符 → 保留
+      { p: '4,1,16777215,[test]', m: '海南鸡饭真好吃' },     // 地区名称包含 → 拦截
+      { p: '5,1,16777215,[test]', m: '朝阳升起来了' },       // 地区名称包含 → 拦截
       { p: '6,1,16777215,[test]', m: '新区建设真快' },       // 与地区无关 → 保留
     ], 'test');
     assert.deepEqual(out.map(item => item.m), [
-      '海南鸡饭真好吃',
-      '朝阳升起来了',
       '新区建设真快'
     ]);
 
