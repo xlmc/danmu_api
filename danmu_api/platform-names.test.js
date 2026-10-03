@@ -13,7 +13,7 @@ import { convertToDanmakuJson } from './utils/danmu-util.js';
 
 
 
-Globals.init({TMDB_MATCH_ASSIST:'false',  PLATFORM_ORDER: 'tencent&iqiyi&bilibili,dandan', DANMU_OUTPUT_FORMAT: 'json' });
+Globals.init({PLATFORM_ORDER: 'tencent&iqiyi&bilibili,dandan', DANMU_OUTPUT_FORMAT: 'json' });
 
 test('canonical configuration and old aliases resolve to the same platform groups', () => {
  assert.equal(canonicalPlatformName('qq'), 'tencent');

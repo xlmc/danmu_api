@@ -953,67 +953,7 @@ export async function getTmdbJaOriginalTitle(title, signal = null, sourceLabel =
  * @param {number|string} episode - 集数（可选）
  * @returns {Promise<string>} 返回中文标题，如果查询失败则返回原标题
  */
-export async function getTMDBChineseTitle(title, season = null, episode = null) {
-  // 如果包含中文，直接返回原标题
-  if (!isNonChinese(title)) {
-    return title;
-  }
 
-// 优先尝试本地 Bangumi Data 转换
-  if (globals.useBangumiData) {
-    const cleanTitle = cleanSearchQuery(title);
-    const localMatches = await searchBangumiData(cleanTitle, ['tmdb', 'bangumi', 'anidb']);
-    if (localMatches && localMatches.length > 0) {
-      const m = localMatches[0];
-      // 找一个不全是外文的翻译作为中文名
-      const displayTitle = m.titles.find(t => t && !isNonChinese(t)) || m.titles[1];
-      if (displayTitle && !isNonChinese(displayTitle)) {
-        log("info", `[system] [tmdb] 命中本地 Bangumi Data: ${title} -> ${displayTitle}（检索词：${cleanTitle}）`);
-        return displayTitle;
-      }
-    }
-  }
-
-  // 判断是电影还是电视剧
-  const isTV = season !== null && season !== undefined;
-  const mediaType = isTV ? 'tv' : 'movie';
-
-  try {
-    // 搜索媒体内容
-    const searchResponse = await searchTmdbTitles(title, mediaType);
-
-    // 检查是否有结果
-    if (!searchResponse.data.results || searchResponse.data.results.length === 0) {
-      log("info", '[system] [tmdb] TMDB未找到任何结果');
-      return title;
-    }
-
-    // 获取第一个匹配结果的 ID
-    // 查找第一个 name/title 包含中文的结果
-    const firstResult = searchResponse.data.results.find(result => {
-      const resultName = isTV ? result.name : result.title;
-      return resultName && !isNonChinese(resultName);
-    });
-
-    // 如果没有找到包含中文的结果，使用第一个结果
-    const selectedResult = firstResult || searchResponse.data.results[0];
-
-    // 电视剧使用 name 字段，电影使用 title 字段
-    const chineseTitle = isTV ? selectedResult.name : selectedResult.title;
-
-    // 如果有中文标题则返回，否则返回原标题
-    if (chineseTitle) {
-      log("info", `原标题: ${title} -> 中文标题: ${chineseTitle}`);
-      return chineseTitle;
-    } else {
-      return title;
-    }
-
-  } catch (error) {
-    log("error", '查询 TMDB 时出错:', error);
-    return title;
-  }
-}
 
 // =====================
 // 智能标题替换相关函数

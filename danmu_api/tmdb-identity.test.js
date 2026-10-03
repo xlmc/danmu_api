@@ -62,7 +62,7 @@ test('saved identities distinguish movie and TV namespaces and reject ambiguous 
 });
 
 test('TMDB failure leaves an unresolved platform search unmatched', async () => {
-  Globals.init({TMDB_MATCH_ASSIST:'true',TMDB_API_KEY:'test-key',TOKEN:'87654321',SOURCE_ORDER:'tencent',PLATFORM_ORDER:'tencent',LOCAL_CACHE_ENABLED:'false',LOCAL_REDIS_URL:'',USE_BANGUMI_DATA:'false',TITLE_MAPPING_TABLE_URL:'',AUTO_MATCH_MAPPING_TABLE_URL:'',LOG_LEVEL:'error'});
+  Globals.init({TMDB_API_KEY:'test-key',TOKEN:'87654321',SOURCE_ORDER:'tencent',PLATFORM_ORDER:'tencent',LOCAL_CACHE_ENABLED:'false',LOCAL_REDIS_URL:'',USE_BANGUMI_DATA:'false',TITLE_MAPPING_TABLE_URL:'',AUTO_MATCH_MAPPING_TABLE_URL:'',LOG_LEVEL:'error'});
   Globals.animes=[];Globals.episodeIds=[];Globals.searchCache=new Map();Globals.queryCacheInitialized=false;
   const source=getSourceByKey('tencent'),saved=source.search,fetch=globalThis.fetch;let calls=0;
   source.search=async()=>{calls++;return [];};globalThis.fetch=async()=>new Response('{}',{status:401});
@@ -73,7 +73,7 @@ test('TMDB failure leaves an unresolved platform search unmatched', async () => 
 });
 
 test('match endpoint binds TMDB query ID to remote season rules and reuses the verified platform directory', async () => {
-  Globals.init({TMDB_MATCH_ASSIST:'true',TMDB_API_KEY:'test-key',TOKEN:'87654321',SOURCE_ORDER:'tencent',PLATFORM_ORDER:'tencent',MATCH_SEARCH_BUDGET_MS:'5',MERGE_SOURCE_PAIRS:'',LOCAL_CACHE_ENABLED:'false',LOCAL_REDIS_URL:'',USE_BANGUMI_DATA:'false',LOG_LEVEL:'error',TITLE_MAPPING_TABLE_URL:'',AUTO_MATCH_MAPPING_TABLE_URL:'https://mapping.test/tmdb-id-rules',TITLE_TO_CHINESE:'false'});
+  Globals.init({TMDB_API_KEY:'test-key',TOKEN:'87654321',SOURCE_ORDER:'tencent',PLATFORM_ORDER:'tencent',MATCH_SEARCH_BUDGET_MS:'5',MERGE_SOURCE_PAIRS:'',LOCAL_CACHE_ENABLED:'false',LOCAL_REDIS_URL:'',USE_BANGUMI_DATA:'false',LOG_LEVEL:'error',TITLE_MAPPING_TABLE_URL:'',AUTO_MATCH_MAPPING_TABLE_URL:'https://mapping.test/tmdb-id-rules',});
   Globals.animes=[];Globals.episodeIds=[];Globals.episodeNum=10001;Globals.searchCache=new Map();Globals.lastSelectMap=new Map();Globals.queryCacheInitialized=false;
   const source=getSourceByKey('tencent'),savedSearch=source.search,savedHandle=source.handleAnimes,fetch=globalThis.fetch;
   const urls=[];let searches=0;
@@ -107,7 +107,7 @@ test('match endpoint binds TMDB query ID to remote season rules and reuses the v
   }finally{globalThis.fetch=fetch;source.search=savedSearch;source.handleAnimes=savedHandle;}
 });
 async function adaptiveFixture(fileName, catalog, {tmdb=null,env={},probeDirectory=false}={}) {
-  Globals.init({TMDB_MATCH_ASSIST:'true',TOKEN:'87654321',SOURCE_ORDER:'tencent',PLATFORM_ORDER:'tencent',MATCH_SEARCH_BUDGET_MS:'0',MERGE_SOURCE_PAIRS:'',LOCAL_CACHE_ENABLED:'false',LOCAL_REDIS_URL:'',USE_BANGUMI_DATA:'false',TITLE_MAPPING_TABLE:'',TITLE_MAPPING_TABLE_URL:'',AUTO_MATCH_MAPPING_TABLE:'',AUTO_MATCH_MAPPING_TABLE_URL:'',TMDB_API_KEY:'test-key',LOG_LEVEL:'error',...env});
+  Globals.init({TOKEN:'87654321',SOURCE_ORDER:'tencent',PLATFORM_ORDER:'tencent',MATCH_SEARCH_BUDGET_MS:'0',MERGE_SOURCE_PAIRS:'',LOCAL_CACHE_ENABLED:'false',LOCAL_REDIS_URL:'',USE_BANGUMI_DATA:'false',TITLE_MAPPING_TABLE:'',TITLE_MAPPING_TABLE_URL:'',AUTO_MATCH_MAPPING_TABLE:'',AUTO_MATCH_MAPPING_TABLE_URL:'',TMDB_API_KEY:'test-key',LOG_LEVEL:'error',...env});
   Globals.animes=[];Globals.episodeIds=[];Globals.episodeNum=10001;Globals.searchCache=new Map();Globals.lastSelectMap=new Map();Globals.queryCacheInitialized=false;
   const source=getSourceByKey('tencent');const saved={search:source.search,handle:source.handleAnimes,comments:source.getComments,fetch:globalThis.fetch};
   const searches=[],requests=[];
@@ -166,9 +166,10 @@ test('platform directory HTTP requests are shared across ordinary and TMDB-assis
   assert.equal(result.requests.filter(url=>url.includes('adaptive-directory')).length,1);
 });
 
-test('adaptive matching is the default and removed sources cannot be configured',()=>{
+test('only the new matcher remains and removed sources cannot be configured',()=>{
   Globals.init({SOURCE_ORDER:'xigua,maiduidui,tencent',PLATFORM_ORDER:'xigua,maiduidui,tencent'});
-  assert.equal(Globals.envs.tmdbMatchAssist,true);
+  assert.equal(Globals.envs.tmdbMatchAssist,undefined);
+  assert.equal(Globals.envs.titleToChinese,undefined);
   assert.deepEqual(Globals.envs.sourceOrderArr,['tencent']);
   assert.equal(getSourceByKey('xigua'),null);
   assert.ok(!Globals.envs.allowedPlatforms.includes('maiduidui'));

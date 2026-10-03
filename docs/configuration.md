@@ -19,7 +19,7 @@
 
 ## 首次匹配与 TMDB 辅助识别
 
-自动匹配默认启用 TMDB_MATCH_ASSIST=true。首次请求从文件名解析标题、年份、季集，直接并行搜索已启用的官方平台和 dandan。候选须满足标题、已知年份、类型与季集；同名同季但年份不同且文件名没有年份时，不直接选第一个。明确结果直接返回，不要求先查询 TMDB。
+自动匹配仅保留新版链路。首次请求从文件名解析标题、年份、季集，直接并行搜索已启用的官方平台和 dandan。候选须满足标题、已知年份、类型与季集；同名同季但年份不同且文件名没有年份时，不直接选第一个。明确结果直接返回，不要求先查询 TMDB。
 
 普通路径无法确认时，才查询 TMDB，并用一个详情请求取得名称、别名和季信息，不经过 IMDb 或豆瓣。TMDB 确认后可用中文标题补搜，最多追加一个标题；同次请求同源同搜索参数复用原结果。已确认的目录仍沿用现有复用与优先源提前返回机制，搜索预算默认 1500ms；慢源继续完成完整搜索。
 
@@ -33,7 +33,7 @@ TMDB 身份为 tv:ID 或 movie:ID，随匹配成功的目录保存；失败候�
 
 12345 仅为格式示例，须替换为核实的 ID。两侧都写 ID 时须一致；已知作品身份与规则身份冲突时不应用规则。无需先给整张旧表补齐 ID。
 
-TMDB_MATCH_ASSIST=false 恢复旧匹配行为；TITLE_TO_CHINESE 在旧模式控制预先译名，新模式将查询延后到需要辅助识别时。手动搜索接口保持原有行为。
+旧匹配分支和预先译名开关已移除；TMDB 查询仅在需要辅助识别时发生。手动搜索接口保持原有行为。
 
 ## 弹幕来源
 
@@ -65,8 +65,6 @@ TMDB_MATCH_ASSIST=false 恢复旧匹配行为；TITLE_TO_CHINESE 在旧模式控
 | EPISODE_TITLE_FILTER | text | 剧集标题过滤规则 |
 | ENABLE_ANIME_EPISODE_FILTER | boolean | 控制手动搜索的时候是否根据ANIME_TITLE_FILTER进行剧名过滤以及根据EPISODE_TITLE_FILTER进行集标题过滤 |
 | STRICT_TITLE_MATCH | boolean | 严格标题匹配模式 |
-| TMDB_MATCH_ASSIST | boolean | 默认 true；普通搜索无法确认时使用 TMDB 辅助识别，并加强候选与季集校验；false 恢复旧行为。 |
-| TITLE_TO_CHINESE | boolean | 外语标题转换中文开关 |
 | ANIME_TITLE_SIMPLIFIED | boolean | 搜索的剧名标题自动繁转简 |
 | TITLE_MAPPING_TABLE | map | 本机剧名映射表，用于自动匹配时替换标题进行搜索。本机规则优先于远程规则。远程映射默认关闭；启用时请在下方 TITLE_MAPPING_TABLE_URL 填写：https://raw.githubusercontent.com/xlmc/danmu-mapping/main/Word/2026.txt。格式：原始标题->映射标题;原始标题->映射标题;...，例如："唐朝诡事录->唐朝诡事录之西行;国色芳华->锦绣芳华" |
 | TITLE_MAPPING_TABLE_URL | text | 远程剧名映射表（默认关闭，填写后启用）。推荐地址：https://raw.githubusercontent.com/xlmc/danmu-mapping/main/Word/2026.txt。程序首次下载后保存到本地，匹配时只读取本地缓存，不连接远程；每天北京时间05:30更新，失败保留旧缓存。本机 TITLE_MAPPING_TABLE 优先于远程表。支持 GitHub 文件页、Gist、jsDelivr 及任意 TXT 直链；内容格式为每行 原始标题->映射标题，# 或 // 开头为注释 |
