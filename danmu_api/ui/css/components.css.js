@@ -3228,7 +3228,7 @@ body[data-theme$="-dark"] .heatmap-bar {
 #logs-section .lv-toolbar { margin:14px 0 10px;align-items:center;gap:8px; }
 #logs-section .lv-toolbar input[type=search] { flex:1 1 280px;min-width:180px;width:auto;margin:0; }
 #logs-section .lv-toolbar input,#logs-section .lv-toolbar select,#logs-section .lv-source-picker>summary { box-sizing:border-box;height:36px;background:var(--theme-input-bg);color:var(--theme-text);border:1px solid var(--theme-border);border-radius:8px;padding:0 11px;font-weight:400;font-family:inherit;font-size:13px;line-height:34px;max-width:100%;margin:0;box-shadow:none; }
-#logs-section .lv-toolbar select { width:auto;max-width:200px;padding-right:28px; }
+#logs-section .lv-toolbar select { appearance:none;-webkit-appearance:none;width:auto;max-width:200px;padding-right:28px;background-image:url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2712%27 height=%2712%27 viewBox=%270 0 12 12%27%3E%3Cpath d=%27m3 4.5 3 3 3-3%27 fill=%27none%27 stroke=%27%23888%27 stroke-width=%271.4%27/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center; }
 #logs-section .lv-toolbar input:focus-visible,#logs-section .lv-toolbar select:focus-visible,#logs-section .lv-source-picker>summary:focus-visible { outline:2px solid var(--theme-accent);outline-offset:2px; }
 .lv-source-picker { position:relative;min-width:130px; }
 #logs-section .lv-source-picker>summary { cursor:pointer;list-style:none;padding-right:28px; }
@@ -3243,7 +3243,7 @@ body[data-theme$="-dark"] .heatmap-bar {
 #logs-section .lv-reading input[type=checkbox]:checked { background:var(--theme-accent);border-color:var(--theme-accent); }
 #logs-section .lv-reading input[type=checkbox]:checked::after { left:14px; }
 #logs-section .lv-reading input:focus-visible { outline:2px solid var(--theme-accent);outline-offset:3px; }
-#logs-section .lv-reading .btn,#logs-section #log-reset { flex:0 0 auto;box-sizing:border-box;height:32px;padding:0 10px;margin:0;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--theme-muted);font-size:12px;font-weight:400;line-height:30px;box-shadow:none;white-space:nowrap; }
+#logs-section .lv-reading .btn,#logs-section #log-reset { flex:0 0 auto;box-sizing:border-box;height:32px;padding:0 10px;margin:0;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--theme-muted);font-size:13px;font-weight:400;line-height:30px;box-shadow:none;white-space:nowrap; }
 #logs-section .lv-reading .btn:hover,#logs-section #log-reset:hover { background:var(--theme-accent-soft);color:var(--theme-accent);transform:none; }
 #log-latest::before { content:"↓";margin-right:5px; }
 #log-export::before { content:"↗";margin-right:5px; }
@@ -3294,6 +3294,13 @@ body[data-theme$="-dark"] .heatmap-bar {
  .lv-source-time span:last-child { grid-column:2; }
  .lv-reading { font-size:13px; }
 }
+/* One explicit type scale for log filters and reading controls, including native buttons. */
+#logs-section .lv-tabs,#logs-section #log-categories,#logs-section .lv-toolbar,#logs-section .lv-reading { font-family:inherit;font-size:13px;font-weight:400;line-height:20px; }
+#logs-section .lv-tabs button,#logs-section #log-categories button,#logs-section .lv-toolbar input,#logs-section .lv-toolbar select,#logs-section .lv-toolbar summary,#logs-section .lv-toolbar button,#logs-section .lv-reading label,#logs-section .lv-reading button,#logs-section #log-sources label { font-family:inherit;font-size:13px;font-weight:400;letter-spacing:normal; }
+#logs-section .lv-toolbar input::placeholder { font-family:inherit;font-size:13px;font-weight:400;opacity:1; }
+#logs-section .lv-toolbar input,#logs-section .lv-toolbar select,#logs-section .lv-toolbar summary { line-height:20px; }
+#logs-section .lv-source-picker>summary { display:flex;align-items:center; }
+#logs-section .lv-tabs button,#logs-section #log-categories button,#logs-section #log-reset,#logs-section .lv-reading .btn { line-height:20px; }
 .env-config-toolbar {
     /* 继承 preview-toolbar 样式 */
 }
