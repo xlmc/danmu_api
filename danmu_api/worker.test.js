@@ -26,6 +26,7 @@ import { getDoubanDetail, getDoubanInfoByImdbId, searchDoubanTitles } from "./ut
 import AIClient from './utils/ai-util.js';
 import { getSourceByKey } from './sources/registry.js';
 import BilibiliSource from "./sources/bilibili.js";
+import MangoSource from "./sources/mango.js";
 import { parseHongguoPlayerUrl } from "./sources/hongguo.js";
 import TencentSource from "./sources/tencent.js";
 import YoukuSource from "./sources/youku.js";
@@ -3750,6 +3751,78 @@ test('dandan formatComments 按实时拉取标记区分处理', () => {
   assert.strictEqual(dandan.formatComments([native])[0].p, '12.34,1,25,a16777215,0', '原生弹幕执行颜色转换');
 });
 
+test('dandan 关联链接分发仅限已在 SOURCE_ORDER 开启的源', async () => {
+  const location = 'https://x.test/redirect?urls=https://www.bilibili.com/video/BV1xx|https://v.qq.com/x/cover/abc.html&shift=0,0';
+  const originalOrder = Globals.envs.sourceOrderArr;
+  const originalAccount = Globals.envs.dandanplayAccount;
+  const originalPassword = Globals.envs.dandanplayPassword;
+  const originalBilibiliGet = BilibiliSource.prototype.getEpisodeDanmu;
+  const originalBilibiliFormat = BilibiliSource.prototype.formatComments;
+  const originalTencentGet = TencentSource.prototype.getEpisodeDanmu;
+  const originalTencentFormat = TencentSource.prototype.formatComments;
+  const pulled = [];
+
+  // 网关登录应答、评论接口回传 302 关联链接、原生弹幕地址应答
+  const gatewayFetch = async (url) => {
+    const target = String(url);
+    if (target.endsWith('/api/v2/login')) {
+      return mockJsonResponse({ success: true, token: 'mock-token', tokenExpireTime: '2099-01-01T00:00:00Z' });
+    }
+    if (target.includes('/api/v2/comment/')) {
+      return { ok: false, status: 302, url: target, headers: new Headers({ location }), text: async () => '' };
+    }
+    return mockJsonResponse({ comments: [] });
+  };
+
+  try {
+    Globals.envs.dandanplayAccount = 'account@example.com';
+    Globals.envs.dandanplayPassword = 'password';
+    BilibiliSource.prototype.getEpisodeDanmu = async () => {
+      pulled.push('bilibili');
+      return [{ cid: 1, p: '1.00,1,25,16777215,0', t: 1, m: '来自B站' }];
+    };
+    BilibiliSource.prototype.formatComments = (list) => list;
+    TencentSource.prototype.getEpisodeDanmu = async () => { pulled.push('tencent'); return []; };
+    TencentSource.prototype.formatComments = (list) => list;
+
+    await withMockFetch(gatewayFetch, async () => {
+      // 仅开启 bilibili：只拉取 bilibili，跳过未开启的 tencent
+      Globals.envs.sourceOrderArr = ['bilibili'];
+      const onlyBilibili = await new DandanSource().getEpisodeDanmu('ep-1');
+      assert.deepStrictEqual(pulled, ['bilibili'], '仅分发已开启的源');
+      assert.strictEqual(onlyBilibili.length, 1, '分发结果来自已开启的源');
+      assert.strictEqual(onlyBilibili[0].realTimeSource, 'bilibili', '保留自用版统一的平台标识');
+
+      // 仅开启 tencent：分发目标随之切换
+      pulled.length = 0;
+      Globals.envs.sourceOrderArr = ['tencent'];
+      await new DandanSource().getEpisodeDanmu('ep-2');
+      assert.deepStrictEqual(pulled, ['tencent'], '开启源变化后分发目标随之切换');
+
+      // 两个关联源都未开启：全部跳过
+      pulled.length = 0;
+      Globals.envs.sourceOrderArr = ['douban'];
+      const none = await new DandanSource().getEpisodeDanmu('ep-3');
+      assert.deepStrictEqual(pulled, [], '未开启关联源时不拉取');
+      assert.deepStrictEqual(none, [], '未开启关联源时无关联弹幕');
+
+      // 源已开启但已被独立选择的合并源覆盖：同样跳过，避免重复拉取
+      pulled.length = 0;
+      Globals.envs.sourceOrderArr = ['bilibili', 'tencent'];
+      await new DandanSource().getEpisodeDanmu('ep-4', ['bilibili:123']);
+      assert.deepStrictEqual(pulled, ['tencent'], '已开启但被合并源覆盖的平台仍跳过');
+    });
+  } finally {
+    Globals.envs.sourceOrderArr = originalOrder;
+    Globals.envs.dandanplayAccount = originalAccount;
+    Globals.envs.dandanplayPassword = originalPassword;
+    BilibiliSource.prototype.getEpisodeDanmu = originalBilibiliGet;
+    BilibiliSource.prototype.formatComments = originalBilibiliFormat;
+    TencentSource.prototype.getEpisodeDanmu = originalTencentGet;
+    TencentSource.prototype.formatComments = originalTencentFormat;
+  }
+});
+
 test('fongmi-api season aware scoring', () => {
   // 季号提取: SxxExx / 第x季 / Season N / 2x05; 综艺日期与纯集数不误判
   assert.equal(extractFongmiSeasonNumber('人生切割术 S02E05'), 2);
@@ -5490,3 +5563,30 @@ test('youku source falls back to a locally generated cna', async (t) => {
     assert.ok(body.count > 0);
   });
 });
+
+test('mango variety episodes with trailing part markers should sort 上 before 下 within each 期', () => {
+  Globals.init({});
+  const source = new MangoSource();
+
+  // 平台原始顺序为最新在前（每期"下"先于"上"），分部标记在末尾括号中，含全/半角括号混用
+  const trailingParen = source._processVarietyEpisodes([
+    { t1: '第2期：绝叫山庄Ⅱ（下）', t2: '2026-07-29', ts: '4' },
+    { t1: '第2期：绝叫山庄Ⅱ（上）', t2: '2026-07-29', ts: '3' },
+    { t1: '第1期：绝叫山庄Ⅰ（下)', t2: '2026-07-22', ts: '2' },
+    { t1: '第1期：绝叫山庄Ⅰ（上）', t2: '2026-07-22', ts: '1' },
+  ]);
+  assert.deepEqual(trailingParen.map(ep => ep.t1), [
+    '第1期：绝叫山庄Ⅰ（上）',
+    '第1期：绝叫山庄Ⅰ（下)',
+    '第2期：绝叫山庄Ⅱ（上）',
+    '第2期：绝叫山庄Ⅱ（下）',
+  ]);
+
+  // 紧跟格式"第N期上/下"的既有排序行为保持不变
+  const direct = source._processVarietyEpisodes([
+    { t1: '第3期下', t2: '2026-08-05', ts: '6' },
+    { t1: '第3期上', t2: '2026-08-05', ts: '5' },
+  ]);
+  assert.deepEqual(direct.map(ep => ep.t1), ['第3期上', '第3期下']);
+});
+
