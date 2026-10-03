@@ -42,6 +42,14 @@ test('file preferences, mapping rules and offset rules accept canonical names an
  }
 });
 
+test('removed members do not discard the priority of surviving platforms in a legacy group', () => {
+ const original = Envs.env;
+ try {
+  Envs.env = { PLATFORM_ORDER: 'tencent&youku,renren&hanjutv&dandan,leshi&xigua&sohu,hongguo,migu' };
+  assert.deepEqual(Envs.resolvePlatformOrder(), ['tencent&youku','dandan','leshi&sohu','hongguo','migu',null]);
+ } finally {Envs.env=original;}
+});
+
 test('cached link and episode labels and generated segment types use canonical names', () => {
  const anime = new Anime({links:[{title:'【qq&qiyi&bilibili1】 第1集'}]});
  assert.equal(anime.links[0].title,'【tencent&iqiyi&bilibili】 第1集');

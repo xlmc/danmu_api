@@ -193,16 +193,9 @@ export class Envs {
     const orderArr = rawOrder
       .split(',')
       .map(canonicalPlatformGroup)
-      .filter(item => {
-        if (!item) return false;
-        // 如果包含 &，则分割校验每一部分是否有效
-        if (item.includes('&')) {
-            const parts = item.split('&').map(p => p.trim());
-            return parts.every(p => this.ALLOWED_PLATFORMS.includes(p));
-        }
-        // 单个平台直接校验
-        return this.ALLOWED_PLATFORMS.includes(item);
-      });
+      // 旧配置中已移除的平台只剔除自身，不能连带丢掉同组有效平台的优先级。
+      .map(group => group.split('&').filter(platform => this.ALLOWED_PLATFORMS.includes(platform)).join('&'))
+      .filter(Boolean);
 
     this.accessedEnvVars.set('PLATFORM_ORDER', orderArr);
 
@@ -561,8 +554,8 @@ export class Envs {
       'RATE_LIMIT_MAX_REQUESTS': { category: 'api', type: 'number', description: '限流配置：1分钟内最大请求次数，0表示不限流，默认3', min: 0, max: 50 },
 
       // 源配置
-      'SOURCE_ORDER': { category: 'source', type: 'multi-select', options: this.ALLOWED_SOURCES, description: '源排序配置，默认腾讯、爱奇艺、优酷、芒果、B站、dandan，按配置顺序排列搜索结果' },
-      'MERGE_SOURCE_PAIRS': { category: 'source', type: 'multi-select', options: this.MERGE_ALLOWED_SOURCES, description: '源合并配置，配置后将对应源合并同时一起获取弹幕返回，允许多组，允许多源，允许填单源表示保留原结果，一组中第一个为主源其余为副源，副源往主源合并，主源如果没有结果会轮替下一个作为主源。\n格式：源1&源2&源3 ，多组用逗号分隔。\n示例：tencent&iqiyi,youku&bilibili,dandan' },
+      'SOURCE_ORDER': { category: 'source', type: 'multi-select', options: this.ALLOWED_SOURCES, description: '启用的弹幕来源及搜索结果排列顺序。手动搜索并发查询这些来源；自动匹配按 PLATFORM_ORDER 分组搜索，本配置决定组内结果顺序，不决定自动匹配的组间优先级。' },
+      'MERGE_SOURCE_PAIRS': { category: 'source', type: 'multi-select', options: this.MERGE_ALLOWED_SOURCES, description: '配置实际合并返回的弹幕来源，允许多组、多源、单源保留原结果。组内第一个为主源，其余为副源；主源无结果时轮替下一源。\n自动匹配只合并当前 PLATFORM_ORDER 组内已搜索的来源；需要一起合并的源应放在同一平台组。\n格式：源1&源2&源3，多组用逗号分隔。\n示例：tencent&iqiyi,youku&bilibili,dandan' },
       'CUSTOM_MERGE_RULES': { category: 'source', type: 'text', sources: this.MERGE_ALLOWED_SOURCES, description: '合并映射表，用于自定义源合并行为。\n格式1(合并)：副源剧名/S季数@来源 -> 主源剧名/S季数@来源 | E副源集数>E主源集数\n格式2(阻断)：副源剧名/S季数@来源 × 主源剧名/S季数@来源\n说明：[/S季数] 与 [|路由规则] 为可选项，留空则交由程序判断。多个规则用分号隔开，多段路由用逗号分隔。\n示例：\n1. 常规合并：天气之子@bilibili -> 天气之子@dandan\n2. 多集路由：我推的孩子/S01@bahamut -> 我推的孩子/S03@dandan | E25~E35>E25~E35\n3. 阻断合并：辉夜大小姐想让我告白？～天才们的恋爱头脑战～(2020)@bilibili × 辉夜大小姐想让我告白～天才们的恋爱头脑战～ OVA(2021)【OVA】@dandan' },
       'BILIBILI_COOKIE': { category: 'source', type: 'text', description: 'B站Cookie' },
       'YOUKU_CONCURRENCY': { category: 'source', type: 'number', description: '优酷并发配置，默认8', min: 1, max: 16 },
@@ -570,7 +563,7 @@ export class Envs {
       'DANDANPLAY_PASSWORD': { category: 'source', type: 'text', description: '弹弹play密码（dandan 源获取弹幕使用），与账号同时填写后启用。' },
 
       // 匹配配置
-      'PLATFORM_ORDER': { category: 'match', type: 'multi-select', options: this.ALLOWED_PLATFORMS, description: '平台排序配置，可以配置自动匹配时的优选平台。\n当配置合并平台的时候，可以指定期望的合并源，\n示例：一个结果返回了"dandan&bilibili"和"youku"时，\n当配置"youku"时返回"youku" \n当配置"dandan&bilibili"时返回"dandan&bilibili"' },
+      'PLATFORM_ORDER': { category: 'match', type: 'multi-select', options: this.ALLOWED_PLATFORMS, description: '自动匹配的平台组搜索与选择顺序：逗号分组，按组依次执行；& 连接同组并发来源。有有效季集匹配就停止，不启动后续组；全部未命中才搜索其余启用源。\n示例：tencent&youku,dandan,hongguo。只搜索 SOURCE_ORDER 已启用的来源。\n& 本身不启用弹幕合并，实际合并由 MERGE_SOURCE_PAIRS / CUSTOM_MERGE_RULES 控制。指定平台或手动选择优先。' },
       'ANIME_TITLE_FILTER': { category: 'match', type: 'text', description: '剧名过滤规则' },
       'EPISODE_TITLE_FILTER': { category: 'match', type: 'text', description: '剧集标题过滤规则' },
       'ENABLE_ANIME_EPISODE_FILTER': { category: 'match', type: 'boolean', description: '控制手动搜索的时候是否根据ANIME_TITLE_FILTER进行剧名过滤以及根据EPISODE_TITLE_FILTER进行集标题过滤' },
@@ -605,7 +598,7 @@ export class Envs {
       // 缓存配置
       'LOCAL_CACHE_ENABLED': { category: 'cache', type: 'boolean', description: '通用文件缓存开关，默认开启且仍需已有 .cache 目录；关闭后不读取或写入通用文件缓存，包括收藏与定时计划；已配置 Upstash 时仍可持久化。不影响本地弹幕文件、Bangumi Data 或 Redis' },
       'SEARCH_CACHE_MINUTES': { category: 'cache', type: 'number', description: '搜索结果缓存时间(分钟)，默认3', min: 1, max: 120 },
-      'MATCH_SEARCH_BUDGET_MS': { category: 'match', type: 'number', description: '自动匹配快速搜索等待时间，默认1500毫秒。优先平台组已有准确季集时提前返回，已启动的慢源继续完成搜索；没有准确候选仍等待回退。配置合并源时先等待配置来源完成合并与验证，命中后不启动组外源，该路径不受预算影响。0关闭快速目录复用和提前返回。手动搜索不受影响。', min: 0, max: 10000 },
+      'MATCH_SEARCH_BUDGET_MS': { category: 'match', type: 'number', description: '自动匹配当前平台组的快速返回等待时间，默认1500毫秒。无组内合并时，准确季集可提前返回，组内已启动的慢源继续完成；需要合并时等待本组完成。后续平台组只有当前组未匹配才启动。0关闭快速目录复用和提前返回，仍按组搜索。手动搜索不受影响。', min: 0, max: 10000 },
       'COMMENT_CACHE_MINUTES': { category: 'cache', type: 'number', description: '弹幕缓存时间(分钟)，默认3', min: 1, max: 120 },
       'COMMENT_CACHE_MIN_COUNT': { category: 'cache', type: 'number', description: '弹幕缓存最少条数，低于该值时重新获取，默认100，设置0关闭', min: 0, max: 10000 },
       'REMEMBER_LAST_SELECT': { category: 'cache', type: 'boolean', description: '记住明确手动选择的结果；自动匹配后直接获取其返回结果不会写入偏好' },

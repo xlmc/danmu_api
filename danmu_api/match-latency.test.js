@@ -60,7 +60,7 @@ async function match(fileName = '诛仙 S04E09 第 9 集') {
 async function waitForCompleteCache() {
   const deadline = Date.now() + 1000;
   while (Date.now() < deadline) {
-    const entry = Globals.searchCache.get('诛仙 最终季_S4');
+    const entry = [...Globals.searchCache.values()].find(value => value.results?.some(item => item.source === 'dandan'));
     if (entry?.results?.some(item => item.source === 'dandan')) return;
     await new Promise(resolve => setTimeout(resolve, 5));
   }
@@ -104,8 +104,8 @@ test('分集混有其他季度时不推断最终季季号；低优先源不能�
   assert.equal(result.resAnime.animeId, 7002);
 });
 
-test('首次自动匹配在优先源准确就绪后返回，慢源继续完成且部分结果不污染完整缓存', async () => {
-  reset();
+test('无合并的同组搜索可提前返回，组内慢源继续完成且缓存不污染手动全源搜索', async () => {
+  reset({ PLATFORM_ORDER: 'tencent&dandan' });
   let release;
   let slowFinished = false;
   const slow = new Promise(resolve => { release = resolve; });
@@ -145,19 +145,21 @@ test('无准确优先候选时不提前报空，等待慢源后使用低优先�
   } finally { release(); restoreTx(); restoreDd(); }
 });
 
-test('手动搜索与0预算仍等待全部来源', async () => {
+test('手动搜索仍等待全部来源，0预算自动匹配也不启动下一组', async () => {
   for (const manual of [true, false]) {
     reset({ MATCH_SEARCH_BUDGET_MS: '0' });
     let release;
     let finished = false;
+    let slowStarted = false;
     const slow = new Promise(resolve => { release = resolve; });
     const restoreTx = installSource('tencent', anime());
-    const restoreDd = installSource('dandan', anime('dandan'), async () => { await slow; return []; });
+    const restoreDd = installSource('dandan', anime('dandan'), async () => { slowStarted = true; await slow; return []; });
     try {
       const pending = (manual ? searchAnime(new URL('http://localhost/api/v2/search/anime?keyword=诛仙&season=4&episode=9')) : match())
         .then(result => { finished = true; return result; });
       await new Promise(resolve => setTimeout(resolve, 50));
-      assert.equal(finished, false);
+      assert.equal(finished, !manual);
+      assert.equal(slowStarted, manual);
       release();
       await pending;
       assert.equal(finished, true);
@@ -231,13 +233,13 @@ test('腾讯优酷均命中：等待慢副源并完成实际合并，不启动�
 test('合并源有搜索结果但目标集缺失：验证失败后才回退组外源，组内搜索不重复', async () => {
   resetMerge({ TITLE_MAPPING_TABLE: '' });
   const calls = [];
-  const incomplete = youkuAnime();
+  const incomplete = mergeAnime('youku');
   incomplete.links = incomplete.links.slice(0, 8);
   incomplete.episodeCount = 8;
   const restores = [installSource('tencent', null, async () => { calls.push('tencent'); return []; }),
     installSource('youku', incomplete, async () => { calls.push('youku'); return []; }),
     installSource('dandan', anime('dandan'), async () => {
-      assert.ok(Globals.logBuffer.some(line => line.message.includes('配置合并源无可用匹配')));
+      assert.ok(Globals.logBuffer.some(line => line.message.includes('平台组 tencent&youku 无可用匹配')));
       calls.push('dandan'); return [];
     })];
   try {
@@ -273,6 +275,7 @@ test('合并匹配目录不污染手动全源搜索；修改合并配置后使�
     assert.equal(calls.filter(source => source === 'dandan').length, 1);
     Globals.envs.mergeSourcePairs = [{ primary: 'tencent', secondaries: ['dandan'] }];
     Globals.env.MERGE_SOURCE_PAIRS = 'tencent&dandan';
+    Globals.env.PLATFORM_ORDER = 'tencent&dandan,youku';
     await match();
     assert.equal(calls.filter(source => source === 'dandan').length, 2);
   } finally { restores.forEach(restore => restore()); }
@@ -287,17 +290,20 @@ test('所有启用源都在合并组内时也返回完成合并的目录', async
   } finally { restores.forEach(restore => restore()); }
 });
 
-test('自定义合并关联来源纳入首轮范围', async () => {
-  resetMerge({ TITLE_MAPPING_TABLE: '', CUSTOM_MERGE_RULES: '诛仙 最终季@dandan -> 诛仙 最终季@tencent' });
-  let outsideCalls = 0;
-  const restores = [installSource('tencent', mergeAnime('tencent')), installSource('youku', null),
-    installSource('dandan', mergeAnime('dandan'), async () => { outsideCalls++; return []; })];
-  try {
-    const result = await match();
-    assert.equal(result.isMatched, true);
-    assert.equal(outsideCalls, 1);
-    assert.ok(result.matches[0].url.includes('$$$'));
-  } finally { restores.forEach(restore => restore()); }
+test('自定义合并只使用本平台组来源，不提前启动后续组；同组时仍合并', async () => {
+  for (const sameGroup of [false, true]) {
+    resetMerge({ TITLE_MAPPING_TABLE: '', PLATFORM_ORDER: sameGroup ? 'tencent&youku&dandan' : 'tencent&youku,dandan',
+      CUSTOM_MERGE_RULES: '诛仙 最终季@dandan -> 诛仙 最终季@tencent' });
+    let dandanCalls = 0;
+    const restores = [installSource('tencent', mergeAnime('tencent')), installSource('youku', null),
+      installSource('dandan', mergeAnime('dandan'), async () => { dandanCalls++; return []; })];
+    try {
+      const result = await match();
+      assert.equal(result.isMatched, true);
+      assert.equal(dandanCalls, sameGroup ? 1 : 0);
+      assert.equal(result.matches[0].url.includes('$$$'), sameGroup);
+    } finally { restores.forEach(restore => restore()); }
+  }
 });
 
 test('显式指定组外优先平台仍遵循用户偏好', async () => {
@@ -307,5 +313,105 @@ test('显式指定组外优先平台仍遵循用户偏好', async () => {
   try {
     const result = await match('诛仙 S04E09 第 9 集 @dandan');
     assert.equal(result.matches[0].animeId, 7002);
+  } finally { restores.forEach(restore => restore()); }
+});
+
+test('PLATFORM_ORDER 控制实际搜索组；SOURCE_ORDER、多个合并组和后组缓存不能提前拉起 dandan/红果', async () => {
+  for (const budget of ['0', '25']) {
+    resetMerge({ TITLE_MAPPING_TABLE: '', MATCH_SEARCH_BUDGET_MS: budget,
+      SOURCE_ORDER: 'hongguo,dandan,youku,tencent', PLATFORM_ORDER: 'tencent&youku,dandan,hongguo',
+      MERGE_SOURCE_PAIRS: 'tencent&youku,dandan&hongguo' });
+    // A cached lower-priority answer must not bypass an earlier group still searching.
+    addAnime(anime('dandan'), new Map());
+    const calls = [];
+    const restores = [installSource('tencent', null, async () => { calls.push('tencent'); return []; }),
+      installSource('youku', mergeAnime('youku'), async () => { calls.push('youku'); return []; }),
+      installSource('dandan', anime('dandan'), async () => { calls.push('dandan'); return []; }),
+      installSource('hongguo', null, async () => { calls.push('hongguo'); return []; })];
+    try {
+      const result = await match();
+      assert.equal(result.matches[0].animeId, 7003);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(calls, ['youku', 'tencent']);
+    } finally { restores.forEach(restore => restore()); }
+  }
+});
+
+test('组内并发，候选验证失败后才启动下一组；第二组命中时不启动第三组', async () => {
+  resetMerge({ TITLE_MAPPING_TABLE: '', SOURCE_ORDER: 'hongguo,dandan,youku,tencent',
+    PLATFORM_ORDER: 'tencent&youku,dandan,hongguo' });
+  const calls = [];
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const incomplete = mergeAnime('youku');
+  incomplete.links = incomplete.links.slice(0, 8);
+  const restores = [installSource('tencent', null, async () => { calls.push('tencent'); return []; }),
+    installSource('youku', incomplete, async () => { calls.push('youku'); await gate; return []; }),
+    installSource('dandan', anime('dandan'), async () => { calls.push('dandan'); return []; }),
+    installSource('hongguo', null, async () => { calls.push('hongguo'); return []; })];
+  let pending;
+  try {
+    pending = match();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual(calls, ['youku', 'tencent'], '优酷挂起时腾讯已启动、后续组未启动');
+    release();
+    const result = await pending;
+    assert.equal(result.matches[0].animeId, 7002);
+    assert.deepEqual(calls, ['youku', 'tencent', 'dandan']);
+  } finally { release(); if (pending) await pending; restores.forEach(restore => restore()); }
+});
+
+test('组重叠复用来源搜索，最后才搜索未列入 PLATFORM_ORDER 的启用源', async () => {
+  resetMerge({ TITLE_MAPPING_TABLE: '', MERGE_SOURCE_PAIRS: '', TMDB_API_KEY: '', PROXY_URL: '',
+    SOURCE_ORDER: 'hongguo,dandan,youku,tencent', PLATFORM_ORDER: 'tencent&youku,youku&dandan,tencent&youku' });
+  const calls = [];
+  const restores = ['hongguo', 'dandan', 'youku', 'tencent'].map(source =>
+    installSource(source, null, async () => { calls.push(source); return []; }));
+  try {
+    const result = await match();
+    assert.equal(result.isMatched, false);
+    assert.deepEqual(calls, ['youku', 'tencent', 'dandan', 'hongguo']);
+  } finally { restores.forEach(restore => restore()); }
+});
+
+test('平台排序变更即时改变搜索首组，不复用旧首组候选跳过新优先级', async () => {
+  resetMerge({ TITLE_MAPPING_TABLE: '', MERGE_SOURCE_PAIRS: '', MATCH_SEARCH_BUDGET_MS: '0',
+    PLATFORM_ORDER: 'youku,dandan', SOURCE_ORDER: 'youku,dandan' });
+  const calls = [];
+  const restores = [installSource('youku', mergeAnime('youku'), async () => { calls.push('youku'); return []; }),
+    installSource('dandan', anime('dandan'), async () => { calls.push('dandan'); return []; })];
+  try {
+    assert.equal((await match()).matches[0].animeId, 7003);
+    assert.deepEqual(calls, ['youku']);
+    Globals.env.PLATFORM_ORDER = 'dandan,youku';
+    assert.equal((await match()).matches[0].animeId, 7002);
+    assert.deepEqual(calls, ['youku', 'dandan']);
+  } finally { restores.forEach(restore => restore()); }
+});
+
+test('没有 PLATFORM_ORDER 时全源并发；禁用来源不因平台组配置而启动', async () => {
+  for (const platformOrder of ['', 'tencent&youku,hongguo']) {
+    resetMerge({ TITLE_MAPPING_TABLE: '', MERGE_SOURCE_PAIRS: '', SOURCE_ORDER: 'youku,dandan',
+      PLATFORM_ORDER: platformOrder, MATCH_SEARCH_BUDGET_MS: '0' });
+    const calls = [];
+    const restores = [installSource('youku', mergeAnime('youku'), async () => { calls.push('youku'); return []; }),
+      installSource('dandan', anime('dandan'), async () => { calls.push('dandan'); return []; }),
+      installSource('tencent', null, async () => { calls.push('tencent'); return []; }),
+      installSource('hongguo', null, async () => { calls.push('hongguo'); return []; })];
+    try {
+      assert.equal((await match()).isMatched, true);
+      assert.deepEqual(calls, platformOrder ? ['youku'] : ['youku', 'dandan']);
+    } finally { restores.forEach(restore => restore()); }
+  }
+});
+
+test('平台限定映射只查询指定源，失败后普通路径恢复 PLATFORM_ORDER', async () => {
+  resetMerge({ TITLE_MAPPING_TABLE: '', AUTO_MATCH_MAPPING_TABLE: '诛仙 S04E09 -> 不存在 S04E09 @dandan' });
+  const calls = [];
+  const restores = ['tencent', 'youku', 'dandan'].map(source => installSource(source,
+    source === 'youku' ? mergeAnime('youku') : null, async title => { calls.push([source, title]); return []; }));
+  try {
+    assert.equal((await match()).matches[0].animeId, 7003);
+    assert.deepEqual(calls, [['dandan', '不存在'], ['tencent', '诛仙'], ['youku', '诛仙']]);
   } finally { restores.forEach(restore => restore()); }
 });
