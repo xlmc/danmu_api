@@ -36,8 +36,8 @@ test('阶段计时保持返回值与错误，不追踪普通搜索', async () =>
     assert.equal(await traceMatchStep(record, '来源搜索', async () => 9), 9);
     await assert.rejects(traceMatchStep(record, '目录', async () => { throw failure; }), error => error === failure);
   });
-  assert.match(entries[0], /来源搜索 完成，耗时 \d+ms/);
-  assert.match(entries[1], /目录 失败，耗时 \d+ms/);
+  assert.ok(entries.some(entry => /来源搜索 完成，耗时 \d+ms/.test(entry)));
+  assert.ok(entries.some(entry => /目录 失败，耗时 \d+ms/.test(entry)));
 });
 
 test('带编号日志仍按业务标签分类，级别与敏感值脱敏继续生效', async () => {

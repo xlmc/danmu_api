@@ -3,6 +3,7 @@ import { runWithMatchTrace, traceMatchStep, getMatchTracePrefix } from '../utils
 import { globals } from '../configs/globals.js';
 import { getPageTitle, jsonResponse, httpGet, sourceLogContext, runWithHttpCache, httpCacheContext } from '../utils/http-util.js';
 import { log } from '../utils/log-util.js'
+import { logEvent } from '../utils/log-util.js';
 import { simplized } from '../utils/zh-util.js';
 import { setRedisKey, updateRedisCaches } from "../utils/redis-util.js";
 import { setLocalRedisKey, updateLocalRedisCaches } from "../utils/local-redis-util.js";
@@ -2070,7 +2071,7 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
   if (globals.aiValid) fastDisabledReasons.push('AI匹配启用');
   if (resolveFavoriteForSearchKeyword(catalogKey)) fastDisabledReasons.push('命中收藏');
   if (mapping?.targetYear || mapping?.targetType || mapping?.targetTmdbId) fastDisabledReasons.push('映射含年份/类型/TMDB限定');
-  log('info', `[system] [match-fast] ${canUseReady ? `启用，预算 ${budget}ms，优先平台 ${targetPlatform}` : `未启用：${fastDisabledReasons.join('、')}；等待完整搜索`}`);
+  logEvent('info', 'match.fast', `[system] [match-fast] ${canUseReady ? `启用，预算 ${budget}ms，优先平台 ${targetPlatform}` : `未启用：${fastDisabledReasons.join('、')}；等待完整搜索`}`, { enabled: Boolean(canUseReady), budgetMs: budget, reasons: fastDisabledReasons, platform: targetPlatform });
   const probe = progress => selectReadyMatch({ ...progress, title, season, episode, year, platform: targetPlatform, req, mapping, strictTargetTitle });
   if (canUseReady) {
     // 已保存的目录仍包含可用剧集 URL；缺集、不确定季号或优先组无数据时才重新搜索。
@@ -2208,10 +2209,11 @@ function findSeasonPreferenceTitle(titles, season) {
 export async function matchAnime(url, req, clientIp) {
   return runWithMatchTrace(async () => {
     const startedAt = performance.now();
-    log('info', '[system] [match-trace] 开始匹配');
+    logEvent('info', 'match.start', '[system] [match-trace] 开始匹配');
     try {
       const response = await matchAnimeWithTrace(url, req, clientIp);
-      log('info', `[system] [match-trace] 请求返回，HTTP ${response.status}，总耗时 ${Math.round(performance.now() - startedAt)}ms（后台完整搜索可能继续）`);
+      const durationMs = Math.round(performance.now() - startedAt);
+      logEvent('info', 'match.return', `[system] [match-trace] 请求返回，HTTP ${response.status}，总耗时 ${durationMs}ms（后台完整搜索可能继续）`, { status: response.status, durationMs });
       return response;
     } catch (error) {
       log('error', `[system] [match-trace] 请求异常，总耗时 ${Math.round(performance.now() - startedAt)}ms`);
@@ -2251,7 +2253,8 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     log("info", `[system] [match] Parsed cleanFileName: ${cleanFileName}, preferredPlatform: ${preferredPlatform}, releaseGroups: ${releaseGroups.join(',') || 'none'}`);
 
     const parsed = await traceMatchStep(log, '文件名解析与标题转换', () => extractTitleSeasonEpisode(cleanFileName, releaseGroups));
-    log('info', '[system] [match-trace] 解析身份', { title: parsed.title, year: parsed.year, season: parsed.season, episode: parsed.episode, preferredPlatform, releaseGroups });
+    const identity = { title: parsed.title, year: parsed.year, season: parsed.season, episode: parsed.episode, preferredPlatform, releaseGroups };
+    logEvent('info', 'match.identity', '[system] [match-trace] 解析身份 ' + JSON.stringify(identity), identity);
     const originalTitle = normalizeMatchTitle(parsed.title);
     const originalSeason = parsed.season;
     const originalEpisode = parsed.episode;
@@ -2446,7 +2449,8 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       }
     }
 
-    log('info', '[system] [match-trace] 最终选择', { stage: matchStage || '无成功阶段', isMatched: resData.isMatched, matches: resData.matches.map(m => ({ animeId: m.animeId, animeTitle: m.animeTitle, episodeId: m.episodeId, episodeTitle: m.episodeTitle })) });
+    const choice = { stage: matchStage || '无成功阶段', isMatched: resData.isMatched, matches: resData.matches.map(m => ({ animeId: m.animeId, animeTitle: m.animeTitle, episodeId: m.episodeId, episodeTitle: m.episodeTitle })) };
+    logEvent('info', 'match.result', '[system] [match-trace] 最终选择 ' + JSON.stringify(choice), choice);
     log("info", '[system] [match] resMatchData:', resData);
 
     // 示例返回

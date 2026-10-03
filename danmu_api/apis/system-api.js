@@ -152,7 +152,16 @@ export async function handleDeploy() {
  * 处理获取日志的请求
  * @returns {Response} 包含日志文本的响应
  */
-export function handleLogs() {
+export function handleLogs(format = 'text') {
+  if (format === 'json') {
+    // 所有字段均取自已脱敏缓冲区；普通用户保持旧文本接口的 IP 遮蔽约定。
+    const entries = globals.logBuffer.map(entry => ({ ...entry }));
+    const raw = JSON.stringify({ entries, capacity: globals.MAX_LOGS, logLevel: globals.logLevel });
+    const masked = globals.currentToken !== globals.adminToken
+      ? raw.replace(/(client\s+ip:\s*)([^"\\\n\r]*)/gi, (match, prefix, ip) => prefix + ip.replace(/[^.\s]/g, '*'))
+      : raw;
+    return new Response(masked, { headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } });
+  }
   const logText = globals.logBuffer
     .map(
       (log) =>
