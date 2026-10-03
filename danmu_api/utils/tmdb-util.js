@@ -463,6 +463,13 @@ export async function searchTmdbTitles(title, mediaType = "multi", options = {})
 }
 
 // 使用 TMDB API 获取日语详情
+export async function getTmdbMatchDetails(mediaType, tmdbId) {
+  if (!['tv', 'movie'].includes(mediaType) || !/^\d+$/.test(String(tmdbId))) return null;
+  return readTmdbData(await tmdbApiGet(`${mediaType}/${tmdbId}?${tmdbQuery({
+    language: 'zh-CN', append_to_response: 'alternative_titles,translations'
+  })}`));
+}
+
 export async function getTmdbJpDetail(mediaType, tmdbId, options = {}) {
   const url = `${mediaType}/${tmdbId}?api_key=${globals.tmdbApiKey}&language=ja-JP`;
   return await tmdbApiGet(url, options);

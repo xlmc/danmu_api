@@ -114,8 +114,7 @@ const RELEASE_GROUP_NOISE = /^(?:\d{3,4}p|4k|8k|hdr|dv|dolby[ ._-]*vision|web|dl
 // releaseGroups even when the runtime list is not initialized yet.
 const PLATFORM_MARKERS = new Set([
   'qq', 'tencent', 'qiyi', 'iqiyi', 'imgo', 'mango', 'youku', 'bilibili',
-  'bilibili1', 'migu', 'sohu', 'leshi', 'xigua',
-  'maiduidui', 'hongguo', 'dandan', 'bahamut'
+  'bilibili1', 'migu', 'sohu', 'leshi', 'hongguo', 'dandan', 'bahamut'
 ]);
 
 function isReleaseGroupNoise(value) {

@@ -545,7 +545,8 @@ export function mergeAddAnimeError(target, source) {
 
 // 添加 anime 对象到 animes，并将其 links 添加到 episodeIds
 export function addAnime(anime, detailStore = null) {
-    anime = Anime.fromJson(anime);
+    const prior = globals.animes.find(item => item.animeId === anime.animeId && item.source === anime.source && item.bangumiId === anime.bangumiId && item.animeTitle === anime.animeTitle);
+    anime = Anime.fromJson({ ...anime, tmdbIdentity: anime.tmdbIdentity || prior?.tmdbIdentity || null });
     const previousEpisodeCount = globals.episodeIds.length;
     let previousEpisodeNum = globals.episodeNum;
     let allocationComplete = false;

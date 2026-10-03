@@ -15,19 +15,19 @@ import { resolveLocalTitleMapping, applyTitleMappingWithLog, applyRemoteTitleMap
 import { parseVerifiedRemoteRules } from './utils/auto-match-mapping-url-util.js';
 
 test('标题映射兼容加号、逗号和空格', () => {
-  Globals.init({ TITLE_MAPPING_TABLE: '标题+年份，第一季->目标作品' });
+  Globals.init({TMDB_MATCH_ASSIST:'false',  TITLE_MAPPING_TABLE: '标题+年份，第一季->目标作品' });
   const result = resolveLocalTitleMapping('标题 年份 第一季');
   assert.equal(result.matched, true);
   assert.equal(result.title, '目标作品');
 });
 
 test('紧凑季号映射优先于裸标题，且不泄漏到其他季度', () => {
-  Globals.init({ TITLE_MAPPING_TABLE: '诛仙->默认标题;诛仙S04->诛仙 最终季;诛仙2026S03->第三季标题' });
+  Globals.init({TMDB_MATCH_ASSIST:'false',  TITLE_MAPPING_TABLE: '诛仙->默认标题;诛仙S04->诛仙 最终季;诛仙2026S03->第三季标题' });
   assert.equal(resolveLocalTitleMapping('诛仙', 4).title, '诛仙 最终季');
   assert.equal(applyTitleMappingWithLog('诛仙', 'test', 4), '诛仙 最终季');
   assert.equal(resolveLocalTitleMapping('诛仙', 3, 2026).title, '第三季标题');
   assert.equal(resolveLocalTitleMapping('诛仙', 2).title, '默认标题');
-  Globals.init({ TITLE_MAPPING_TABLE: '诛仙S04->诛仙 最终季', TITLE_MAPPING_TABLE_URL: 'https://example.test/mapping.txt' });
+  Globals.init({TMDB_MATCH_ASSIST:'false',  TITLE_MAPPING_TABLE: '诛仙S04->诛仙 最终季', TITLE_MAPPING_TABLE_URL: 'https://example.test/mapping.txt' });
   assert.equal(resolveLocalTitleMapping('诛仙', 3).matched, false);
   applyRemoteTitleMappingText('https://example.test/mapping.txt', '诛仙S04->远程最终季');
   assert.equal(resolveCachedRemoteTitleMapping('诛仙', 4).title, '远程最终季');
@@ -64,7 +64,7 @@ test('内部 match 搜索可禁止二次标题映射', () => {
 });
 
 test('严格模式允许完整季名对应条目内部第一季', () => {
-  Globals.init({ STRICT_TITLE_MATCH: 'true' });
+  Globals.init({TMDB_MATCH_ASSIST:'false',  STRICT_TITLE_MATCH: 'true' });
   assert.equal(strictTitleMatch('一念永恒 第3季', '一念永恒 第3季', 1), true);
   assert.equal(strictTitleMatch('一念永恒 第2季', '一念永恒', 3), false);
 });

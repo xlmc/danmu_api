@@ -31,8 +31,6 @@ import MiguSource from './migu.js';
 import YoukuSource from './youku.js';
 import SohuSource from './sohu.js';
 import LeshiSource from './leshi.js';
-import XiguaSource from './xigua.js';
-import MaiduiduiSource from './maiduidui.js';
 
 import HongguoSource from './hongguo.js';
 
@@ -59,8 +57,6 @@ const SOURCE_REGISTRY = [
   { key: 'migu', logName: 'migu', factory: () => new MiguSource(), deps: [] },
   { key: 'sohu', logName: 'sohu', factory: () => new SohuSource(), deps: [] },
   { key: 'leshi', logName: 'leshi', factory: () => new LeshiSource(), deps: [] },
-  { key: 'xigua', logName: 'xigua', factory: () => new XiguaSource(), deps: [] },
-  { key: 'maiduidui', logName: 'maiduidui', factory: () => new MaiduiduiSource(), deps: [] },
   { key: 'hongguo', logName: 'hongguo', factory: () => new HongguoSource(), deps: [] },
   { key: 'bahamut', logName: 'bahamut', factory: () => new BahamutSource(), deps: [] },
   { key: 'dandan', logName: 'dandan', factory: () => new DandanSource(), deps: [] },

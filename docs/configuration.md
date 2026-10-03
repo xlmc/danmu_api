@@ -17,9 +17,27 @@
 
 以上接口按原 TOKEN 路径鉴权。配置管理、日志与缓存管理入口保留，接口调试和弹幕测试页面已移除。配置 ADMIN_TOKEN 后，配置修改、缓存清理和 Cookie 保存需管理员权限。
 
-## 来源
+## 首次匹配与 TMDB 辅助识别
 
-可选：tencent、iqiyi、youku、imgo、bilibili、migu、sohu、leshi、xigua、maiduidui、hongguo、bahamut、dandan。默认启用腾讯、爱奇艺、优酷、芒果、B站、dandan。旧配置中不支持的来源会被过滤；全部无效时使用默认来源。dandan 账号、密码与其既有获取链路保留。
+自动匹配默认启用 TMDB_MATCH_ASSIST=true。首次请求从文件名解析标题、年份、季集，直接并行搜索已启用的官方平台和 dandan。候选须满足标题、已知年份、类型与季集；同名同季但年份不同且文件名没有年份时，不直接选第一个。明确结果直接返回，不要求先查询 TMDB。
+
+普通路径无法确认时，才查询 TMDB，并用一个详情请求取得名称、别名和季信息，不经过 IMDb 或豆瓣。TMDB 确认后可用中文标题补搜，最多追加一个标题；同次请求同源同搜索参数复用原结果。已确认的目录仍沿用现有复用与优先源提前返回机制，搜索预算默认 1500ms；慢源继续完成完整搜索。
+
+TMDB 身份为 tv:ID 或 movie:ID，随匹配成功的目录保存；失败候选不会统一绑定 ID。TMDB 需要可用的 TMDB_API_KEY 或可认证反代，未配置或查询失败不影响普通路径的明确匹配。
+
+映射表是标题和季集修正工具，无规则时仍能普通匹配。已有纯标题规则保持有效，本机配置与手动选择优先。已知季集修正在选择分集前应用，远程规则只读本地副本。带 TMDB ID 的规则可选，例如：
+
+~~~text
+旧显示名{[tmdbid=12345;type=tv]} S02E01 -> 平台显示名 S01E25 @tencent
+~~~
+
+12345 仅为格式示例，须替换为核实的 ID。两侧都写 ID 时须一致；已知作品身份与规则身份冲突时不应用规则。无需先给整张旧表补齐 ID。
+
+TMDB_MATCH_ASSIST=false 恢复旧匹配行为；TITLE_TO_CHINESE 在旧模式控制预先译名，新模式将查询延后到需要辅助识别时。手动搜索接口保持原有行为。
+
+## 弹幕来源
+
+可选：tencent、iqiyi、youku、imgo、bilibili、migu、sohu、leshi、hongguo、bahamut、dandan。默认启用腾讯、爱奇艺、优酷、芒果、B站、dandan。旧配置中不支持的来源会被过滤；全部无效时使用默认来源。dandan 账号、密码与其既有获取链路保留。
 
 ## 缓存
 
@@ -47,12 +65,13 @@
 | EPISODE_TITLE_FILTER | text | 剧集标题过滤规则 |
 | ENABLE_ANIME_EPISODE_FILTER | boolean | 控制手动搜索的时候是否根据ANIME_TITLE_FILTER进行剧名过滤以及根据EPISODE_TITLE_FILTER进行集标题过滤 |
 | STRICT_TITLE_MATCH | boolean | 严格标题匹配模式 |
+| TMDB_MATCH_ASSIST | boolean | 默认 true；普通搜索无法确认时使用 TMDB 辅助识别，并加强候选与季集校验；false 恢复旧行为。 |
 | TITLE_TO_CHINESE | boolean | 外语标题转换中文开关 |
 | ANIME_TITLE_SIMPLIFIED | boolean | 搜索的剧名标题自动繁转简 |
 | TITLE_MAPPING_TABLE | map | 本机剧名映射表，用于自动匹配时替换标题进行搜索。本机规则优先于远程规则。远程映射默认关闭；启用时请在下方 TITLE_MAPPING_TABLE_URL 填写：https://raw.githubusercontent.com/xlmc/danmu-mapping/main/Word/2026.txt。格式：原始标题->映射标题;原始标题->映射标题;...，例如："唐朝诡事录->唐朝诡事录之西行;国色芳华->锦绣芳华" |
 | TITLE_MAPPING_TABLE_URL | text | 远程剧名映射表（默认关闭，填写后启用）。推荐地址：https://raw.githubusercontent.com/xlmc/danmu-mapping/main/Word/2026.txt。程序首次下载后保存到本地，匹配时只读取本地缓存，不连接远程；每天北京时间05:30更新，失败保留旧缓存。本机 TITLE_MAPPING_TABLE 优先于远程表。支持 GitHub 文件页、Gist、jsDelivr 及任意 TXT 直链；内容格式为每行 原始标题->映射标题，# 或 // 开头为注释 |
 | AUTO_MATCH_MAPPING_TABLE | map | 自动匹配映射表，仅作用于 POST /api/v2/match。多个规则使用分号分隔。 开放映射：永生 S05E02 -> 永生 S01E58 有限范围：永生 S05E02~03 -> 永生 S01E58~59 指定结果：海贼王 S02E01 -> 航海王(1999)【动漫】 S01E62 指定平台：航海王 S01E01 -> 航海王 S01E01 @iqiyi 可选发布组：作品 S01E01 {[group=ANi]} -> 作品 S01E02；文件名有发布组时优先专用规则，失败后回退通用规则 |
-| AUTO_MATCH_MAPPING_TABLE_URL | text | 远程季集映射表（默认关闭）。推荐填写 danmu-mapping 的 Word/season-candidates.txt。下载后保存到本机缓存，匹配过程中只读取本机缓存；每天北京时间05:30更新，失败沿用旧缓存。本机 AUTO_MATCH_MAPPING_TABLE 优先。为防止过度转换，远程表只接受同时写明起止集的有限范围规则；源侧可选使用 {[group=ANi]} 发布组标记。 |
+| AUTO_MATCH_MAPPING_TABLE_URL | text | 远程季集映射表（默认关闭）。推荐填写 danmu-mapping 的 Word/season-candidates.txt。下载后保存到本机缓存，匹配过程中只读取本机缓存；每天北京时间05:30更新，失败沿用旧缓存。本机 AUTO_MATCH_MAPPING_TABLE 优先。支持起始集偏移及明确起止集的范围规则；源侧可选使用 {[group=ANi]} 发布组标记。 |
 | TITLE_NOISE_FILTER | text | 剧名杂音清理规则，按正则表达式清理搜索与匹配阶段的剧名杂音词（如`百花杀（真彩）`→`百花杀`）。 默认值：[（(\[［](?:臻彩\|真彩\|高清\|标清\|超清\|国配\|中配\|日配\|粤语\|原声\|台配\|无修\|未删减\|完整版\|日语版\|国语版\|英语版\|中字\|字幕\|助听\|原版)[\])）］]，中英文圆方括号均匹配。 设为空值可禁用 |
 | USE_BANGUMI_DATA | boolean | Bangumi Data 加速匹配开关，开启后将动画元数据缓存至本地或内存中给源调用，提升动画源的检索与匹配速度并解锁隐藏/区域番剧。 本地和Docker部署使用时请先挂载.cache目录获得最佳体验，云部署使用时会将数据缓存至临时内存中如果体验不佳请关闭。 |
 | BLOCKED_WORDS | text | 屏蔽词列表：支持 /正则/flags、纯文本词、@人名（按语境分析匹配：二字人名仅在明确人物语境中命中，避免误伤同名词；姓氏仅在被称谓指代时命中，如"杨老师"）；地区和日期时间可在编辑器中添加预设正则，删除相应规则即可停用。兼容 地区:地区名 和 地区:*（包含名称即屏蔽整条） |

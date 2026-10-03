@@ -26,7 +26,7 @@ test('dandan foreign search validates detail aliases and preserves explicit seas
       titles: details[id] || [], relateds: [], type: 'tvseries', typeDescription: 'TV动画' });
     const anime = (id, title) => ({ animeId: id, animeTitle: title, startDate: '2026-01-01', typeDescription: 'TV动画' });
     async function run(keyword, expectedSearch, expectedFinal, season = null) {
-      Globals.init({ SOURCE_ORDER: 'dandan', USE_BANGUMI_DATA: 'false', LOCAL_CACHE_ENABLED: 'false', LOG_LEVEL: 'error' });
+      Globals.init({TMDB_MATCH_ASSIST:'false',  SOURCE_ORDER: 'dandan', USE_BANGUMI_DATA: 'false', LOCAL_CACHE_ENABLED: 'false', LOG_LEVEL: 'error' });
       Globals.animes = []; Globals.episodeIds = []; Globals.episodeNum = 10001; Globals.lastSelectMap = new Map();
       Globals.queryCacheWritable = {}; Globals.queryCacheInitialized = false;
       const found = await source.search(keyword);

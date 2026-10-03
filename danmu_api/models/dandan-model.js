@@ -8,7 +8,7 @@ export class Anime {
   constructor({ animeId = 111, bangumiId = "", animeTitle = "", type = "",
                 typeDescription = "", imageUrl = "", startDate = "", episodeCount = 1,
                 rating = 0, isFavorited = true, source = "", links = [],
-                mergedChildren = [], isHiddenChild = false, aliases = [] } = {}) {
+                mergedChildren = [], isHiddenChild = false, aliases = [], tmdbIdentity = null } = {}) {
     // ---- 类型检查 ----
     validateType(animeId, "number");
     validateType(bangumiId, "string");
@@ -31,7 +31,7 @@ export class Anime {
 
     // 直接解构并赋值给 this
     Object.assign(this, { animeId, bangumiId, animeTitle, type, typeDescription, imageUrl, startDate,
-      episodeCount, rating, isFavorited, source, mergedChildren, isHiddenChild, aliases  });
+      episodeCount, rating, isFavorited, source, mergedChildren, isHiddenChild, aliases, tmdbIdentity });
   }
 
   // ---- 静态方法：从 JSON 创建 Anime 对象 ----

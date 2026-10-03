@@ -15,7 +15,7 @@ const titles = fs.readFileSync(new URL('./fixtures/guoman-2026.txt', import.meta
 const seasons = fs.readFileSync(new URL('./fixtures/guoman-season-candidates.txt', import.meta.url), 'utf8');
 
 function reset(extra = {}) {
-  Globals.init({ SOURCE_ORDER: 'tencent,bilibili,youku', PLATFORM_ORDER: 'tencent,bilibili,youku',
+  Globals.init({TMDB_MATCH_ASSIST:'false',  SOURCE_ORDER: 'tencent,bilibili,youku', PLATFORM_ORDER: 'tencent,bilibili,youku',
     TITLE_MAPPING_TABLE: titles.split('\n').filter(line => !line.startsWith('#')).join(';'),
     AUTO_MATCH_MAPPING_TABLE: seasons, USE_BANGUMI_DATA: 'false', MERGE_SOURCE_PAIRS: '',
     MATCH_SEARCH_BUDGET_MS: '0', RATE_LIMIT_MAX_REQUESTS: '0', REMEMBER_LAST_SELECT: 'false', LOG_LEVEL: 'error', ...extra });
@@ -126,4 +126,11 @@ test('腾讯真实源预过滤允许完整第三季标题对应条目内部 S01�
   assert.equal(new TencentSource().titleOrAliasMatches({ title: '一念永恒 第3季' }, '一念永恒 第3季', 1), true);
   assert.equal(titleMatches('一念永恒 第2季', '一念永恒 第3季', 1), false);
   assert.equal(titleMatches('一念永恒 第3季', '一念永恒', 1), false);
+});
+
+for (const [fileName, title, episodeTitle] of cases) test('新模式首次匹配源站快照: '+fileName, async () => {
+  const { result } = await endpoint(fileName, {env:{TMDB_MATCH_ASSIST:'true'}});
+  assert.equal(result.isMatched,true,JSON.stringify(result));
+  assert.ok(result.matches[0].animeTitle.startsWith(title),JSON.stringify(result.matches[0]));
+  assert.ok(result.matches[0].episodeTitle.includes(episodeTitle),JSON.stringify(result.matches[0]));
 });

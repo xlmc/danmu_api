@@ -25,9 +25,9 @@ export class Envs {
   // 允许在值中写入 # 等 dotenv 视为注释字符的变量；读取时绕过 dotenv 截断以保留完整内容。加密变量按掩码写入预览集合，原始值仅供运行期使用与日志脱敏。
   static RAW_ENV_KEYS = new Set(['ADMIN_TOKEN', 'ANIME_TITLE_FILTER', 'AUTO_MATCH_MAPPING_TABLE', 'BLOCKED_WORDS', 'BILIBILI_COOKIE', 'COLOR_POOL', 'CUSTOM_MERGE_RULES', 'DANDANPLAY_ACCOUNT', 'DANDANPLAY_PASSWORD', 'DANMU_OFFSET', 'DANMUX_GRADIENT_STOPS', 'EPISODE_TITLE_FILTER', 'LOCAL_REDIS_URL', 'PROXY_URL', 'TITLE_MAPPING_TABLE', 'TITLE_NOISE_FILTER', 'TMDB_API_KEY', 'TOKEN', ]);
 
-  static ALLOWED_PLATFORMS = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","xigua","maiduidui","hongguo","bahamut","dandan"];
-  static ALLOWED_SOURCES = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","xigua","maiduidui","hongguo","bahamut","dandan"];
-  static MERGE_ALLOWED_SOURCES = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","xigua","maiduidui","hongguo","bahamut","dandan"];
+  static ALLOWED_PLATFORMS = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","bahamut","dandan"];
+  static ALLOWED_SOURCES = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","bahamut","dandan"];
+  static MERGE_ALLOWED_SOURCES = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","bahamut","dandan"];
 
 
   /**
@@ -575,6 +575,7 @@ export class Envs {
       'EPISODE_TITLE_FILTER': { category: 'match', type: 'text', description: '剧集标题过滤规则' },
       'ENABLE_ANIME_EPISODE_FILTER': { category: 'match', type: 'boolean', description: '控制手动搜索的时候是否根据ANIME_TITLE_FILTER进行剧名过滤以及根据EPISODE_TITLE_FILTER进行集标题过滤' },
       'STRICT_TITLE_MATCH': { category: 'match', type: 'boolean', description: '严格标题匹配模式' },
+      'TMDB_MATCH_ASSIST': { category: 'match', type: 'boolean', description: '自动匹配优先直接检索官方平台和 dandan，校验标题、年份、类型和季集；无法确认时由 TMDB 辅助识别并保留 ID、别名与季信息。TMDB 不可用不影响已确认的普通结果。默认开启；关闭恢复旧匹配行为。' },
       'TITLE_TO_CHINESE': { category: 'match', type: 'boolean', description: '外语标题转换中文开关' },
       'ANIME_TITLE_SIMPLIFIED': { category: 'match', type: 'boolean', description: '搜索的剧名标题自动繁转简' },
       'TITLE_MAPPING_TABLE': { category: 'match', type: 'map', description: '本机剧名映射表，用于自动匹配时替换标题进行搜索。本机规则优先于远程规则。远程映射默认关闭；启用时请在下方 TITLE_MAPPING_TABLE_URL 填写：https://raw.githubusercontent.com/xlmc/danmu-mapping/main/Word/2026.txt。格式：原始标题->映射标题;原始标题->映射标题;...，例如："唐朝诡事录->唐朝诡事录之西行;国色芳华->锦绣芳华"' },
@@ -669,6 +670,7 @@ export class Envs {
       danmuxGradientAngle: this.get('DANMUX_GRADIENT_ANGLE', 0, 'number'), // DanmuX v1 linear angle
       danmuOutputFormat: this.get('DANMU_OUTPUT_FORMAT', 'json', 'string'), // 弹幕输出格式配置（默认 json，可选值：json, xml, ...danAnyFormats）
       strictTitleMatch: this.get('STRICT_TITLE_MATCH', false, 'boolean'), // 严格标题匹配模式配置（默认 false，宽松模糊匹配）
+      tmdbMatchAssist: this.get('TMDB_MATCH_ASSIST', true, 'boolean'),
       titleToChinese: this.get('TITLE_TO_CHINESE', false, 'boolean'), // 外语标题转换中文开关
       animeTitleSimplified: this.get('ANIME_TITLE_SIMPLIFIED', false, 'boolean'), // 搜索的剧名标题自动繁转简
       localTitleMappingTable: this.resolveTitleMappingTable(), // 保留纯本地表，避免远程合并覆盖本地查询

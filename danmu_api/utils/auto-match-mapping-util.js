@@ -26,21 +26,25 @@ function getRuleIndex(rules) {
   // the exact rule first without scanning every rule for the title/season.
   const index = { generic: new Map(), grouped: new Map() };
   for (const rule of rules) {
-    const key = `${rule.sourceTitleKey}\u0000${rule.sourceSeason}`;
-    const groupKeys = releaseGroupValues(rule.sourceReleaseGroups?.length
-      ? rule.sourceReleaseGroups
-      : (rule.sourceReleaseGroup || rule.releaseGroup));
-    if (groupKeys.length === 0) {
-      const bucket = index.generic.get(key) || [];
-      bucket.push(rule);
-      index.generic.set(key, bucket);
-      continue;
-    }
-    for (const groupKey of groupKeys) {
-      const fullKey = `${key}\u0000${groupKey}`;
-      const bucket = index.grouped.get(fullKey) || [];
-      bucket.push(rule);
-      index.grouped.set(fullKey, bucket);
+    const keys = [`${rule.sourceTitleKey}\u0000${rule.sourceSeason}`];
+    const identityId = rule.sourceTmdbId || rule.targetTmdbId;
+    if (identityId) keys.push(`@tmdb:${rule.sourceTmdbType || rule.targetTmdbType || 'tv'}:${identityId}\u0000${rule.sourceSeason}`);
+    for (const key of keys) {
+      const groupKeys = releaseGroupValues(rule.sourceReleaseGroups?.length
+        ? rule.sourceReleaseGroups
+        : (rule.sourceReleaseGroup || rule.releaseGroup));
+      if (groupKeys.length === 0) {
+        const bucket = index.generic.get(key) || [];
+        bucket.push(rule);
+        index.generic.set(key, bucket);
+        continue;
+      }
+      for (const groupKey of groupKeys) {
+        const fullKey = `${key}\u0000${groupKey}`;
+        const bucket = index.grouped.get(fullKey) || [];
+        bucket.push(rule);
+        index.grouped.set(fullKey, bucket);
+      }
     }
   }
   ruleIndexCache.set(rules, index);
@@ -137,6 +141,9 @@ function parseEpisodeSide(value, { allowPlatform = false, allowReleaseGroup = fa
 
   return {
     title,
+    tmdbId: identity.tmdbId,
+    tmdbType: identity.mediaType.toLowerCase(),
+    cleanTitle: parseIdentityMarker(title).cleanText,
     season,
     startEpisode,
     endEpisode,
@@ -167,7 +174,8 @@ function parseTargetTitle(value) {
     year: yearMatch ? Number(yearMatch[1]) : null,
     // MoviePilot 的 type=tv 只是 TMDB 媒体大类，不能拿来排除动画候选；显式【类型】仍作为严格限定。
     mediaType: mediaType || (markerMediaType === 'movie' ? 'movie' : (markerMediaType && markerMediaType !== 'tv' ? markerMediaType : '')),
-    tmdbId: identity.tmdbId
+    tmdbId: identity.tmdbId,
+    tmdbType: markerMediaType
   };
 }
 
@@ -211,6 +219,13 @@ export function parseAutoMatchMappingRules(value, allowedPlatforms = []) {
     }
 
     const targetTitle = parseTargetTitle(targetSide.title);
+    if ((source.tmdbType && !['tv', 'movie'].includes(source.tmdbType)) ||
+        (targetTitle.tmdbType && !['tv', 'movie'].includes(targetTitle.tmdbType)) ||
+        (source.tmdbId && targetTitle.tmdbId && (source.tmdbId !== targetTitle.tmdbId ||
+          (source.tmdbType || 'tv') !== (targetTitle.tmdbType || 'tv')))) {
+      warnings.push(`规则 ${index + 1} 的 TMDB 身份冲突或类型无效: ${text}`);
+      continue;
+    }
     if (!targetTitle.title) {
       warnings.push(`规则 ${index + 1} 的目标标题为空: ${text}`);
       continue;
@@ -220,8 +235,10 @@ export function parseAutoMatchMappingRules(value, allowedPlatforms = []) {
       order: index,
       raw: text,
       bounded,
-      sourceTitle: source.title,
-      sourceTitleKey: normalizeRuleTitle(source.title),
+      sourceTitle: source.cleanTitle,
+      sourceTitleKey: normalizeRuleTitle(source.cleanTitle),
+      sourceTmdbId: source.tmdbId,
+      sourceTmdbType: source.tmdbId ? (source.tmdbType || 'tv') : '',
       sourceSeason: source.season,
       sourceStartEpisode: source.startEpisode,
       sourceEndEpisode: source.endEpisode,
@@ -237,6 +254,7 @@ export function parseAutoMatchMappingRules(value, allowedPlatforms = []) {
       targetYear: targetTitle.year,
       targetType: targetTitle.mediaType,
       targetTmdbId: targetTitle.tmdbId,
+      targetTmdbType: targetTitle.tmdbId ? (targetTitle.tmdbType || 'tv') : '',
       targetSeason: targetSide.season,
       targetStartEpisode: targetSide.startEpisode,
       targetEndEpisode: targetSide.endEpisode,
@@ -247,8 +265,9 @@ export function parseAutoMatchMappingRules(value, allowedPlatforms = []) {
   return { rules, warnings };
 }
 
-export function resolveAutoMatchMapping(rules, { title, season, episode, releaseGroups = [], releaseGroup = '', preferredPlatform = '', rejectAmbiguous = false } = {}) {
-  const titleKey = normalizeRuleTitle(title);
+export function resolveAutoMatchMapping(rules, { title, identityKey = '', season, episode, releaseGroups = [], releaseGroup = '', preferredPlatform = '', rejectAmbiguous = false } = {}) {
+  if (identityKey && !/^(tv|movie):[1-9]\d*$/.test(identityKey)) return null;
+  const titleKey = identityKey ? `@tmdb:${identityKey}` : normalizeRuleTitle(title);
   const seasonNumber = Number(season);
   const episodeNumber = Number(episode);
   if (!titleKey || !Number.isInteger(seasonNumber) || !Number.isInteger(episodeNumber)) return null;
@@ -321,13 +340,13 @@ export function resolveAutoMatchMapping(rules, { title, season, episode, release
 }
 
 /** Original filename rules first; aliases supply identity only, never season guesses. */
-export function collectAutoMatchCandidates(rules, { title, aliasTitle, season, episode, releaseGroups = [], preferredPlatform = '' }) {
-  const queries = [...new Set([title, aliasTitle].filter(Boolean))];
+export function collectAutoMatchCandidates(rules, { title, aliasTitle, identityKey = '', season, episode, releaseGroups = [], preferredPlatform = '' }) {
+  const queries = identityKey ? [''] : [...new Set([title, aliasTitle].filter(Boolean))];
   const result = [];
   const seen = new Set();
   for (const groups of releaseGroups.length ? [releaseGroups, []] : [[]]) {
     for (const queryTitle of queries) {
-      const rule = resolveAutoMatchMapping(rules, { title: queryTitle, season, episode,
+      const rule = resolveAutoMatchMapping(rules, { title: queryTitle, identityKey, season, episode,
         releaseGroups: groups, preferredPlatform, rejectAmbiguous: true });
       if (!rule) continue;
       const key = JSON.stringify([rule.targetTitle, rule.targetSeason, rule.targetEpisode,

@@ -2,7 +2,7 @@ import { canonicalPlatformName } from '../utils/platform-util.js';
 
 export const SUPPORTED_SOURCES = Object.freeze([
   'tencent', 'youku', 'iqiyi', 'imgo', 'bilibili', 'migu', 'sohu',
-  'leshi', 'xigua', 'maiduidui', 'hongguo', 'bahamut', 'dandan'
+  'leshi', 'hongguo', 'bahamut', 'dandan'
 ]);
 
 export function isSupportedSource(value) {
@@ -12,8 +12,7 @@ export function isSupportedSource(value) {
 const domains = {
   tencent: ['qq.com'], youku: ['youku.com'], iqiyi: ['iqiyi.com'],
   imgo: ['mgtv.com'], bilibili: ['bilibili.com', 'b23.tv'], migu: ['miguvideo.com'],
-  sohu: ['sohu.com'], leshi: ['le.com'], xigua: ['douyin.com', 'ixigua.com'],
-  maiduidui: ['mddcloud.com.cn'], hongguo: ['hongguoduanju.com'], bahamut: ['ani.gamer.com.tw']
+  sohu: ['sohu.com'], leshi: ['le.com'], hongguo: ['hongguoduanju.com'], bahamut: ['ani.gamer.com.tw']
 };
 
 export function sourceForUrl(value) {

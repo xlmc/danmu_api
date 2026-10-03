@@ -1,3 +1,4 @@
+import { resolveTmdbMatchIdentity, filterTmdbMatchCandidates, findSavedTmdbIdentity } from '../utils/tmdb-match-util.js';
 import { isSupportedSource, isSupportedLocation, sourceForUrl } from '../sources/policy.js';
 import { canonicalPlatformName } from '../utils/platform-util.js';
 import { runWithMatchTrace, traceMatchStep, getMatchTracePrefix } from '../utils/match-trace-util.js';
@@ -52,8 +53,8 @@ const bilibiliSource = getSourceByKey('bilibili');
 const miguSource = getSourceByKey('migu');
 const sohuSource = getSourceByKey('sohu');
 const leshiSource = getSourceByKey('leshi');
-const xiguaSource = getSourceByKey('xigua');
-const maiduiduiSource = getSourceByKey('maiduidui');
+
+
 
 const hongguoSource = getSourceByKey('hongguo');
 
@@ -192,12 +193,7 @@ async function resolveUrlDuration(url) {
       segmentResult = await sourceLogContext.run('sohu', () => sohuSource.getComments(targetUrl, 'sohu', true));
     } else if (targetUrl.includes('.le.com')) {
       segmentResult = await sourceLogContext.run('leshi', () => leshiSource.getComments(targetUrl, 'leshi', true));
-    } else if (targetUrl.includes('.douyin.com') || targetUrl.includes('.ixigua.com')) {
-      segmentResult = await sourceLogContext.run('xigua', () => xiguaSource.getComments(targetUrl, 'xigua', true));
-    } else if (targetUrl.includes('.mddcloud.com.cn')) {
-      segmentResult = await sourceLogContext.run('maiduidui', () => maiduiduiSource.getComments(targetUrl, 'maiduidui', true));
-    } else
-
+    }
     return extractDurationFromSegments(segmentResult);
   } catch (error) {
     log('warn', `[system] [duration] 获取时长失败: ${error.message}`);
@@ -508,15 +504,15 @@ async function executeSourceHandlers(resultData, queryTitle, targetAnimesList, r
 }
 
 // Extracted function for GET /api/v2/search/anime
-export async function searchAnime(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null) {
+export async function searchAnime(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null, sourceSearches = null) {
   // 单次搜索请求内启用 HTTP 响应复用缓存: 作为各源通用的请求级复用安全网, 借助 AsyncLocalStorage 做请求级隔离
   if (httpCacheContext.getStore()) {
-    return searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress);
+    return searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress, sourceSearches);
   }
-  return runWithHttpCache(() => searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress));
+  return runWithHttpCache(() => searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress, sourceSearches));
 }
 
-async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null) {
+async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null, sourceSearches = null) {
   let queryTitle = url.searchParams.get("keyword");
   const skipTitleMapping = url.searchParams.get('_skipTitleMapping') === '1';
 
@@ -738,10 +734,6 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
       platform = "sohu";
     } else if (queryTitle.includes('.le.com')) {
       platform = "leshi";
-    } else if (queryTitle.includes('.douyin.com') || queryTitle.includes('.ixigua.com')) {
-      platform = "xigua";
-    } else if (queryTitle.includes('.mddcloud.com.cn')) {
-      platform = "maiduidui";
     } else if (isHongguoPlayerUrl(queryTitle)) {
       platform = "hongguo";
     } else if (queryTitle.includes('ani.gamer.com.tw')) {
@@ -810,8 +802,15 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
         continue;
       }
       const args = meta.extraSearchArgs ? [queryTitle, preferAnimeId, preferSource] : [queryTitle];
-      sourceSearchMap[source] = traceMatchStep(log, `来源 ${source} 搜索`, () =>
-        sourceLogContext.run(meta.logName, () => meta.instance.search(...args)));
+      const searchKey = JSON.stringify([source, ...args]);
+      if (sourceSearches?.has(searchKey)) {
+        log('info', '[system] [match-search] 复用本次请求的来源搜索: ' + source);
+        sourceSearchMap[source] = sourceSearches.get(searchKey);
+      } else {
+        sourceSearchMap[source] = traceMatchStep(log, `来源 ${source} 搜索`, () =>
+          sourceLogContext.run(meta.logName, () => meta.instance.search(...args)));
+        sourceSearches?.set(searchKey, sourceSearchMap[source]);
+      }
     }
 
     // 构建逐源管道：每个源 search 完成后，通过 executeSourceHandlers 处理 handleAnimes
@@ -821,6 +820,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
       const isolatedAnimes = [];
       const isolatedDetailStore = new Map();
       const pipelinePromise = sourceSearchMap[source].then(async searchResult => {
+        if (sourceSearches) searchResult = structuredClone(searchResult);
         resultData[source] = searchResult;
         await traceMatchStep(log, `来源 ${source} 分集目录处理`, () =>
           executeSourceHandlers({ [source]: searchResult }, queryTitle, isolatedAnimes, isolatedDetailStore, querySeason, preferAnimeId, preferSource));
@@ -1691,7 +1691,7 @@ function detectPlatformFromUrl(url) { return sourceForUrl(stripLinkOffset(url).c
  * 所以这里必须先清掉文件名里那些“不是剧名”的杂质，
  * 否则 "[WEB-DL]"、"1080p"、".mkv" 这些会污染剧名，导致映射永远命不中。
  */
-export async function extractTitleSeasonEpisode(cleanFileName, suppliedReleaseGroups = null) {
+export async function extractTitleSeasonEpisode(cleanFileName, suppliedReleaseGroups = null, { translateTitle = true } = {}) {
   const releaseGroups = Array.isArray(suppliedReleaseGroups)
     ? suppliedReleaseGroups
     : extractReleaseGroups(cleanFileName);
@@ -1723,6 +1723,13 @@ export async function extractTitleSeasonEpisode(cleanFileName, suppliedReleaseGr
     title = match[1].trim();    // 剧名 = S 前面那段
     season = parseInt(match[2], 10);  // 季数 = S 后面的数字
     episode = parseInt(match[3], 10); // 集数 = E 后面的数字
+
+    // 年份位于 SxxExx 前时也支持空格分隔，避免留在剧名里。
+    const titleYear = title.match(/^(.+?)[.\s(（]+((?:19|20)\d{2})[)）]?$/);
+    if (titleYear) {
+      title = titleYear[1].trim();
+      year = Number(titleYear[2]);
+    }
 
     // ============ 提取年份 =============
     // 从文件名中提取年份（支持多种格式：.2009、.2024、(2009)、(2024) 等）
@@ -1782,7 +1789,7 @@ export async function extractTitleSeasonEpisode(cleanFileName, suppliedReleaseGr
   }
 
   // 如果外语标题转换中文开关已开启，则尝试获取中文标题
-  if (globals.titleToChinese) {
+  if (translateTitle && globals.titleToChinese) {
     // 如果title中包含.，则用空格替换
     title = await getTMDBChineseTitle(title.replace('.', ' '), season, episode);
   }
@@ -1868,7 +1875,32 @@ async function selectReadyMatch({ animes, details, title, season, episode, year,
   return { ...selected, spilloverMatched: false, title, season, episode };
 }
 
-async function executeMatchAttempt({ req, title, season, episode, year, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false }) {
+function confidentCandidates(animes, { title, season, episode, year, mapping, tmdbIdentity, details }) {
+  const guard = mapping || { targetTitle: title };
+  let candidates = tmdbIdentity
+    ? filterTmdbMatchCandidates(animes, tmdbIdentity, mapping, globals.animes)
+    : filterMappingTargetCandidates(animes, guard);
+  candidates = candidates.filter(anime => {
+    const candidateYear = extractYear(anime.animeTitle) || Number(String(anime.startDate || '').slice(0, 4)) || null;
+    if (year && candidateYear && candidateYear !== Number(year)) return false;
+    if (season && episode) {
+      if (isMovieMatchCandidate(anime)) return false;
+      return [anime.animeTitle, ...(anime.aliases || [])].some(candidate =>
+        matchSeason({ ...anime, animeTitle: candidate }, title, season)) || matchEpisodeSeason(anime, title, season, details);
+    }
+    return !/tvseries|tv_series|电视剧|综艺/i.test(String(anime.type || '') + String(anime.typeDescription || ''));
+  });
+  if (!year) {
+    const years = new Set(candidates.map(anime => extractYear(anime.animeTitle) || Number(String(anime.startDate || '').slice(0, 4))).filter(Boolean));
+    if (years.size > 1) {
+      log('info', '[system] [match-reject] 同名同季候选年份不同，需进一步确认作品');
+      return [];
+    }
+  }
+  return candidates;
+}
+
+async function executeMatchAttempt({ req, title, season, episode, year, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false, tmdbIdentity = null, sourceSearches = null }) {
   const startedAt = Date.now();
   // A platform-qualified rule describes that platform's numbering. Never
   // apply its offset to another source if the platform has no matching episode.
@@ -1881,7 +1913,7 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
   const budget = globals.matchSearchBudgetMs;
   const catalogKey = `${title}_S${season}`;
   const canUseReady = budget > 0 && season && episode && targetPlatform && !preferAnimeId && !offsets &&
-    !(mapping?.targetYear || mapping?.targetType || mapping?.targetTmdbId);
+    !(mapping?.targetYear || mapping?.targetType || (mapping?.targetTmdbId && !tmdbIdentity));
   const fastDisabledReasons = [];
   if (!(budget > 0)) fastDisabledReasons.push('搜索预算关闭');
   if (!season || !episode) fastDisabledReasons.push('缺少明确季集');
@@ -1890,9 +1922,11 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
   if (offsets) fastDisabledReasons.push('集数偏移');
 
 
-  if (mapping?.targetYear || mapping?.targetType || mapping?.targetTmdbId) fastDisabledReasons.push('映射含年份/类型/TMDB限定');
+  if (mapping?.targetYear || mapping?.targetType || (mapping?.targetTmdbId && !tmdbIdentity)) fastDisabledReasons.push('映射含年份/类型/未确认TMDB限定');
   logEvent('info', 'match.fast', `[system] [match-fast] ${canUseReady ? `启用，预算 ${budget}ms，优先平台 ${targetPlatform}` : `未启用：${fastDisabledReasons.join('、')}；等待完整搜索`}`, { enabled: Boolean(canUseReady), budgetMs: budget, reasons: fastDisabledReasons, platform: targetPlatform });
-  const probe = progress => selectReadyMatch({ ...progress, title, season, episode, year, platform: targetPlatform, req, mapping, strictTargetTitle });
+  const probe = progress => selectReadyMatch({ ...progress,
+    animes: globals.tmdbMatchAssist ? confidentCandidates(progress.animes, { title, season, episode, year, mapping, tmdbIdentity, details: progress.details }) : progress.animes,
+    title, season, episode, year, platform: targetPlatform, req, mapping, strictTargetTitle });
   if (canUseReady) {
     // 已保存的目录仍包含可用剧集 URL；缺集、不确定季号或优先组无数据时才重新搜索。
     const details = new Map();
@@ -1931,7 +1965,7 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
     void checkReady().catch(error => log('warn', `[system] [match-fast] ${error.message}`));
   }, budget) : null;
   const fullSearch = traceMatchStep(log, '完整搜索（含目录处理与缓存）', () =>
-    searchAnime(searchUrl, preferAnimeId, preferSource, detailStore, targetPlatform, false, onProgress));
+    searchAnime(searchUrl, preferAnimeId, preferSource, detailStore, targetPlatform, false, onProgress, sourceSearches));
   // 完整搜索继续完成合并与缓存；部分搜索结果绝不写成完整搜索缓存。
   fullSearch.catch(error => log('warn', `[system] [match-fast] 完整搜索失败: ${error.message}`));
   let outcome;
@@ -1957,7 +1991,8 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
   }
 
   const titleGuard = mapping || (strictTargetTitle ? { targetTitle: title } : null);
-  const targetCandidates = titleGuard ? filterMappingTargetCandidates(searchData.animes, titleGuard) : searchData.animes;
+  const guardedCandidates = titleGuard ? filterMappingTargetCandidates(searchData.animes, titleGuard) : searchData.animes;
+  const targetCandidates = globals.tmdbMatchAssist ? confidentCandidates(guardedCandidates, { title, season, episode, year, mapping, tmdbIdentity, details: detailStore }) : guardedCandidates;
   if (titleGuard && targetCandidates.length === 0) {
     log('info', '[system] [match-reject] 映射目标标题过滤后无候选');
     return { resAnime: null, resEpisode: null, spilloverMatched: false, title, season, episode, cacheWarning };
@@ -1971,7 +2006,9 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
       candidatePasses.push({ searchData: { ...searchData, animes: qualified }, year: mapping.targetYear || null, label: 'qualified' });
     }
   }
-  candidatePasses.push({ searchData: targetSearchData, year: mapping ? null : year, label: mapping ? 'fallback' : 'default' });
+  if (!globals.tmdbMatchAssist || !(mapping?.targetYear || mapping?.targetType || mapping?.targetTmdbId)) {
+    candidatePasses.push({ searchData: targetSearchData, year: mapping ? null : year, label: mapping ? 'fallback' : 'default' });
+  }
 
   for (const pass of candidatePasses) {
     if (mapping && pass.label === 'fallback' && (mapping.targetYear || mapping.targetType || mapping.targetTmdbId)) {
@@ -2003,6 +2040,11 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
       if (mapping && pass.label === 'qualified') {
         log('info', `[system] [auto-match-mapping] Matched preferred target qualifiers for "${mapping.targetDisplayTitle}"`);
       }
+      if (globals.tmdbMatchAssist && !preferAnimeId && !offsets && season && episode &&
+          (selected.spilloverMatched || extractEpisodeNumberFromTitle(selected.resEpisode.episodeTitle) !== episode)) {
+        log('info', '[system] [match-reject] 缺少明确目标集号，不能用跨季或数组位置代替');
+        continue;
+      }
       return { ...selected, title, season, episode, cacheWarning };
     }
   }
@@ -2027,7 +2069,7 @@ function findSeasonPreferenceTitle(titles, season) {
 
 // Extracted function for POST /api/v2/match
 export async function matchAnime(url, req, clientIp) {
-  return runWithMatchTrace(async () => {
+  return runWithHttpCache(() => runWithMatchTrace(async () => {
     const startedAt = performance.now();
     logEvent('info', 'match.start', '[system] [match-trace] 开始匹配');
     try {
@@ -2039,7 +2081,7 @@ export async function matchAnime(url, req, clientIp) {
       log('error', `[system] [match-trace] 请求异常，总耗时 ${Math.round(performance.now() - startedAt)}ms`);
       throw error;
     }
-  });
+  }));
 }
 
 async function matchAnimeWithTrace(url, req, clientIp) {
@@ -2072,13 +2114,15 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     log("info", `[system] [match] Processing anime match for query: ${fileName}`);
     log("info", `[system] [match] Parsed cleanFileName: ${cleanFileName}, preferredPlatform: ${preferredPlatform}, releaseGroups: ${releaseGroups.join(',') || 'none'}`);
 
-    const parsed = await traceMatchStep(log, '文件名解析与标题转换', () => extractTitleSeasonEpisode(cleanFileName, releaseGroups));
-    const identity = { title: parsed.title, year: parsed.year, season: parsed.season, episode: parsed.episode, preferredPlatform, releaseGroups };
+    const parsed = await traceMatchStep(log, '文件名解析', () => extractTitleSeasonEpisode(cleanFileName, releaseGroups, { translateTitle: !globals.tmdbMatchAssist }));
+    let tmdbIdentity = globals.tmdbMatchAssist ? findSavedTmdbIdentity(globals.animes, parsed) : null;
+    const sourceSearches = new Map();
+    const identity = { title: parsed.title, year: parsed.year, season: parsed.season, episode: parsed.episode, preferredPlatform, releaseGroups, tmdbIdentity };
     logEvent('info', 'match.identity', '[system] [match-trace] 解析身份 ' + JSON.stringify(identity), identity);
     const originalTitle = normalizeMatchTitle(parsed.title);
     const originalSeason = parsed.season;
     const originalEpisode = parsed.episode;
-    const originalYear = parsed.year;
+    let originalYear = parsed.year || (tmdbIdentity ? (originalSeason > 1 ? tmdbIdentity.seasonYear : tmdbIdentity.year) : null);
     const originalReleaseGroups = parsed.releaseGroups || releaseGroups || [];
 
     const preferenceTitles = [...new Set([originalTitle, parsed.title].filter(Boolean))];
@@ -2114,6 +2158,8 @@ async function matchAnimeWithTrace(url, req, clientIp) {
         preferSource,
         offsets,
         mapping: null,
+        tmdbIdentity,
+        sourceSearches,
         strictTargetTitle
       }));
       if (!succeeded(result)) log('info', `[system] [match-waterfall] ${stage} 未得到有效作品与分集，继续回退`);
@@ -2126,6 +2172,9 @@ async function matchAnimeWithTrace(url, req, clientIp) {
 
     const tryAutoMappingPath = async (stage, rule) => {
       if (!rule) return null;
+      const ruleId = rule.sourceTmdbId || rule.targetTmdbId;
+      const ruleType = rule.sourceTmdbType || rule.targetTmdbType || 'tv';
+      if (tmdbIdentity && ruleId && `${ruleType}:${ruleId}` !== tmdbIdentity.key) return null;
       const mappedTitle = normalizeMatchTitle(rule.targetTitle);
       const mappedPlatform = rule.targetPlatform || preferredPlatform;
       log('info', `[system] [match-waterfall] 尝试 ${stage}: ${originalTitle} S${originalSeason}E${originalEpisode} -> ${mappedTitle} S${rule.targetSeason}E${rule.targetEpisode}`);
@@ -2140,7 +2189,9 @@ async function matchAnimeWithTrace(url, req, clientIp) {
         preferAnimeId: null,
         preferSource: null,
         offsets: null,
-        mapping: rule
+        mapping: rule,
+        tmdbIdentity,
+        sourceSearches
       }));
       if (!succeeded(result)) log('info', `[system] [match-waterfall] ${stage} 未得到有效作品与分集，继续回退`);
       if (succeeded(result)) {
@@ -2162,12 +2213,15 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     // 本机手动选择和本机配置仍优先于远程数据；所有阶段以实际匹配为准。
     if (!succeeded(attempt)) {
       localTitleMapping = resolveLocalTitleMapping(parsed.title, originalSeason, originalYear);
-      const localCandidates = collectAutoMatchCandidates(globals.autoMatchMappingTable, {
+      const localOptions = {
         title: originalTitle,
+        identityKey: tmdbIdentity?.key || '',
         aliasTitle: localTitleMapping.matched ? normalizeMatchTitle(localTitleMapping.title) : '',
         season: originalSeason, episode: originalEpisode,
         releaseGroups: originalReleaseGroups, preferredPlatform
-      });
+      };
+      const localCandidates = [...collectAutoMatchCandidates(globals.autoMatchMappingTable, localOptions),
+        ...(tmdbIdentity ? collectAutoMatchCandidates(globals.autoMatchMappingTable, { ...localOptions, identityKey: '' }) : [])];
       for (const rule of localCandidates) {
         attempt = await tryAutoMappingPath('本机标题+季集映射', rule) || attempt;
         if (succeeded(attempt)) break;
@@ -2185,12 +2239,15 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       await ensureCachedRemoteTitleMapping();
       await ensureRemoteAutoMatchMapping();
       remoteTitleMapping = resolveCachedRemoteTitleMapping(parsed.title, originalSeason, originalYear);
-      const remoteCandidates = collectAutoMatchCandidates(getCachedRemoteAutoMatchMappingRules(), {
+      const remoteOptions = {
         title: originalTitle,
+        identityKey: tmdbIdentity?.key || '',
         aliasTitle: remoteTitleMapping.matched ? normalizeMatchTitle(remoteTitleMapping.title) : '',
         season: originalSeason, episode: originalEpisode,
         releaseGroups: originalReleaseGroups, preferredPlatform
-      });
+      };
+      const remoteCandidates = [...collectAutoMatchCandidates(getCachedRemoteAutoMatchMappingRules(), remoteOptions),
+        ...(tmdbIdentity ? collectAutoMatchCandidates(getCachedRemoteAutoMatchMappingRules(), { ...remoteOptions, identityKey: '' }) : [])];
       for (const rule of remoteCandidates) {
         attempt = await tryAutoMappingPath('远程标题+季集缓存', rule) || attempt;
         if (succeeded(attempt)) break;
@@ -2207,12 +2264,43 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     if (!succeeded(attempt)) {
       const [preferAnimeId, preferSource, offsets] = globals.rememberLastSelect
         ? getPreferAnimeId(originalTitle, originalSeason) : [null, null, null];
-      attempt = await tryTitlePath({ stage: '本机普通匹配', title: originalTitle, preferAnimeId, preferSource, offsets }) || attempt;
+      attempt = await tryTitlePath({ stage: tmdbIdentity ? 'TMDB 作品直接搜索' : '本机普通匹配', title: tmdbIdentity?.title || originalTitle, preferAnimeId, preferSource, offsets }) || attempt;
+    }
+
+    if (!succeeded(attempt) && globals.tmdbMatchAssist && !tmdbIdentity && (globals.tmdbApiKey || globals.proxyUrl)) {
+      try { tmdbIdentity = await traceMatchStep(log, 'TMDB 辅助识别', () => resolveTmdbMatchIdentity(parsed)); }
+      catch (error) { log('warn', '[system] [match] TMDB 辅助识别失败: ' + error.message); }
+      if (tmdbIdentity) {
+        log('info', '[system] [match] 已确认 TMDB 身份: ' + tmdbIdentity.key);
+        originalYear = parsed.year || (originalSeason > 1 ? tmdbIdentity.seasonYear : tmdbIdentity.year);
+        const options = { identityKey: tmdbIdentity.key, season: originalSeason, episode: originalEpisode,
+          releaseGroups: originalReleaseGroups, preferredPlatform };
+        for (const rules of [globals.autoMatchMappingTable, getCachedRemoteAutoMatchMappingRules()]) {
+          for (const rule of collectAutoMatchCandidates(rules, options)) {
+            attempt = await tryAutoMappingPath('TMDB 身份季集修正', rule) || attempt;
+            if (succeeded(attempt)) break;
+          }
+          if (succeeded(attempt)) break;
+        }
+        // Limit alias expansion to one new title; reuse raw searches when the title is unchanged.
+        if (!succeeded(attempt)) {
+          attemptedTitlePaths.clear();
+          attempt = await tryTitlePath({ stage: 'TMDB 辅助作品匹配', title: tmdbIdentity.title }) || attempt;
+        }
+      }
     }
 
     attempt ||= { resAnime: null, resEpisode: null, spilloverMatched: false, title: originalTitle, season: originalSeason, episode: originalEpisode };
 
     const { resAnime, resEpisode, spilloverMatched } = attempt;
+    if (tmdbIdentity && resAnime && resEpisode && !spilloverMatched) {
+      const stored = globals.animes.find(anime => anime.animeId === resAnime.animeId && anime.source === resAnime.source);
+      if (stored) {
+        stored.tmdbIdentity = tmdbIdentity;
+        if (globals.localCacheValid) await updateLocalCaches({ keys: ['animes'] });
+        if (globals.localRedisValid) await updateLocalRedisCaches({ keys: ['animes'] });
+      }
+    }
 
     let resData = {
       "errorCode": 0,
@@ -2223,6 +2311,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     };
 
     resData["isMatched"] = Boolean(resAnime && resEpisode);
+    if (tmdbIdentity) resData.tmdb = tmdbIdentity;
 
     if (resEpisode) {
       if (clientIp && !spilloverMatched) {
@@ -2754,10 +2843,6 @@ export async function getComment(path, queryFormat, segmentFlag, clientIp, inclu
       danmus = await sourceLogContext.run('sohu', () => sohuSource.getComments(commentUrl, plat, segmentFlag));
     } else if (url.includes('.le.com')) {
       danmus = await sourceLogContext.run('leshi', () => leshiSource.getComments(commentUrl, plat, segmentFlag));
-    } else if (url.includes('.douyin.com') || url.includes('.ixigua.com')) {
-      danmus = await sourceLogContext.run('xigua', () => xiguaSource.getComments(commentUrl, plat, segmentFlag));
-    } else if (url.includes('.mddcloud.com.cn')) {
-      danmus = await sourceLogContext.run('maiduidui', () => maiduiduiSource.getComments(commentUrl, plat, segmentFlag));
     } else if (isHongguoUrl) {
       danmus = await sourceLogContext.run('hongguo', () => hongguoSource.getComments(commentUrl, 'hongguo', segmentFlag));
     } else if (url.includes('ani.gamer.com.tw')) {
@@ -2973,10 +3058,6 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
       danmus = await sourceLogContext.run('sohu', () => sohuSource.getComments(cleanUrl, "sohu", segmentFlag));
     } else if (url.includes('.le.com')) {
       danmus = await sourceLogContext.run('leshi', () => leshiSource.getComments(cleanUrl, "leshi", segmentFlag));
-    } else if (url.includes('.douyin.com') || url.includes('.ixigua.com')) {
-      danmus = await sourceLogContext.run('xigua', () => xiguaSource.getComments(cleanUrl, "xigua", segmentFlag));
-    } else if (url.includes('.mddcloud.com.cn')) {
-      danmus = await sourceLogContext.run('maiduidui', () => maiduiduiSource.getComments(cleanUrl, "maiduidui", segmentFlag));
     } else if (isHongguoPlayerUrl(cleanUrl)) {
       danmus = await sourceLogContext.run('hongguo', () => hongguoSource.getComments(cleanUrl, "hongguo", segmentFlag));
     } else {
@@ -3084,10 +3165,6 @@ export async function getSegmentComment(segment, queryFormat) {
       danmus = await sourceLogContext.run('sohu', () => sohuSource.getSegmentComments(segment));
     } else if (platform === "leshi") {
       danmus = await sourceLogContext.run('leshi', () => leshiSource.getSegmentComments(segment));
-    } else if (platform === "xigua") {
-      danmus = await sourceLogContext.run('xigua', () => xiguaSource.getSegmentComments(segment));
-    } else if (platform === "maiduidui") {
-      danmus = await sourceLogContext.run('maiduidui', () => maiduiduiSource.getSegmentComments(segment));
     } else if (platform === "hongguo") {
       danmus = await sourceLogContext.run('hongguo', () => hongguoSource.getSegmentComments(segment));
     } else if (platform === "bahamut") {

@@ -7,7 +7,7 @@ import { addAnime } from './utils/cache-util.js';
 import { getSourceByKey } from './sources/registry.js';
 
 function reset(env = {}) {
-  Globals.init({ SOURCE_ORDER: 'tencent,dandan', PLATFORM_ORDER: 'qq,dandan',
+  Globals.init({TMDB_MATCH_ASSIST:'false',  SOURCE_ORDER: 'tencent,dandan', PLATFORM_ORDER: 'qq,dandan',
     TITLE_MAPPING_TABLE: '诛仙S04->诛仙 最终季', MATCH_SEARCH_BUDGET_MS: '25',
     MERGE_SOURCE_PAIRS: '', USE_BANGUMI_DATA: 'false', RATE_LIMIT_MAX_REQUESTS: '0', ...env });
   Globals.animes = [];
