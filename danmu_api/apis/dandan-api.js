@@ -11,7 +11,7 @@ import {
     updateLocalCaches, setLastSearch, getLastSearch, findAnimeTitleById, findIndexById, hasSeasonSpecificPreference, getAddAnimeError, mergeAddAnimeError
 } from "../utils/cache-util.js";
 import { resolveFavoriteForSearchKeyword } from "../utils/favorite-util.js";
-import { formatDanmuResponse, convertToDanmakuJson, filterDanmusByBlockedNames } from "../utils/danmu-util.js";
+import { formatDanmuResponse, convertToDanmakuJson, filterDanmusByBlockedWords, filterDanmusByBlockedNames } from "../utils/danmu-util.js";
 import { resolveOffset, resolveOffsetRule, applyOffset, stripLinkOffset } from "../utils/offset-util.js";
 import { applySearchKeywordMapping, ensureRemoteTitleMapping, ensureCachedRemoteTitleMapping, resolveLocalTitleMapping, resolveCachedRemoteTitleMapping } from "../utils/title-mapping-url-util.js";
 import { filterMappingQualifierCandidates, filterMappingTargetCandidates, collectAutoMatchCandidates } from "../utils/auto-match-mapping-util.js";
@@ -21,7 +21,6 @@ import {
   extractYear, titleMatches, extractAnimeInfo, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle
 } from "../utils/common-util.js";
 import { getTMDBChineseTitle, getDomesticPersonMetadataForTitle, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
-import { DOMESTIC_REGION_NAMES } from "../data/domestic-regions.js";
 import { shouldBlockDomesticCelebrities } from '../utils/person-filter-exclusion-util.js';
 import { applyMergeLogic, mergeDanmakuList, MERGE_DELIMITER, alignSourceTimelines, sanitizeUrl } from "../utils/merge-util.js";
 import { getHanjutvSourceLabel } from "../utils/hanjutv-util.js";
@@ -100,10 +99,9 @@ function attachFilterContext(value, animeTitle, sourceUrl) {
 }
 
 async function applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata = null) {
+  danmus = filterDanmusByBlockedWords(danmus);
   const blockCelebrities = await shouldBlockDomesticCelebrities(animeTitle);
-  const blockRegions = globals.blockDomesticRegions;
-  const blockDates = globals.blockDates;
-  if ((!blockCelebrities && !blockRegions && !blockDates) || !Array.isArray(danmus) || danmus.length === 0) return danmus;
+  if (!blockCelebrities || !Array.isArray(danmus) || danmus.length === 0) return danmus;
   let metadata = { actorNames: [], characterNames: [], names: [], status: 'unavailable' };
   if (blockCelebrities && animeTitle) {
     metadata = await (pendingMetadata || getDomesticPersonMetadataForTitle(animeTitle));
@@ -112,25 +110,19 @@ async function applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata 
   const blockedNames = blockCelebrities ? metadata.names : [];
   if (blockCelebrities) log(metadata.names.length ? 'info' : 'warn', `[system] [danmu] [person-filter] 演员 ${metadata.actorNames.length} 个，角色 ${metadata.characterNames.length} 个，状态 ${metadata.status}${animeTitle ? '' : '（此请求无作品标题）'}`);
   const result = filterDanmusByBlockedNames(danmus, blockedNames, {
-    blockDates,
     actorNames: blockCelebrities ? metadata.actorNames : [],
     characterNames: blockCelebrities ? metadata.characterNames : [],
     surnameNames: blockCelebrities ? metadata.actorNames : [],
-    surnameMatcherOptions: { bareSurname: false },
-    regionNames: blockRegions ? DOMESTIC_REGION_NAMES : []
+    surnameMatcherOptions: { bareSurname: false }
   });
   if (blockCelebrities) {
     const personHits = result.hits.filter(hit => !hit.name.startsWith('地区:') && !hit.name.startsWith('日期:'));
     log('info', `[system] [danmu] [person-filter] 已拦截 ${personHits.reduce((sum, hit) => sum + hit.count, 0)} 条，命中 ${personHits.map(hit => `${hit.name} ×${hit.count}`).join('、') || '无'}`);
   }
-  if (blockDates) {
-    const count = result.hits.filter(hit => hit.name.startsWith('日期:')).reduce((sum, hit) => sum + hit.count, 0);
-    log('info', `[system] [danmu] [blocked-words] 日期时间规则已拦截 ${count} 条`);
-  }
   if (result.removedCount > 0) {
     log('info', `[system] [danmu] [domestic-filter] 已拦截 ${result.removedCount}/${danmus.length} 条弹幕，命中 ${result.hits.length} 条规则`);
   } else {
-    log('info', `[system] [danmu] [domestic-filter] 已加载演员/角色 ${blockedNames.length} 个、地区 ${blockRegions ? DOMESTIC_REGION_NAMES.length : 0} 个，本集无命中`);
+    log('info', `[system] [danmu] [domestic-filter] 已加载演员/角色 ${blockedNames.length} 个，本集无命中`);
   }
   return result.danmus;
 }

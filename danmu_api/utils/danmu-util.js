@@ -6,6 +6,7 @@ import { simplized, traditionalized } from './zh-util.js';
 import { convertDanAny } from './dan-any.js';
 import { convertCommentsToDanmux, parseDanmuxGradientStops } from './danmux-adapter.js';
 import { BLOCKED_REGION_PRESET_NAMES } from '../data/blocked-region-presets.js';
+import { regionBlockedWord } from './blocked-word-presets.js';
 import { DANMUX_GRADIENT_META } from './danmux-meta.js';
 
 const NATIVE_GRADIENT_FIELDS = ['color_v2', 'colorV2', 'colorfulSrc', 'colorful_src', 'gradient'];
@@ -492,41 +493,6 @@ export function buildCharacterNicknameMatchers(names) {
   return [...aliases].map(needle => ({ label: `角色昵称:${needle}`, needle, regex: null }));
 }
 
-/** 完整日期、中文月日及带日期语境的简写；校验实际日历范围。 */
-export function hasCalendarDate(text) {
-  const value = String(text || '').normalize('NFKC');
-  const valid = (year, month, day) => {
-    const date = new Date(Date.UTC(year, month - 1, day));
-    return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
-  };
-  const full = /(?<![A-Za-z0-9.])((?:19|20)\d{2})(?:\s*([.\/-])\s*(\d{1,2})\s*\2\s*(\d{1,2})|(?:\s*年\s*|\s*[.\/-]\s*|\s+)(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?)(?!\d|\.\d)/g;
-  for (const m of value.matchAll(full)) {
-    if (valid(Number(m[1]), Number(m[3] || m[5]), Number(m[4] || m[6]))) return true;
-  }
-  const shortYear = /(?<![A-Za-z0-9.])(\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})(?!\d)\s*[日号]?/g;
-  for (const m of value.matchAll(shortYear)) {
-    if (valid(2000 + Number(m[1]), Number(m[2]), Number(m[3]))) return true;
-  }
-  // 没有年份的月日按闰年校验；不从完整但无效的日期中截取月日。
-  const monthDay = /(?<![\d.年\/\-])(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g;
-  for (const m of value.matchAll(monthDay)) {
-    if (/(?:\d{2,4}\s*年|\d{4})\s*$/.test(value.slice(0, m.index))) continue;
-    if (valid(2000, Number(m[1]), Number(m[2]))) return true;
-  }
-  const abbreviated = /(?<![A-Za-z0-9.年\/\-])(\d{1,2})([.\/\-])(\d{1,2})(?!\d|\.\d)(?=\s*(?:国庆|元旦|春节|中秋|七夕|情人节|二刷|一刷|三刷|打卡|报到|报道|签到|来看|看的|看完))/g;
-  for (const m of value.matchAll(abbreviated)) {
-    if (valid(2000, Number(m[1]), Number(m[3]))) return true;
-  }
-  return false;
-}
-
-/** 合法时分秒，以及中文“点/时”形式；不匹配端口及不完整数字串。 */
-export function hasClockTime(text) {
-  const value = String(text || '').normalize('NFKC');
-  return /(?<!\d)(?<![\d:]:)(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?!\d|:\d)/.test(value)
-    || /(?<![\d.])(?:[01]?\d|2[0-3])\s*[点时]\s*(?:[0-5]?\d\s*分?(?:\s*[0-5]?\d\s*秒)?(?!\d)|半|整)/.test(value);
-}
-
 export function filterDanmusByBlockedNames(danmus, names, options = {}) {
   if (!Array.isArray(danmus) || danmus.length === 0) {
     return { danmus: Array.isArray(danmus) ? danmus : [], removedCount: 0, hits: [] };
@@ -537,7 +503,7 @@ export function filterDanmusByBlockedNames(danmus, names, options = {}) {
   const matchers = [...characterMatchers, ...actorMatchers, ...buildCharacterNicknameMatchers(options.characterNames), ...buildBlockedNameMatchers(names)];
   const surnameMatchers = buildBlockedSurnameMatchers(options.surnameNames, options.surnameMatcherOptions);
   const regionMatchers = buildBlockedRegionMatchers(options.regionNames);
-  if (!options.blockDates && matchers.length === 0 && surnameMatchers.length === 0 && regionMatchers.length === 0) {
+  if (matchers.length === 0 && surnameMatchers.length === 0 && regionMatchers.length === 0) {
     return { danmus, removedCount: 0, hits: [] };
   }
 
@@ -545,10 +511,6 @@ export function filterDanmusByBlockedNames(danmus, names, options = {}) {
   const filtered = danmus.filter(item => {
     const rawText = String(item?.m || '').normalize('NFKC');
     const text = rawText.replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
-    if (options.blockDates && (hasCalendarDate(rawText) || hasClockTime(rawText))) {
-      hitCounts.set('日期:日期时间', (hitCounts.get('日期:日期时间') || 0) + 1);
-      return false;
-    }
     const personText = matchers.length || regionMatchers.length ? simplized(text) : text;
     const matcher = matchers.find(candidate => candidate.regex ? candidate.regex.test(personText) : personText.includes(candidate.needle));
     const surnameMatcher = matcher ? null : surnameMatchers.find(candidate => candidate.regex.test(text));
@@ -563,6 +525,113 @@ export function filterDanmusByBlockedNames(danmus, names, options = {}) {
     removedCount: danmus.length - filtered.length,
     hits: [...hitCounts.entries()].map(([name, count]) => ({ name, count }))
   };
+}
+
+export function filterDanmusByBlockedWords(danmus) {
+  if (!Array.isArray(danmus) || !danmus.length) return Array.isArray(danmus) ? danmus : [];
+  // =====================
+  // 屏蔽词过滤（含生效诊断日志）
+  // =====================
+  // 解析屏蔽词：支持 /regex/、/regex/flags、纯文本词、@人名（语境匹配）及 地区:地区名（名称包含匹配），
+  // 兼容中英文逗号及空格分隔
+  const blockedSegments = splitBlockedWords(globals.blockedWords);
+  const blockedNameEntries = [];
+  const blockedRegionEntries = [];
+  let usedRegionPreset = false;
+  const otherSegments = [];
+  for (const segment of blockedSegments) {
+    if (!isBlockedNameEntry(segment) && !isBlockedRegionEntry(segment)) {
+      otherSegments.push(segment);
+      continue;
+    }
+    const name = isBlockedNameEntry(segment) ? parseBlockedNameEntry(segment) : null;
+    const region = isBlockedRegionEntry(segment) ? parseBlockedRegionEntry(segment) : null;
+    const value = name || region;
+    const compact = String(value || '').normalize('NFKC').replace(/[\s·・•‧·･]+/g, '');
+    // 地区:* / 地区:全部 → 展开为内置预设地区名单（省级行政区+地级行政区）
+    if (region && (region === '*' || region === '全部')) {
+      blockedRegionEntries.push(...BLOCKED_REGION_PRESET_NAMES);
+      usedRegionPreset = true;
+      continue;
+    }
+    if (value && /\p{Script=Han}/u.test(compact) && Array.from(compact).length >= 2) {
+      if (name) blockedNameEntries.push(name);
+      else blockedRegionEntries.push(region);
+    } else {
+      // 人名/地区条目无效（非中文或不足两字）时保留原有字面量语义，避免静默失效
+      log("warn", `[system] [danmu] [blocked-words] 人名/地区词条无效(需至少两个汉字)，已按字面量处理: ${segment}`);
+      otherSegments.push(segment);
+    }
+  }
+  const regexArray = otherSegments.map(parseBlockedWord);
+
+  if (blockedRegionEntries.length) regexArray.push(parseBlockedWord(regionBlockedWord(blockedRegionEntries)));
+
+  // [诊断1] 解析阶段：确认规则是否正确加载
+  if (regexArray.length === 0 && blockedNameEntries.length === 0 && blockedRegionEntries.length === 0) {
+    if (globals.blockedWords && globals.blockedWords.trim() !== '') {
+      log("warn", `[system] [danmu] [blocked-words] ❌ 已配置屏蔽词但未解析出有效规则，本次不会过滤任何弹幕！原始配置: ${JSON.stringify(globals.blockedWords)}`);
+    } else {
+      log("info", `[system] [danmu] [blocked-words] 未配置屏蔽词(BLOCKED_WORDS 为空)，跳过过滤`);
+    }
+  } else {
+    const ruleSummary = regexArray.map(r => r.toString()).join(' , ');
+    const extras = [];
+    if (blockedNameEntries.length) extras.push(`人名(语境匹配): ${blockedNameEntries.join(' , ')}`);
+    if (blockedRegionEntries.length) extras.push(`地区(包含匹配): ${usedRegionPreset ? `内置预设名单 ${blockedRegionEntries.length} 个` : blockedRegionEntries.join(' , ')}`);
+    const extraSummary = extras.length ? `${ruleSummary ? ' , ' : ''}${extras.join(' , ')}` : '';
+    log("info", `[system] [danmu] [blocked-words] 规则解析成功: 共 ${regexArray.length} 条规则 + ${blockedNameEntries.length} 个人名 + ${blockedRegionEntries.length} 个地区 [ ${ruleSummary}${extraSummary} ]`);
+  }
+
+  // 过滤列表（统计每条规则命中次数与拦截样本）
+  const ruleHitCounts = new Array(regexArray.length).fill(0);
+  const blockedSamples = [];
+  let filteredDanmus = danmus.filter(item => {
+    for (let i = 0; i < regexArray.length; i++) {
+      if (regexArray[i].test(item.m)) { // 针对 `m` 字段进行匹配
+        ruleHitCounts[i]++;
+        if (blockedSamples.length < 3) {
+          blockedSamples.push(`「${String(item.m).slice(0, 30)}」← ${regexArray[i].toString()}`);
+        }
+        return false;
+      }
+    }
+    return true;
+  });
+
+  // @人名 条目走语境分析引擎：三字及以上按完整名称匹配，二字仅在明确人物语境（称谓/指代）中命中；
+  // 地区: 条目按名称包含匹配；
+  // 姓氏指代为严格版（仅“姓氏+称谓”或“@/# 姓氏”），裸姓氏不命中
+  let entityHits = [];
+  if (blockedNameEntries.length > 0) {
+    const entityResult = filterDanmusByBlockedNames(filteredDanmus, blockedNameEntries, {
+      surnameNames: blockedNameEntries,
+      surnameMatcherOptions: { bareSurname: false }
+    });
+    entityHits = entityResult.hits;
+    filteredDanmus = entityResult.danmus;
+  }
+
+  // [诊断2] 过滤阶段：明确判定屏蔽词是否生效
+  const removedCount = danmus.length - filteredDanmus.length;
+  if (regexArray.length > 0 || blockedNameEntries.length > 0 || blockedRegionEntries.length > 0) {
+    if (removedCount > 0) {
+      const hitSummary = regexArray
+        .map((r, i) => ({ rule: r.toString(), count: ruleHitCounts[i] }))
+        .filter(x => x.count > 0)
+        .map(x => `${x.rule} ×${x.count}`)
+        .concat(entityHits.map(h => h.name.startsWith('地区:') ? `${h.name} ×${h.count}` : `人名:${h.name} ×${h.count}`))
+        .join(', ');
+      log("info", `[system] [danmu] [blocked-words] ✅ 屏蔽词已生效: 拦截 ${removedCount}/${danmus.length} 条弹幕${hitSummary ? `，命中明细: ${hitSummary}` : ''}`);
+      if (blockedSamples.length) {
+        log("info", `[system] [danmu] [blocked-words] 拦截示例(最多3条): ${blockedSamples.join(' | ')}`);
+      }
+    } else {
+      log("info", `[system] [danmu] [blocked-words] ⚠️ 规则已加载(${regexArray.length} 条规则 + ${blockedNameEntries.length} 个人名 + ${blockedRegionEntries.length} 个地区)但本集弹幕无命中`);
+    }
+  }
+
+  return filteredDanmus;
 }
 
 export function convertToDanmakuJson(contents, platform) {
@@ -696,106 +765,7 @@ export function convertToDanmakuJson(contents, platform) {
     log("info", `[system] [danmu] [danmu convert] 转换了 ${danmus.length} 条弹幕为${targetLabel}`);
   }
 
-  // =====================
-  // 屏蔽词过滤（含生效诊断日志）
-  // =====================
-  // 解析屏蔽词：支持 /regex/、/regex/flags、纯文本词、@人名（语境匹配）及 地区:地区名（名称包含匹配），
-  // 兼容中英文逗号及空格分隔
-  const blockedSegments = splitBlockedWords(globals.blockedWords);
-  const blockedNameEntries = [];
-  const blockedRegionEntries = [];
-  let usedRegionPreset = false;
-  const otherSegments = [];
-  for (const segment of blockedSegments) {
-    if (!isBlockedNameEntry(segment) && !isBlockedRegionEntry(segment)) {
-      otherSegments.push(segment);
-      continue;
-    }
-    const name = isBlockedNameEntry(segment) ? parseBlockedNameEntry(segment) : null;
-    const region = isBlockedRegionEntry(segment) ? parseBlockedRegionEntry(segment) : null;
-    const value = name || region;
-    const compact = String(value || '').normalize('NFKC').replace(/[\s·・•‧·･]+/g, '');
-    // 地区:* / 地区:全部 → 展开为内置预设地区名单（省级行政区+地级行政区）
-    if (region && (region === '*' || region === '全部')) {
-      blockedRegionEntries.push(...BLOCKED_REGION_PRESET_NAMES);
-      usedRegionPreset = true;
-      continue;
-    }
-    if (value && /\p{Script=Han}/u.test(compact) && Array.from(compact).length >= 2) {
-      if (name) blockedNameEntries.push(name);
-      else blockedRegionEntries.push(region);
-    } else {
-      // 人名/地区条目无效（非中文或不足两字）时保留原有字面量语义，避免静默失效
-      log("warn", `[system] [danmu] [blocked-words] 人名/地区词条无效(需至少两个汉字)，已按字面量处理: ${segment}`);
-      otherSegments.push(segment);
-    }
-  }
-  const regexArray = otherSegments.map(parseBlockedWord);
-
-  // [诊断1] 解析阶段：确认规则是否正确加载
-  if (regexArray.length === 0 && blockedNameEntries.length === 0 && blockedRegionEntries.length === 0) {
-    if (globals.blockedWords && globals.blockedWords.trim() !== '') {
-      log("warn", `[system] [danmu] [blocked-words] ❌ 已配置屏蔽词但未解析出有效规则，本次不会过滤任何弹幕！原始配置: ${JSON.stringify(globals.blockedWords)}`);
-    } else {
-      log("info", `[system] [danmu] [blocked-words] 未配置屏蔽词(BLOCKED_WORDS 为空)，跳过过滤`);
-    }
-  } else {
-    const ruleSummary = regexArray.map(r => r.toString()).join(' , ');
-    const extras = [];
-    if (blockedNameEntries.length) extras.push(`人名(语境匹配): ${blockedNameEntries.join(' , ')}`);
-    if (blockedRegionEntries.length) extras.push(`地区(包含匹配): ${usedRegionPreset ? `内置预设名单 ${blockedRegionEntries.length} 个` : blockedRegionEntries.join(' , ')}`);
-    const extraSummary = extras.length ? `${ruleSummary ? ' , ' : ''}${extras.join(' , ')}` : '';
-    log("info", `[system] [danmu] [blocked-words] 规则解析成功: 共 ${regexArray.length} 条规则 + ${blockedNameEntries.length} 个人名 + ${blockedRegionEntries.length} 个地区 [ ${ruleSummary}${extraSummary} ]`);
-  }
-
-  // 过滤列表（统计每条规则命中次数与拦截样本）
-  const ruleHitCounts = new Array(regexArray.length).fill(0);
-  const blockedSamples = [];
-  let filteredDanmus = danmus.filter(item => {
-    for (let i = 0; i < regexArray.length; i++) {
-      if (regexArray[i].test(item.m)) { // 针对 `m` 字段进行匹配
-        ruleHitCounts[i]++;
-        if (blockedSamples.length < 3) {
-          blockedSamples.push(`「${String(item.m).slice(0, 30)}」← ${regexArray[i].toString()}`);
-        }
-        return false;
-      }
-    }
-    return true;
-  });
-
-  // @人名 条目走语境分析引擎：三字及以上按完整名称匹配，二字仅在明确人物语境（称谓/指代）中命中；
-  // 地区: 条目按名称包含匹配；
-  // 姓氏指代为严格版（仅“姓氏+称谓”或“@/# 姓氏”），裸姓氏不命中
-  let entityHits = [];
-  if (blockedNameEntries.length > 0 || blockedRegionEntries.length > 0) {
-    const entityResult = filterDanmusByBlockedNames(filteredDanmus, blockedNameEntries, {
-      surnameNames: blockedNameEntries,
-      surnameMatcherOptions: { bareSurname: false },
-      regionNames: blockedRegionEntries
-    });
-    entityHits = entityResult.hits;
-    filteredDanmus = entityResult.danmus;
-  }
-
-  // [诊断2] 过滤阶段：明确判定屏蔽词是否生效
-  const removedCount = danmus.length - filteredDanmus.length;
-  if (regexArray.length > 0 || blockedNameEntries.length > 0 || blockedRegionEntries.length > 0) {
-    if (removedCount > 0) {
-      const hitSummary = regexArray
-        .map((r, i) => ({ rule: r.toString(), count: ruleHitCounts[i] }))
-        .filter(x => x.count > 0)
-        .map(x => `${x.rule} ×${x.count}`)
-        .concat(entityHits.map(h => h.name.startsWith('地区:') ? `${h.name} ×${h.count}` : `人名:${h.name} ×${h.count}`))
-        .join(', ');
-      log("info", `[system] [danmu] [blocked-words] ✅ 屏蔽词已生效: 拦截 ${removedCount}/${danmus.length} 条弹幕${hitSummary ? `，命中明细: ${hitSummary}` : ''}`);
-      if (blockedSamples.length) {
-        log("info", `[system] [danmu] [blocked-words] 拦截示例(最多3条): ${blockedSamples.join(' | ')}`);
-      }
-    } else {
-      log("info", `[system] [danmu] [blocked-words] ⚠️ 规则已加载(${regexArray.length} 条规则 + ${blockedNameEntries.length} 个人名 + ${blockedRegionEntries.length} 个地区)但本集弹幕无命中`);
-    }
-  }
+  const filteredDanmus = filterDanmusByBlockedWords(danmus);
 
   // 按n分钟内去重
   log("info", `[system] [danmu] 去重分钟数: ${globals.groupMinute}`);

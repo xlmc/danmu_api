@@ -1,3 +1,4 @@
+import { BLOCKED_WORD_PRESETS } from './utils/blocked-word-presets.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Globals } from './configs/globals.js';
@@ -160,6 +161,40 @@ test('普通、URL、缓存及分段弹幕入口跳过人物查询，保留其�
   } finally {
     source.getComments = originalComments;
     source.getSegmentComments = originalSegments;
+    globalThis.fetch = originalFetch;
+    Globals.init({});
+    Globals.animes = [];
+    Globals.episodeIds = [];
+    Globals.commentCache = new Map();
+    Globals.deployPlatform = previousDeployPlatform;
+  }
+});
+
+
+test('已缓存的普通、URL和分段弹幕按当前正则列表过滤，删除规则后恢复', async () => {
+  const config = { BLOCK_DOMESTIC_CELEBRITIES: 'false', GROUP_MINUTE: '0', DANMU_LIMIT: '0', COMMENT_CACHE_MIN_COUNT: '0' };
+  const url = 'https://v.qq.com/x/cover/regex-cache/episode.html';
+  const segment = { type: 'tencent', url: 'regex-cache-segment', animeTitle: '缓存过滤回归', sourceUrl: url };
+  const comments = ['海南鸡饭', '2026.9.4', '19:18', '普通弹幕'].map((m, i) => ({ p: `${i + 1},1,16777215,[test]`, m }));
+  const originalFetch = globalThis.fetch;
+  const previousDeployPlatform = Globals.deployPlatform;
+  Globals.deployPlatform = 'node';
+  globalThis.fetch = async () => { throw new Error('缓存过滤不应联网'); };
+  try {
+    Globals.init(config);
+    Globals.animes = [{ animeTitle: segment.animeTitle, links: [{ id: 990002, url }] }];
+    Globals.episodeIds = [{ id: 990002, url, title: '第1集' }];
+    Globals.commentCache = new Map();
+    setCommentCache(url, comments);
+    setCommentCache(segment.url, comments);
+    for (const [rules, expected] of [['', comments.map(x => x.m)], [[...BLOCKED_WORD_PRESETS.regions, ...BLOCKED_WORD_PRESETS.dates].join(','), ['普通弹幕']], ['', comments.map(x => x.m)]]) {
+      Globals.init({ ...config, BLOCKED_WORDS: rules });
+      for (const response of [await getCommentByUrl(url, 'json', false), await getComment('/api/v2/comment/990002', 'json', false), await getSegmentComment(segment, 'json')]) {
+        assert.equal(response.status, 200);
+        assert.deepEqual((await response.json()).comments.map(x => x.m), expected);
+      }
+    }
+  } finally {
     globalThis.fetch = originalFetch;
     Globals.init({});
     Globals.animes = [];
