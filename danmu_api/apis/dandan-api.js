@@ -1,4 +1,5 @@
 import { canonicalPlatformName } from '../utils/platform-util.js';
+import { runWithMatchTrace, traceMatchStep, getMatchTracePrefix } from '../utils/match-trace-util.js';
 import { globals } from '../configs/globals.js';
 import { getPageTitle, jsonResponse, httpGet, sourceLogContext, runWithHttpCache, httpCacheContext } from '../utils/http-util.js';
 import { log } from '../utils/log-util.js'
@@ -846,7 +847,8 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
         continue;
       }
       const args = meta.extraSearchArgs ? [queryTitle, preferAnimeId, preferSource] : [queryTitle];
-      sourceSearchMap[source] = sourceLogContext.run(meta.logName, () => meta.instance.search(...args));
+      sourceSearchMap[source] = traceMatchStep(log, `来源 ${source} 搜索`, () =>
+        sourceLogContext.run(meta.logName, () => meta.instance.search(...args)));
     }
 
     // 构建逐源管道：每个源 search 完成后，通过 executeSourceHandlers 处理 handleAnimes
@@ -857,7 +859,9 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
       const isolatedDetailStore = new Map();
       const pipelinePromise = sourceSearchMap[source].then(async searchResult => {
         resultData[source] = searchResult;
-        await executeSourceHandlers({ [source]: searchResult }, queryTitle, isolatedAnimes, isolatedDetailStore, querySeason, preferAnimeId, preferSource);
+        await traceMatchStep(log, `来源 ${source} 分集目录处理`, () =>
+          executeSourceHandlers({ [source]: searchResult }, queryTitle, isolatedAnimes, isolatedDetailStore, querySeason, preferAnimeId, preferSource));
+        if (getMatchTracePrefix()) log('info', `[system] [match-source] ${source} 管道完成，候选 ${isolatedAnimes.length} 个（空结果不代表故障）`);
         completedSources.set(source, { animes: isolatedAnimes, details: isolatedDetailStore });
         if (onProgress) {
           const readyAnimes = [];
@@ -2057,6 +2061,16 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
   const canUseReady = budget > 0 && season && episode && targetPlatform && !preferAnimeId && !offsets &&
     !globals.aiValid && !resolveFavoriteForSearchKeyword(catalogKey) &&
     !(mapping?.targetYear || mapping?.targetType || mapping?.targetTmdbId);
+  const fastDisabledReasons = [];
+  if (!(budget > 0)) fastDisabledReasons.push('搜索预算关闭');
+  if (!season || !episode) fastDisabledReasons.push('缺少明确季集');
+  if (!targetPlatform) fastDisabledReasons.push('缺少优先平台');
+  if (preferAnimeId) fastDisabledReasons.push('手动作品偏好');
+  if (offsets) fastDisabledReasons.push('集数偏移');
+  if (globals.aiValid) fastDisabledReasons.push('AI匹配启用');
+  if (resolveFavoriteForSearchKeyword(catalogKey)) fastDisabledReasons.push('命中收藏');
+  if (mapping?.targetYear || mapping?.targetType || mapping?.targetTmdbId) fastDisabledReasons.push('映射含年份/类型/TMDB限定');
+  log('info', `[system] [match-fast] ${canUseReady ? `启用，预算 ${budget}ms，优先平台 ${targetPlatform}` : `未启用：${fastDisabledReasons.join('、')}；等待完整搜索`}`);
   const probe = progress => selectReadyMatch({ ...progress, title, season, episode, year, platform: targetPlatform, req, mapping, strictTargetTitle });
   if (canUseReady) {
     // 已保存的目录仍包含可用剧集 URL；缺集、不确定季号或优先组无数据时才重新搜索。
@@ -2069,6 +2083,7 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
       log('info', `[system] [match-fast] 复用已保存目录，耗时 ${Date.now() - startedAt}ms: ${ready.resAnime.animeTitle}, ${ready.resEpisode.episodeTitle}`);
       return ready;
     }
+    log('info', '[system] [match-fast] 已保存目录未找到满足标题、季度、明确集号及优先平台的候选，转入搜索');
   }
 
   let latestProgress = null;
@@ -2091,9 +2106,11 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
   } : null;
   const timer = canUseReady ? setTimeout(() => {
     budgetElapsed = true;
+    log('info', `[system] [match-fast] 搜索预算 ${budget}ms 到期，检查优先组；没有准确候选时继续等待`);
     void checkReady().catch(error => log('warn', `[system] [match-fast] ${error.message}`));
   }, budget) : null;
-  const fullSearch = searchAnime(searchUrl, preferAnimeId, preferSource, detailStore, targetPlatform, false, onProgress);
+  const fullSearch = traceMatchStep(log, '完整搜索（含目录处理与缓存）', () =>
+    searchAnime(searchUrl, preferAnimeId, preferSource, detailStore, targetPlatform, false, onProgress));
   // 完整搜索继续完成合并与缓存；部分搜索结果绝不写成完整搜索缓存。
   fullSearch.catch(error => log('warn', `[system] [match-fast] 完整搜索失败: ${error.message}`));
   let outcome;
@@ -2106,6 +2123,7 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
   if (outcome.ready) return outcome.ready;
   const searchRes = outcome.response;
   const searchData = await searchRes.json();
+  log('info', `[system] [match-timing] 搜索等待结束，耗时 ${Date.now() - startedAt}ms，候选 ${searchData?.animes?.length || 0} 个`);
   log("info", `[system] [match] searchData: ${searchData.animes}`);
   log("info", `[system] [match] Dynamic platformOrder: ${dynamicPlatformOrder}`);
   log("info", `[system] [match] Preferred platform: ${preferredPlatform || 'none'}`);
@@ -2120,6 +2138,7 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
   const titleGuard = mapping || (strictTargetTitle ? { targetTitle: title } : null);
   const targetCandidates = titleGuard ? filterMappingTargetCandidates(searchData.animes, titleGuard) : searchData.animes;
   if (titleGuard && targetCandidates.length === 0) {
+    log('info', '[system] [match-reject] 映射目标标题过滤后无候选');
     return { resAnime: null, resEpisode: null, spilloverMatched: false, title, season, episode, cacheWarning };
   }
 
@@ -2137,7 +2156,7 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
     if (mapping && pass.label === 'fallback' && (mapping.targetYear || mapping.targetType || mapping.targetTmdbId)) {
       log('info', `[system] [auto-match-mapping] Relaxing target qualifiers for "${mapping.targetDisplayTitle}" while keeping the target title`);
     }
-    const selected = await selectAnimeMatch({
+    const selected = await traceMatchStep(log, `候选验证 ${pass.label}`, () => selectAnimeMatch({
       season,
       episode,
       year: pass.year,
@@ -2148,7 +2167,7 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
       preferAnimeId,
       offsets,
       detailStore
-    });
+    }));
     if (selected.resAnime && selected.resEpisode) {
       // Explicit mappings must yield that episode in that numbering system.
       // The ordinary fallback may use array positions or another platform;
@@ -2156,7 +2175,10 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
       if (mapping && (selected.spilloverMatched
           || extractEpisodeNumberFromTitle(selected.resEpisode.episodeTitle) !== episode
           || (mapping.targetPlatform && getPlatformMatchScore(
-            extractEpisodeTitle(selected.resEpisode.episodeTitle), mapping.targetPlatform) <= 0))) continue;
+            extractEpisodeTitle(selected.resEpisode.episodeTitle), mapping.targetPlatform) <= 0))) {
+        log('info', '[system] [match-reject] 季集映射候选不满足明确目标集号或指定平台，或发生跨季溢出，继续回退');
+        continue;
+      }
       if (mapping && pass.label === 'qualified') {
         log('info', `[system] [auto-match-mapping] Matched preferred target qualifiers for "${mapping.targetDisplayTitle}"`);
       }
@@ -2184,6 +2206,21 @@ function findSeasonPreferenceTitle(titles, season) {
 
 // Extracted function for POST /api/v2/match
 export async function matchAnime(url, req, clientIp) {
+  return runWithMatchTrace(async () => {
+    const startedAt = performance.now();
+    log('info', '[system] [match-trace] 开始匹配');
+    try {
+      const response = await matchAnimeWithTrace(url, req, clientIp);
+      log('info', `[system] [match-trace] 请求返回，HTTP ${response.status}，总耗时 ${Math.round(performance.now() - startedAt)}ms（后台完整搜索可能继续）`);
+      return response;
+    } catch (error) {
+      log('error', `[system] [match-trace] 请求异常，总耗时 ${Math.round(performance.now() - startedAt)}ms`);
+      throw error;
+    }
+  });
+}
+
+async function matchAnimeWithTrace(url, req, clientIp) {
   try {
     // 获取请求体
     const body = await req.json();
@@ -2213,7 +2250,8 @@ export async function matchAnime(url, req, clientIp) {
     log("info", `[system] [match] Processing anime match for query: ${fileName}`);
     log("info", `[system] [match] Parsed cleanFileName: ${cleanFileName}, preferredPlatform: ${preferredPlatform}, releaseGroups: ${releaseGroups.join(',') || 'none'}`);
 
-    const parsed = await extractTitleSeasonEpisode(cleanFileName, releaseGroups);
+    const parsed = await traceMatchStep(log, '文件名解析与标题转换', () => extractTitleSeasonEpisode(cleanFileName, releaseGroups));
+    log('info', '[system] [match-trace] 解析身份', { title: parsed.title, year: parsed.year, season: parsed.season, episode: parsed.episode, preferredPlatform, releaseGroups });
     const originalTitle = normalizeMatchTitle(parsed.title);
     const originalSeason = parsed.season;
     const originalEpisode = parsed.episode;
@@ -2235,10 +2273,13 @@ export async function matchAnime(url, req, clientIp) {
     const tryTitlePath = async ({ stage, title, preferAnimeId = null, preferSource = null, offsets = null, strictTargetTitle = false }) => {
       const normalizedTitle = normalizeMatchTitle(title);
       const pathKey = JSON.stringify([normalizedTitle, originalSeason, originalEpisode, preferAnimeId, preferSource, offsets, strictTargetTitle]);
-      if (attemptedTitlePaths.has(pathKey)) return null;
+      if (attemptedTitlePaths.has(pathKey)) {
+        log('info', `[system] [match-waterfall] 跳过重复路径 ${stage}`);
+        return null;
+      }
       attemptedTitlePaths.add(pathKey);
       log('info', `[system] [match-waterfall] 尝试 ${stage}: ${normalizedTitle} S${originalSeason}E${originalEpisode}`);
-      const result = await executeMatchAttempt({
+      const result = await traceMatchStep(log, stage, () => executeMatchAttempt({
         req,
         title: normalizedTitle,
         season: originalSeason,
@@ -2251,7 +2292,8 @@ export async function matchAnime(url, req, clientIp) {
         offsets,
         mapping: null,
         strictTargetTitle
-      });
+      }));
+      if (!succeeded(result)) log('info', `[system] [match-waterfall] ${stage} 未得到有效作品与分集，继续回退`);
       if (succeeded(result)) {
         matchStage = stage;
         log('info', `[system] [match-waterfall] ${stage} 实际匹配成功，停止后续匹配`);
@@ -2264,7 +2306,7 @@ export async function matchAnime(url, req, clientIp) {
       const mappedTitle = normalizeMatchTitle(rule.targetTitle);
       const mappedPlatform = rule.targetPlatform || preferredPlatform;
       log('info', `[system] [match-waterfall] 尝试 ${stage}: ${originalTitle} S${originalSeason}E${originalEpisode} -> ${mappedTitle} S${rule.targetSeason}E${rule.targetEpisode}`);
-      const result = await executeMatchAttempt({
+      const result = await traceMatchStep(log, stage, () => executeMatchAttempt({
         req,
         title: mappedTitle,
         season: rule.targetSeason,
@@ -2276,7 +2318,8 @@ export async function matchAnime(url, req, clientIp) {
         preferSource: null,
         offsets: null,
         mapping: rule
-      });
+      }));
+      if (!succeeded(result)) log('info', `[system] [match-waterfall] ${stage} 未得到有效作品与分集，继续回退`);
       if (succeeded(result)) {
         mapping = rule;
         mappingApplied = true;
@@ -2403,7 +2446,8 @@ export async function matchAnime(url, req, clientIp) {
       }
     }
 
-    log("info", `[system] [match] resMatchData: ${resData}`);
+    log('info', '[system] [match-trace] 最终选择', { stage: matchStage || '无成功阶段', isMatched: resData.isMatched, matches: resData.matches.map(m => ({ animeId: m.animeId, animeTitle: m.animeTitle, episodeId: m.episodeId, episodeTitle: m.episodeTitle })) });
+    log("info", '[system] [match] resMatchData:', resData);
 
     // 示例返回
     return jsonResponse(resData);

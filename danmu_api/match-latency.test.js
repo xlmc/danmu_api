@@ -81,6 +81,11 @@ test('真实命名：紧凑标题映射命中后，腾讯分集季号证据选�
     assert.equal(result.matches[0].episodeTitle, '【tencent】 诛仙4_09');
     assert.ok(Globals.logBuffer.some(line => JSON.stringify(line).includes('本机标题映射')));
     assert.equal(networkCalls, 0);
+    const traceLines = Globals.logBuffer.filter(line => line.message.includes('[match-id='));
+    assert.ok(traceLines.some(line => line.message.includes('解析身份')));
+    assert.ok(traceLines.some(line => line.message.includes('最终选择')));
+    assert.ok(traceLines.some(line => line.message.includes('总耗时')));
+    assert.equal(new Set(traceLines.map(line => line.message.match(/\[match-id=([^\]]+)\]/)[1])).size, 1);
   } finally { restore(); }
 });
 
@@ -111,9 +116,14 @@ test('首次自动匹配在优先源准确就绪后返回，慢源继续完成�
     assert.equal(result.matches[0].animeId, 7001);
     assert.equal(slowFinished, false, '返回无需等待挂起的慢源');
     assert.equal(Globals.searchCache.has('诛仙 最终季_S4'), false, '部分结果不能被写成完整缓存');
+    const returned = Globals.logBuffer.findLast(line => line.message.includes('[match-trace] 请求返回'));
+    const requestId = returned.message.match(/\[match-id=([^\]]+)\]/)[1];
     release();
     await waitForCompleteCache();
     assert.equal(slowFinished, true);
+    const backgroundLine = Globals.logBuffer.findLast(line => line.message.includes('来源 dandan 搜索 完成'));
+    assert.ok(backgroundLine.message.includes(`[match-id=${requestId}]`));
+    assert.ok(Globals.logBuffer.indexOf(backgroundLine) > Globals.logBuffer.indexOf(returned));
   } finally { release(); restoreTx(); restoreDd(); }
 });
 
@@ -151,6 +161,7 @@ test('手动搜索与0预算仍等待全部来源', async () => {
       release();
       await pending;
       assert.equal(finished, true);
+      if (!manual) assert.ok(Globals.logBuffer.some(line => line.message.includes('未启用：搜索预算关闭')));
     } finally { release(); restoreTx(); restoreDd(); }
   }
 });

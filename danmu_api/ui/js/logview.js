@@ -34,6 +34,7 @@ function getLogCategory(message) {
     
     // 排除时间戳和底层无意义标签，抓取真正的业务源
     const validTags = tags.filter(t => 
+        !t.startsWith('match-id=') &&
         !/^\\d{4}-\\d{2}-\\d{2}[T ]/.test(t) && // 排除 ISO 时间戳格式（YYYY-MM-DDTHH:MM:SS）
         !/^\\d{2}:\\d{2}(:\\d{2})?$/.test(t) &&  // 排除 HH:MM:SS 时间格式（JSON 续行）
         !t.includes('08:00') &&
