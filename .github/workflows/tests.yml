@@ -38,7 +38,9 @@ jobs:
         run: |
           docker build --tag danmu-api-ci:${{ github.sha }} .
           docker run --rm danmu-api-ci:${{ github.sha }} node --input-type=module -e "
-            import { transformSync } from 'esbuild';
-            transformSync('const value = 1', { minify: true });
-            console.log('Native runtime passed:', process.arch);
+            import { handleRequest } from './danmu_api/worker.js';
+            import { getAllSourceMetas, isRegisteredSource } from './danmu_api/sources/registry.js';
+            if (typeof handleRequest !== 'function') throw new Error('Missing API entry point');
+            if (getAllSourceMetas().length !== 11 || !isRegisteredSource('dandan') || isRegisteredSource('360') || isRegisteredSource('xigua') || isRegisteredSource('maiduidui')) throw new Error('Unexpected source registry');
+            console.log('Native Node.js and NAS API imports passed:', process.arch);
           "
