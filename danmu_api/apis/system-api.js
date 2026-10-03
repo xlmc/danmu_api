@@ -181,7 +181,6 @@ export function handleClearLogs() {
  * @returns {Response} 表示操作结果的响应
  */
 export async function handleClearCache(req) {
-  // 各清理项对应的重置逻辑；请求记录与今日计数归入「请求历史记录」项
   const clearActions = {
     animes: () => { globals.animes = []; },
     episodeIds: () => { globals.episodeIds = []; },
@@ -190,11 +189,7 @@ export async function handleClearCache(req) {
     // 清理搜索和弹幕缓存
     searchCache: () => { globals.searchCache = new Map(); },
     commentCache: () => { globals.commentCache = new Map(); },
-    requestHistory: () => {
-      globals.requestHistory = new Map();
-      globals.reqRecords = []; // 清空请求记录
-      globals.todayReqNum = 0; // 重置今日请求次数
-    },
+    requestHistory: () => { globals.requestHistory = new Map(); },
     bangumiData: () => {
       try {
         clearBangumiDataCache(true); // 清理 Bangumi-Data 内存与磁盘缓存
@@ -234,8 +229,7 @@ export async function handleClearCache(req) {
     if (effectiveItems.includes('episodeNum')) globals.episodeNum = getEpisodeIdFloor();
     log("info", `[system] [server] Memory cache cleared successfully`);
 
-    const keys = queryCacheKeys.filter(key => effectiveItems.includes(key)
-      || (effectiveItems.includes('requestHistory') && ['reqRecords', 'todayReqNum'].includes(key)));
+    const keys = queryCacheKeys.filter(key => effectiveItems.includes(key));
     const failedBackends = [];
     const restartBackends = [];
     if (keys.length) {
@@ -263,11 +257,7 @@ export async function handleClearCache(req) {
 
     const clearedItems = {};
     for (const key of effectiveItems) {
-      if (key === "requestHistory") {
-        clearedItems.requestHistory = 0;
-        clearedItems.reqRecords = 0;
-        clearedItems.todayReqNum = 0;
-      } else if (key === "episodeNum") {
+      if (key === "episodeNum") {
         clearedItems.episodeNum = globals.episodeNum;
       } else {
         clearedItems[key] = 0;
@@ -288,60 +278,11 @@ export async function handleClearCache(req) {
   }
 }
 
-// 隐藏接口 URL 查询串中的参数值，保留路径与参数名（key=value -> key=***）
-function maskInterfaceValues(interfaceStr) {
-  const qIndex = interfaceStr.indexOf('?');
-  if (qIndex === -1) return interfaceStr; // 无查询串，保持原样
-  const path = interfaceStr.slice(0, qIndex);
-  const query = interfaceStr.slice(qIndex + 1);
-  // 逐个把 key=value 的 value 替换为 ***，保留 key
-  const maskedQuery = query.replace(/([^&=]+)=([^&]*)/g, (_, key) => `${key}=***`);
-  return `${path}?${maskedQuery}`;
-}
 
-// 递归隐藏请求体的所有叶子值，保留 key 与数组/对象结构
-function maskParamValues(value) {
-  if (value === null || value === undefined) return value;
-  if (Array.isArray(value)) return value.map(maskParamValues);
-  if (typeof value === 'object') {
-    const out = {};
-    for (const key of Object.keys(value)) out[key] = maskParamValues(value[key]);
-    return out;
-  }
-  return '***'; // 字符串/数字/布尔等叶子值统一脱敏
-}
 
-/**
- * 处理获取请求记录的请求
- * @returns {Response} 包含请求记录的响应
- */
-export function handleReqRecords() {
-  // 返回请求记录，按时间倒序排列（最新的在前）
-  let records = [...globals.reqRecords].reverse();
-  const todayReqNum = globals.todayReqNum || 0;
 
-  // 非 admin token 时，对请求记录脱敏：IP / 接口查询值 / 请求体值
-  if (globals.currentToken !== globals.adminToken) {
-    records = records.map(record => {
-      const masked = { ...record };
-      if (masked.clientIp) {
-        // 沿用既有规则：IP 中除 . 外每个字符替换为 *
-        masked.clientIp = masked.clientIp.replace(/[^.]/g, '*');
-      }
-      if (typeof masked.interface === 'string') {
-        // 隐藏接口查询串的值，保留路径与参数名
-        masked.interface = maskInterfaceValues(masked.interface);
-      }
-      if (masked.params != null) {
-        // 隐藏请求体的所有值，保留 key 与结构
-        masked.params = maskParamValues(masked.params);
-      }
-      return masked;
-    });
-  }
 
-  return jsonResponse({ records, todayReqNum }, 200);
-}
+
 
 /**
  * 处理获取最近 animes 缓存列表的请求

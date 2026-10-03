@@ -8,7 +8,6 @@ import { iconJsContent, iconsSpriteContent, renderIcon } from "./js/icons.js";
 import { mainJsContent } from "./js/main.js";
 import { previewJsContent } from "./js/preview.js";
 import { logviewJsContent } from "./js/logview.js";
-import { requestRecordsJsContent } from "./js/requestrecords.js";
 import { systemSettingsJsContent } from "./js/systemsettings.js";
 
 
@@ -76,7 +75,6 @@ export const HTML_TEMPLATE = /* html */ `
 
 
 
-                <button class="nav-btn" onclick="switchSection('request-records', event)">请求记录</button>
                 <button class="nav-btn" onclick="switchSection('env', event)" id="env-nav-btn">系统配置</button>
             </div>
         </div>
@@ -159,22 +157,6 @@ export const HTML_TEMPLATE = /* html */ `
 
 
 
-
-            <!-- 请求记录 -->
-            <div class="section" id="request-records-section">
-                <h2>请求记录</h2>
-                <div class="log-controls">
-                    <div style="display: flex; align-items: center; gap: 15px;">
-                        <button class="btn btn-primary" id="refresh-request-records">${renderIcon('refresh-cw')} 刷新记录</button>
-                        <span id="total-requests-today" style="color: #ff5722; font-size: 1.2em; font-weight: bold;"></span>
-                    </div>
-                    <span style="color: #666;">记录随本地缓存保存</span>
-                </div>
-                <div class="request-records-container" id="request-records-list"></div>
-            </div>
-
-
-
             <!-- 系统配置 -->
             <div class="section" id="env-section">
                 <div class="env-section-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
@@ -215,7 +197,7 @@ export const HTML_TEMPLATE = /* html */ `
                             <div class="cache-clear-options">
                                 <label class="cache-clear-item"><input type="checkbox" class="app-checkbox" name="cacheItem" value="searchCache" checked onchange="updateCacheClearCount()"> 搜索结果缓存</label>
                                 <label class="cache-clear-item"><input type="checkbox" class="app-checkbox" name="cacheItem" value="commentCache" checked onchange="updateCacheClearCount()"> 弹幕内容缓存</label>
-                                <label class="cache-clear-item"><input type="checkbox" class="app-checkbox" name="cacheItem" value="requestHistory" checked onchange="updateCacheClearCount()"> 请求历史记录</label>
+                                <label class="cache-clear-item"><input type="checkbox" class="app-checkbox" name="cacheItem" value="requestHistory" checked onchange="updateCacheClearCount()"> 限流状态</label>
                                 <label class="cache-clear-item"><input type="checkbox" class="app-checkbox" name="cacheItem" value="animes" checked onchange="updateCacheClearCount()"> 动漫搜索缓存 (animes)</label>
                                 <label class="cache-clear-item"><input type="checkbox" class="app-checkbox" name="cacheItem" value="bangumiData" checked onchange="updateCacheClearCount()"> 动画元数据缓存 (bangumiData)</label>
                                 <label class="cache-clear-item"><input type="checkbox" class="app-checkbox" name="cacheItem" value="episodeIds" checked onchange="updateCacheClearCount()"> 剧集ID缓存 (episodeIds)</label>
@@ -369,7 +351,6 @@ export const HTML_TEMPLATE = /* html */ `
         ${mainJsContent}
         ${previewJsContent}
         ${logviewJsContent}
-        ${requestRecordsJsContent}
         ${systemSettingsJsContent}
     </script>
 </body>

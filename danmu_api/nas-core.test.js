@@ -16,7 +16,7 @@ import { addAnime, setSearchCache, getSearchCache, setCommentCache, getCommentCa
 function reset(extra={}) {
   Globals.init({TOKEN:'87654321',SOURCE_ORDER:'tencent,dandan',PLATFORM_ORDER:'tencent,dandan',LOCAL_CACHE_ENABLED:'false',LOCAL_REDIS_URL:'',RATE_LIMIT_MAX_REQUESTS:'0',COMMENT_CACHE_MIN_COUNT:'0',MERGE_SOURCE_PAIRS:'',USE_BANGUMI_DATA:'false',LOG_LEVEL:'error',GROUP_MINUTE:'0',BLOCKED_WORDS:'',REMEMBER_LAST_SELECT:'false',...extra});
   for(const key of ['searchCache','commentCache','lastSelectMap','requestHistory']) Globals[key]=new Map();
-  Globals.animes=[];Globals.episodeIds=[];Globals.episodeNum=10001;Globals.reqRecords=[];
+  Globals.animes=[];Globals.episodeIds=[];Globals.episodeNum=10001;
   Globals.queryCacheInitialized=false;Globals.queryCacheWritable={};Globals.localCacheValid=false;Globals.localRedisValid=false;
 }
 const request=(route,method='GET',body)=>handleRequest(new Request('http://localhost'+route,{method,...(body!==undefined&&{headers:{'content-type':'application/json'},body:JSON.stringify(body)})}),Globals.env,'node','127.0.0.1');
@@ -32,8 +32,19 @@ test('only official/dandan sources survive old source configuration',()=>{
 
 test('deleted routes return 404 through both token and short paths',async()=>{
   reset();
-  for(const[route,method,body]of [['/api/v2/favorite/list','GET'],['/api/v2/favorite/add','POST',{}],['/api/favorite/refresh','POST',{}],['/api/v2/favorite/schedule','POST',{}],['/api/v2/local-danmu/upload','POST',{}],['/api/v2/local-danmu/list','GET'],['/api/v2/local-danmu/example','DELETE'],['/api/debug/forward-trace','POST',{}],['/api/ai/verify','POST',{}],['/api/nipaplay/verify','POST',{}],['/api/deploy','POST',{}]])
+  for(const[route,method,body]of [['/api/reqrecords','GET'],['/api/v2/favorite/list','GET'],['/api/v2/favorite/add','POST',{}],['/api/favorite/refresh','POST',{}],['/api/v2/favorite/schedule','POST',{}],['/api/v2/local-danmu/upload','POST',{}],['/api/v2/local-danmu/list','GET'],['/api/v2/local-danmu/example','DELETE'],['/api/debug/forward-trace','POST',{}],['/api/ai/verify','POST',{}],['/api/nipaplay/verify','POST',{}],['/api/deploy','POST',{}]])
     for(const prefix of ['','/87654321'])assert.equal((await request(prefix+route,method,body)).status,404,route);
+});
+
+test('request records are removed while logging and rate limiting remain active',async()=>{
+  reset({LOG_LEVEL:'info',RATE_LIMIT_MAX_REQUESTS:'1'});
+  Globals.logBuffer=[];
+  Globals.requestHistory.set('127.0.0.1',[Date.now()]);
+  assert.equal((await request('/api/v2/comment/123')).status,429);
+  assert.ok(Globals.logBuffer.length>0);
+  assert.equal((await request('/api/logs')).status,200);
+  assert.equal(Globals.reqRecords,undefined);
+  assert.equal(Globals.todayReqNum,undefined);
 });
 
 test('custom token protects player APIs; deleted settings cannot be revived',async()=>{
@@ -93,9 +104,9 @@ test('cache TTL, capacity, disabled cache and manual preference semantics',()=>{
 
 test('management scripts parse and only retained navigation is rendered',async()=>{
   reset();const html=await(await request('/')).text();
-  for(const text of ['接口调试','推送弹幕','本地弹幕','AI_API_KEY','UPSTASH_REDIS_REST_URL','DEPLOY_PLATFROM_ACCOUNT'])assert.ok(!html.includes(text),text);
+  for(const text of ['请求记录','reqrecords','total-requests-today','接口调试','推送弹幕','本地弹幕','AI_API_KEY','UPSTASH_REDIS_REST_URL','DEPLOY_PLATFROM_ACCOUNT'])assert.ok(!html.includes(text),text);
   let scripts=0;function visit(n){if(n.tagName==='script'){new vm.Script((n.childNodes||[]).map(c=>c.value||'').join(''));scripts++;}(n.childNodes||[]).forEach(visit);}visit(parse(html));assert.ok(scripts);
-  for(const id of ['preview-section','logs-section','request-records-section','env-section'])assert.ok(html.includes('id="'+id+'"'));
+  for(const id of ['preview-section','logs-section','env-section'])assert.ok(html.includes('id="'+id+'"'));
 });
 
 test('file cache restores IDs/preferences and prunes removed sources across actual restarts',()=>{
@@ -103,8 +114,8 @@ test('file cache restores IDs/preferences and prunes removed sources across actu
   try{
     fs.cpSync(new URL('./',import.meta.url),path.join(temporary,'danmu_api'),{recursive:true});fs.writeFileSync(path.join(temporary,'package.json'),'{"type":"module"}');fs.symlinkSync(path.join(checkout,'node_modules'),path.join(temporary,'node_modules'),'junction');fs.mkdirSync(path.join(temporary,'.cache'));
     const kept=anime(),removed={...anime('renren','旧作品','renren:old'),animeId:12,links:[{id:10003,url:'renren:old',title:'第1集'}]};
-    for(const[key,value]of Object.entries({animes:[kept,removed],episodeIds:[{id:10002,url:kept.links[0].url},{id:10003,url:'renren:old'}],episodeNum:10003,lastSelectMap:{作品:{animeIds:[11],preferBySeason:{2:11},sourceBySeason:{2:'tencent'}}},reqRecords:[],todayReqNum:0}))fs.writeFileSync(path.join(temporary,'.cache',key),JSON.stringify(value));
-    const code=`import assert from 'node:assert/strict';import {Globals} from './danmu_api/configs/globals.js';import {initializePersistentCaches} from './danmu_api/utils/persistent-cache-util.js';import {getPreferAnimeId,updateLocalCaches} from './danmu_api/utils/cache-util.js';Globals.init({LOCAL_CACHE_ENABLED:'true',LOCAL_REDIS_URL:'',LOG_LEVEL:'error'});Globals.deployPlatform='node';await initializePersistentCaches();assert.equal(Globals.animes.length,1);assert.equal(Globals.episodeIds.length,1);assert.equal(Globals.episodeNum,10003);assert.equal(getPreferAnimeId('作品',2)[0],11);assert.equal(await updateLocalCaches(),true);`;
+    for(const[key,value]of Object.entries({animes:[kept,removed],episodeIds:[{id:10002,url:kept.links[0].url},{id:10003,url:'renren:old'}],episodeNum:10003,lastSelectMap:{作品:{animeIds:[11],preferBySeason:{2:11},sourceBySeason:{2:'tencent'}}},reqRecords:[{interface:'legacy-record'}],todayReqNum:99}))fs.writeFileSync(path.join(temporary,'.cache',key),JSON.stringify(value));
+    const code=`import assert from 'node:assert/strict';import {Globals} from './danmu_api/configs/globals.js';import {initializePersistentCaches} from './danmu_api/utils/persistent-cache-util.js';import {getPreferAnimeId,updateLocalCaches} from './danmu_api/utils/cache-util.js';Globals.init({LOCAL_CACHE_ENABLED:'true',LOCAL_REDIS_URL:'',LOG_LEVEL:'error'});Globals.deployPlatform='node';await initializePersistentCaches();assert.equal(Globals.reqRecords,undefined);assert.equal(Globals.todayReqNum,undefined);assert.equal(Globals.animes.length,1);assert.equal(Globals.episodeIds.length,1);assert.equal(Globals.episodeNum,10003);assert.equal(getPreferAnimeId('作品',2)[0],11);assert.equal(await updateLocalCaches(),true);`;
     for(let i=0;i<2;i++){const r=spawnSync(process.execPath,['--input-type=module','-e',code],{cwd:temporary,encoding:'utf8',timeout:15000});assert.equal(r.status,0,r.stdout+r.stderr);}
     fs.writeFileSync(path.join(temporary,'.cache','animes'),'{broken');const r=spawnSync(process.execPath,['--input-type=module','-e',code.replace('assert.equal(Globals.animes.length,1);','assert.equal(Globals.animes.length,0);')],{cwd:temporary,encoding:'utf8',timeout:15000});assert.equal(r.status,0,r.stdout+r.stderr);assert.ok(fs.readdirSync(path.join(temporary,'.cache')).some(n=>n.startsWith('animes.bak-')));
   }finally{fs.rmSync(temporary,{recursive:true,force:true});}

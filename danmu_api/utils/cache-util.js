@@ -825,9 +825,7 @@ export function cleanupExpiredIPs(currentTime) {
   }
 }
 
-export const queryCacheKeys = [
-  'animes', 'episodeIds', 'episodeNum', 'reqRecords', 'lastSelectMap', 'todayReqNum'
-];
+export const queryCacheKeys = ['animes', 'episodeIds', 'episodeNum', 'lastSelectMap'];
 
 // 业务可以降级到内存；未成功读取的后端在本进程内保持只读，避免覆盖未知快照。
 export function canPersistCacheKey(key, backend) {
@@ -853,9 +851,9 @@ export async function restoreQueryCache(backend, read, hashes, restored = {}, is
       if (raw === null) return { key };
       if (typeof raw !== 'string') throw new Error('响应无效');
       const value = JSON.parse(raw);
-      const valid = ['animes', 'episodeIds', 'reqRecords'].includes(key)
+      const valid = ['animes', 'episodeIds'].includes(key)
         ? Array.isArray(value)
-        : ['episodeNum', 'todayReqNum'].includes(key)
+        : ['episodeNum'].includes(key)
           ? Number.isSafeInteger(value) && value >= 0 && (key !== 'episodeNum' || value < Number.MAX_SAFE_INTEGER)
           : value !== null && typeof value === 'object' && !Array.isArray(value);
       if (!valid) throw new Error('数据类型无效');
@@ -912,11 +910,10 @@ export async function restoreQueryCache(backend, read, hashes, restored = {}, is
     globals.episodeIds = [...episodes.values()];
     restored.episodes = rank;
   }
-  // 偏好和辅助记录可分别回退；空数组/对象和计数器本身不抢占整组恢复。
-  for (const key of ['lastSelectMap', 'reqRecords', 'todayReqNum']) {
+  // 偏好可分别回退；空数组/对象和计数器本身不抢占整组恢复。
+  for (const key of ['lastSelectMap']) {
     const value = data[key];
-    const hasData = key === 'lastSelectMap' ? value && Object.keys(value).length > 0
-      : key === 'reqRecords' ? value?.length > 0 : value > 0;
+    const hasData = value && Object.keys(value).length > 0;
     if (!restored[key] && hasData) {
       globals[key] = key === 'lastSelectMap' ? new Map(Object.entries(value)) : value;
       restored[key] = true;
@@ -1028,14 +1025,7 @@ export async function updateLocalCaches({ keys, force = false } = {}) {
     let saved = true;
 
     // 检查每个变量的哈希值
-    const variables = [
-      { key: 'animes', value: globals.animes },
-      { key: 'episodeIds', value: globals.episodeIds },
-      { key: 'episodeNum', value: globals.episodeNum },
-      { key: 'reqRecords', value: globals.reqRecords },
-      { key: 'lastSelectMap', value: globals.lastSelectMap },
-      { key: 'todayReqNum', value: globals.todayReqNum },
-    ];
+    const variables = [{ key: 'animes', value: globals.animes }, { key: 'episodeIds', value: globals.episodeIds }, { key: 'episodeNum', value: globals.episodeNum }, { key: 'lastSelectMap', value: globals.lastSelectMap }];
 
     for (const { key, value } of variables) {
       if (keys && !keys.includes(key)) continue;

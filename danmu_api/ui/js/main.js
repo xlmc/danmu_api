@@ -397,7 +397,7 @@ function switchSection(section, event = null) {
         return;
     }
 
-    if (section === 'logs' || section === 'env' || section === 'request-records') {
+    if (section === 'logs' || section === 'env') {
         let _reverseProxy = customBaseUrl; // 使用全局配置
 
         // 获取URL路径并提取token
@@ -476,7 +476,7 @@ function switchSection(section, event = null) {
                         event.target.classList.add('active');
                     }
 
-                    addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : section === 'request-records' ? '请求记录' : '请求记录'}模块\`, 'info');
+                    addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : '配置预览'}模块\`, 'info');
                 }
             });
         } else {
@@ -488,7 +488,7 @@ function switchSection(section, event = null) {
                 event.target.classList.add('active');
             }
 
-            addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : section === 'request-records' ? '请求记录' : '请求记录'}模块\`, 'info');
+            addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : '配置预览'}模块\`, 'info');
 
             // 如果切换到日志查看页面，则立即刷新日志
             if (section === 'logs') {
@@ -507,7 +507,7 @@ function switchSection(section, event = null) {
             event.target.classList.add('active');
         }
 
-        addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : '请求记录'}模块\`, 'info');
+        addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : '配置预览'}模块\`, 'info');
     }
 }
 

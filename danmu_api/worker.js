@@ -9,7 +9,7 @@ import { formatDanmuResponse } from "./utils/danmu-util.js";
 import { getBangumi, getComment, getCommentByUrl, getSegmentComment, matchAnime, searchAnime, searchEpisodes } from "./apis/dandan-api.js";
 
 import { getFongmiDanmaku } from "./apis/clients/fongmi-api.js";
-import { handleConfig, handleUI, handleLogs, handleClearLogs, handleClearCache, handleReqRecords, handleCacheAnimes, handleRemoteMappingLogs, handleRemoteMappingRefresh, handleRemoteAutoMatchMappingRefresh } from "./apis/system-api.js";
+import { handleConfig, handleUI, handleLogs, handleClearLogs, handleClearCache, handleCacheAnimes, handleRemoteMappingLogs, handleRemoteMappingRefresh, handleRemoteAutoMatchMappingRefresh } from "./apis/system-api.js";
 
 import { handleSetEnv, handleAddEnv, handleDelEnv } from './apis/env-api.js';
 
@@ -42,7 +42,6 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     log("info", `[system] [server] client ip: ${clientIp}`);
   }
 
-  // --- IP 黑名单拦截 ---
 
 
   // --- 校验 token ---
@@ -64,89 +63,13 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       (firstPart === "87654321" ? firstPart : "87654321") :
     "");
 
-  // FAVORITE_REQUIRE_ADMIN 开启后，无论 TOKEN 是否为默认值，都只能使用 ADMIN_TOKEN。
 
   await initializePersistentCaches();
 
   // 检查路径是否包含指定的接口关键字
-  const targetPaths = [
-    '/api/v2/search/anime',
-    '/api/v2/match',
-    '/api/v2/search/episodes',
-    '/api/v2/fongmi/danmaku',
-    '/danmaku',
-    '/api/v2/bangumi',
-    '/api/v2/comment',
-    '/api/v2/segmentcomment'
-  ];
+  
 
-  // 只有当path包含指定接口关键字时才添加到请求记录数组
-  if (targetPaths.some(targetPath => path.includes(targetPath))) {
-    // 更新今日请求计数
-    // 从 reqRecords 最后一个元素获取上一个请求的时间
-    const lastRecord = globals.reqRecords.length > 0 ? globals.reqRecords[globals.reqRecords.length - 1] : null;
-    const currentDate = new Date().toDateString();
-
-    if (lastRecord) {
-      const lastDate = new Date(lastRecord.timestamp).toDateString();
-      log("info", `[system] [server] currentDate: ${currentDate}`);
-      log("info", `[system] [server] lastDate: ${lastDate}`);
-      if (lastDate !== currentDate) {
-        // 新的一天，重置计数
-        globals.todayReqNum = 1;
-      } else {
-        // 同一天，计数加1
-        globals.todayReqNum++;
-      }
-    } else {
-      // 没有历史记录，重置为1
-      globals.todayReqNum = 1;
-    }
-
-    // 处理路径，只保留从/api/v2开始的部分
-    let normalizedPath = req.url;
-    const apiV2Index = normalizedPath.indexOf('/api/v2');
-    if (apiV2Index !== -1) {
-      normalizedPath = normalizedPath.substring(apiV2Index);
-    }
-
-    // 获取请求体JSON（如果是POST/PUT/PATCH请求）
-    let requestBody = null;
-    if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
-      try {
-        const clonedReq = req.clone();
-        const contentType = clonedReq.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          requestBody = await clonedReq.json();
-        } else {
-          // 尝试解析为JSON，即使content-type不匹配
-          const text = await clonedReq.text();
-          if (text) {
-            requestBody = JSON.parse(text);
-          }
-        }
-      } catch (e) {
-        // JSON解析失败，保持为null
-        requestBody = null;
-      }
-    }
-
-    // 记录请求历史，包括接口/参数/请求时间
-    const requestRecord = {
-      interface: normalizedPath,
-      params: requestBody, // 请求体JSON
-      timestamp: new Date().toISOString(), // 请求时间
-      method: method, // HTTP方法
-      clientIp: clientIp // 客户端IP
-    };
-
-    globals.reqRecords.push(requestRecord);
-
-    // 限制记录数量不超过 MAX_RECORDS
-    if (globals.reqRecords.length > globals.MAX_RECORDS) {
-      globals.reqRecords = globals.reqRecords.slice(-globals.MAX_RECORDS);
-    }
-  }
+  
 
   // GET /
   if (path === "/" && method === "GET") {
@@ -230,10 +153,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     if (!configAdmin) return jsonResponse({ success: false, message: '需要 ADMIN_TOKEN 权限' }, 403);
   }
 
-  // GET /api/reqrecords - 获取请求记录 (需要 token)
-  if (path === "/api/reqrecords" && method === "GET") {
-    return handleReqRecords();
-  }
+  
 
   if (!isLogReadRequest) log("info", `[system] [server] ${path}`);
 
