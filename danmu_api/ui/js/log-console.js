@@ -1,6 +1,6 @@
 // 模板中的脚本保持字面量，所有日志内容只经转义后显示。
 export const logConsoleJsContent = String.raw`
-const logViewState = { view: 'all', category: 'all', sources: new Set(), subtype: '', query: '', level: 'all', sort: 'new', context: '', auto: false, follow: true };
+const logViewState = { view: 'all', category: 'all', sources: new Set(), query: '', level: 'all', sort: 'new', context: '', auto: false, follow: true };
 const logCategories = { all: '全部', match: '匹配', mapping: '映射', filter: '弹幕过滤', cache: '缓存', source: '来源请求', merge: '合并', ai: 'AI', system: '系统' };
 const logSources = { tencent: '腾讯', iqiyi: '爱奇艺', bilibili: 'B站', dandan: '弹弹', mango: '芒果', youku: '优酷', imgo: '芒果', qq: '腾讯', '360kan': '360' };
 let logFetchPending = false;
@@ -39,7 +39,7 @@ function addLog(message, type = 'info') {
 function filterLogEntries({ ignoreCategory = false } = {}) {
   const s = logViewState;
   return logs.filter(e => (ignoreCategory || s.category === 'all' || e.categories.includes(s.category)) &&
-    (!s.sources.size || s.sources.has(e.source)) && (!s.subtype || e.tags.includes(s.subtype)) &&
+    (!s.sources.size || s.sources.has(e.source)) &&
     (s.level === 'all' || (s.level === 'warn' ? ['warn','error'].includes(e.type) : e.type === s.level)) &&
     (!s.context || e.requestId === s.context) &&
     (!s.query || (e.message + ' ' + (e.requestId || '')).toLowerCase().includes(s.query.toLowerCase())));
@@ -59,7 +59,7 @@ function initLogControls() {
     logViewState.view = button.dataset.logView; logViewState.context = ''; renderLogs();
   }));
   document.getElementById('log-query').addEventListener('input', e => { logViewState.query = e.target.value; renderLogs(); });
-  for (const key of ['level','sort','subtype']) document.getElementById('log-' + key).addEventListener('change', e => { logViewState[key] = e.target.value; renderLogs(); });
+  for (const key of ['level','sort']) document.getElementById('log-' + key).addEventListener('change', e => { logViewState[key] = e.target.value; renderLogs(); });
   document.getElementById('log-auto').addEventListener('change', e => { logViewState.auto = e.target.checked; if (e.target.checked) fetchRealLogs(); });
   document.getElementById('log-follow').addEventListener('change', e => { logViewState.follow = e.target.checked; renderLogs(); });
   document.getElementById('log-container').addEventListener('scroll', e => {
@@ -80,7 +80,7 @@ function initLogControls() {
     const button = e.target.closest('button'); if (!button) return;
     if (button.dataset.logContext) {
       logViewState.context = button.dataset.logContext; logViewState.query = ''; logViewState.category = 'all';
-      logViewState.sources.clear(); logViewState.subtype = ''; logViewState.level = 'all'; logViewState.view = 'all';
+      logViewState.sources.clear(); logViewState.level = 'all'; logViewState.view = 'all';
       document.getElementById('log-query').value = ''; document.getElementById('log-level').value = 'all'; renderLogs();
     }
     if (button.dataset.logCopy) {
@@ -97,21 +97,18 @@ function initLogControls() {
   setInterval(() => { if (logViewState.auto && isLogViewVisible() && !document.hidden) fetchRealLogs(); }, 3000);
 }
 function resetLogFilters() {
-  Object.assign(logViewState, {category:'all',sources:new Set(),subtype:'',query:'',level:'all',context:''});
+  Object.assign(logViewState, {category:'all',sources:new Set(),query:'',level:'all',context:''});
   document.getElementById('log-query').value = ''; document.getElementById('log-level').value = 'all'; renderLogs();
 }
 function renderLogFilters() {
   const candidate = filterLogEntries({ignoreCategory:true});
   document.getElementById('log-categories').innerHTML = Object.entries(logCategories).map(([key,name]) =>
     '<button type="button" class="filter-btn ' + (logViewState.category===key?'active':'') + '" data-log-category="' + key + '">' + name + ' <span>' + (key==='all'?candidate.length:candidate.filter(e=>e.categories.includes(key)).length) + '</span></button>').join('');
-  document.querySelectorAll('[data-log-category]').forEach(button=>button.onclick=()=>{logViewState.category=button.dataset.logCategory;logViewState.subtype='';renderLogs();});
+  document.querySelectorAll('[data-log-category]').forEach(button=>button.onclick=()=>{logViewState.category=button.dataset.logCategory;renderLogs();});
   const sources = [...new Set(logs.map(e=>e.source).filter(Boolean))].sort();
   document.getElementById('log-sources').innerHTML = sources.map(source => '<label><input type="checkbox" value="' + escapeLogHTML(source) + '" ' + (logViewState.sources.has(source)?'checked':'') + '> ' + escapeLogHTML(logSources[source] || source) + '</label>').join('') || '<span>暂无来源记录</span>';
   document.getElementById('log-source-label').textContent = logViewState.sources.size ? '来源 · ' + logViewState.sources.size : '全部来源';
   document.querySelectorAll('#log-sources input').forEach(input=>input.onchange=()=>{if(input.checked)logViewState.sources.add(input.value);else logViewState.sources.delete(input.value);renderLogs();});
-  const tags = [...new Set(logs.filter(e=>logViewState.category==='all'||e.categories.includes(logViewState.category)).flatMap(e=>e.tags))].filter(t=>!['system','请求模拟','网络请求'].includes(t)).sort();
-  document.getElementById('log-subtype').innerHTML = '<option value="">全部子分类 / 标签</option>' + tags.map(tag=>'<option value="'+escapeLogHTML(tag)+'">'+escapeLogHTML(tag)+'</option>').join('');
-  document.getElementById('log-subtype').value = logViewState.subtype;
   document.getElementById('log-context').hidden = !logViewState.context;
   document.getElementById('log-context-id').textContent = logViewState.context;
 }

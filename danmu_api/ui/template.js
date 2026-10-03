@@ -154,7 +154,6 @@ export const HTML_TEMPLATE = /* html */ `
                     <input id="log-query" type="search" aria-label="搜索日志" placeholder="搜索作品、错误信息或请求编号…">
                     <select id="log-level" aria-label="日志级别"><option value="all">全部级别</option><option value="warn">警告及错误</option><option value="error">仅错误</option><option value="info">仅信息</option></select>
                     <details class="lv-source-picker"><summary id="log-source-label">全部来源</summary><div id="log-sources"></div></details>
-                    <select id="log-subtype" aria-label="日志子分类"><option value="">全部子分类 / 标签</option></select>
                     <select id="log-sort" aria-label="匹配排序" hidden><option value="new">最新匹配优先</option><option value="slow">耗时最长优先</option></select>
                     <button type="button" class="btn btn-small" id="log-reset">重置筛选</button>
                 </div>
