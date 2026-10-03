@@ -1,7 +1,7 @@
 import { BLOCKED_WORD_PRESETS } from '../../utils/blocked-word-presets.js';
 import { PLATFORM_ALIASES } from '../../utils/platform-util.js';
 // language=JavaScript
-export const systemSettingsJsContent = /* javascript */ `
+export const systemSettingsJsContent = `
 // 全局变量定义
 let isMergeMode = false;
 let stagingTags = [];
@@ -201,9 +201,6 @@ function normalizeImportedConfig(data) {
 
     // 令牌最后更新，避免导入过程中提前失去当前页面权限。
     const importPriority = {
-        DEPLOY_PLATFROM_ACCOUNT: 10,
-        DEPLOY_PLATFROM_PROJECT: 11,
-        DEPLOY_PLATFROM_TOKEN: 12,
         TOKEN: 20,
         ADMIN_TOKEN: 30
     };
@@ -351,7 +348,7 @@ async function confirmClearCache() {
     }
 
     // 检查部署平台配置
-    const configCheck = await checkDeployPlatformConfig();
+    const configCheck = await checkConfigPermission();
     if (!configCheck.success) {
         hideClearCacheModal();
         customAlert(configCheck.message);
@@ -397,78 +394,13 @@ async function confirmClearCache() {
 }
 
 // 显示重新部署确认模态框
-function showDeploySystemModal() {
-    document.getElementById('deploy-system-modal').classList.add('active');
-}
+
 
 // 隐藏重新部署确认模态框
-function hideDeploySystemModal() {
-    document.getElementById('deploy-system-modal').classList.remove('active');
-}
+
 
 // 确认重新部署系统
-function confirmDeploySystem() {
-    // 检查部署平台配置
-    checkDeployPlatformConfig().then(configCheck => {
-        if (!configCheck.success) {
-            hideDeploySystemModal();
-            customAlert(configCheck.message);
-            return;
-        }
 
-        hideDeploySystemModal();
-        showLoading('准备部署...', '正在检查系统状态');
-        addLog('===== 开始系统部署 =====', 'info');
-
-        // 获取当前部署平台
-        fetch(buildApiUrl('/api/config', true))
-            .then(response => response.json())
-            .then(config => {
-                const deployPlatform = config.envs.deployPlatform || 'node';
-                addLog(\`检测到部署平台: \${deployPlatform}\`, 'info');
-
-                if (deployPlatform.toLowerCase() === 'node') {
-                    // Node部署不需要重新部署
-                    setTimeout(() => {
-                        hideLoading();
-                        addLog('===== 部署完成 =====', 'success');
-                        addLog('Node部署模式，环境变量已生效', 'info');
-                        addLog('✅ Node部署模式 - 在Node部署模式下，环境变量修改后会自动生效，无需重新部署。系统已更新配置', 'success');
-                    }, 150);
-                } else {  
-                    // 调用真实的部署API
-                    fetch(buildApiUrl('/api/deploy', true), { // 使用admin token
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        }
-                    })
-                    .then(response => response.json())
-                    .then(result => {
-                        if (result.success) {
-                            addLog('云端部署触发成功', 'success');
-                            // 模拟云端部署过程
-                            simulateDeployProcess();
-                        } else {
-                            hideLoading();
-                            addLog(\`云端部署失败: \${result.message}\`, 'error');
-                            addLog(\`❌ 云端部署失败: \${result.message}\`, 'error');
-                        }
-                    })
-                    .catch(error => {
-                        hideLoading();
-                        addLog(\`云端部署请求失败: \${error.message}\`, 'error');
-                        addLog(\`❌ 云端部署请求失败: \${error.message}\`, 'error');
-                    });
-                }
-            })
-            .catch(error => {
-                hideLoading();
-                addLog(\`获取部署平台信息失败: \${error.message}\`, 'error');
-                console.error('获取部署平台信息失败:', error);
-            });
-    });
-}
 
 // 模拟云端部署过程
 function simulateDeployProcess() {
@@ -506,33 +438,7 @@ function simulateDeployProcess() {
 }
 
 // 检查部署状态，每隔5秒请求/api/logs接口直到请求成功
-function checkDeploymentStatus() {
-    const checkInterval = setInterval(() => {
-        updateLoadingText('部署完成，检查服务状态...', '正在请求 /api/logs 接口');
-        addLog('正在检查服务状态...', 'info');
 
-        fetch(buildApiUrl('/api/logs'))
-            .then(response => {
-                if (response.ok) {
-                    // 请求成功，停止检查
-                    clearInterval(checkInterval);
-                    // 更新加载状态而不是立即隐藏
-                    updateLoadingText('部署成功！', '服务已重启并正常运行');
-                    addLog('===== 部署完成 =====', 'success');
-                    addLog('部署版本: ' + latestVersion, 'info');
-                    addLog('系统已更新并重启', 'success');
-                    
-                    // 部署完成后再次确认，访问/api/logs接口来确认部署完成
-                    confirmDeploymentByLogs();
-                } else {
-                    addLog('服务检查中 - 状态码: ' + response.status, 'info');
-                }
-            })
-            .catch(error => {
-                addLog('服务检查中 - 连接失败: ' + error.message, 'info');
-            });
-    }, 500); // 每5秒检查一次
-}
 
 // 部署完成后通过访问/api/logs接口来确认部署完成
 function confirmDeploymentByLogs() {
@@ -553,7 +459,7 @@ function confirmDeploymentByLogs() {
                     // 显示成功信息后延迟隐藏加载遮罩
                     updateLoadingText('部署确认成功！', '服务已重启并正常运行');
                     addLog('部署确认成功 - /api/logs 接口访问正常', 'success');
-                    
+
                     setTimeout(() => {
                         hideLoading();
                         // 显示成功弹窗
@@ -565,7 +471,7 @@ function confirmDeploymentByLogs() {
                     clearInterval(confirmationInterval);
                     updateLoadingText('部署确认完成', '服务已重启');
                     addLog('部署确认完成 - 已达到最大尝试次数', 'warn');
-                    
+
                     setTimeout(() => {
                         hideLoading();
                         // 显示成功弹窗
@@ -582,7 +488,7 @@ function confirmDeploymentByLogs() {
                     clearInterval(confirmationInterval);
                     updateLoadingText('部署确认完成', '服务已重启');
                     addLog('部署确认完成 - 已达到最大尝试次数', 'warn');
-                    
+
                     setTimeout(() => {
                         hideLoading();
                         // 显示成功弹窗
@@ -602,20 +508,20 @@ function checkAdminToken() {
 
     // 获取URL路径并提取token
     let urlPath = window.location.pathname;
-    
+
     // 如果配置了反代路径，必须先剥离它
     if(_reverseProxy) {
         try {
             // 解析配置中的路径部分，例如 http://192.168.8.1:2333/danmu_api => /danmu_api
-            let proxyPath = _reverseProxy.startsWith('http') 
-                ? new URL(_reverseProxy).pathname 
+            let proxyPath = _reverseProxy.startsWith('http')
+                ? new URL(_reverseProxy).pathname
                 : _reverseProxy;
-            
+
             // 确保移除尾部斜杠
             if (proxyPath.endsWith('/')) {
                 proxyPath = proxyPath.slice(0, -1);
             }
-            
+
             // 如果当前URL包含此前缀，则移除它
             if(proxyPath && urlPath.startsWith(proxyPath)) {
                 urlPath = urlPath.substring(proxyPath.length);
@@ -627,7 +533,7 @@ function checkAdminToken() {
 
     const pathParts = urlPath.split('/').filter(part => part !== '');
     const urlToken = pathParts.length > 0 ? pathParts[0] : currentToken; // 如果没有路径段，使用默认token
-    
+
     // 配置了 ADMIN_TOKEN 时必须使用它；未配置时，普通 TOKEN（默认值也包括）
     // 直接承担配置管理权限。
     if (currentAdminToken && currentAdminToken.trim() !== '') {
@@ -641,57 +547,7 @@ function checkAdminToken() {
 }
 
 // 检查部署平台相关配置
-async function checkDeployPlatformConfig() {
-    if (!checkAdminToken()) {
-        return { success: false, message: '请使用有效 TOKEN 访问以启用系统配置管理功能。' };
-    }
-
-    try {
-        const response = await fetch(buildApiUrl('/api/config', true));
-        if (!response.ok) {
-            throw new Error('HTTP error! status: ' + response.status);
-        }
-        
-        const config = await response.json();
-        const deployPlatform = config.envs.deployPlatform || 'node';
-        
-        // Node 部署无需额外部署参数；是否使用 ADMIN_TOKEN 已在 checkAdminToken 中处理。
-        if (deployPlatform.toLowerCase() === 'node') {
-            return { success: true, message: 'Node部署平台，配置管理权限验证通过' };
-        }
-        
-        // 对于其他部署平台，收集所有缺失的环境变量
-        const missingVars = [];
-        const deployPlatformProject = config.originalEnvVars.DEPLOY_PLATFROM_PROJECT;
-        const deployPlatformToken = config.originalEnvVars.DEPLOY_PLATFROM_TOKEN;
-        const deployPlatformAccount = config.originalEnvVars.DEPLOY_PLATFROM_ACCOUNT;
-        
-        if (!deployPlatformProject || deployPlatformProject.trim() === '') {
-            missingVars.push('DEPLOY_PLATFROM_PROJECT');
-        }
-        
-        if (!deployPlatformToken || deployPlatformToken.trim() === '') {
-            missingVars.push('DEPLOY_PLATFROM_TOKEN');
-        }
-        
-        // 对于需要账号ID的部署平台，还需要检查DEPLOY_PLATFROM_ACCOUNT
-        if (['netlify', 'cloudflare', 'huggingface'].includes(deployPlatform.toLowerCase())) {
-            if (!deployPlatformAccount || deployPlatformAccount.trim() === '') {
-                missingVars.push('DEPLOY_PLATFROM_ACCOUNT');
-            }
-        }
-        
-        if (missingVars.length > 0) {
-            const missingVarsStr = missingVars.join('、');
-            return { success: false, message: '部署平台为' + deployPlatform + '，请配置以下缺失的环境变量：' + missingVarsStr };
-        }
-        
-        return { success: true, message: deployPlatform + '部署平台配置完整' };
-    } catch (error) {
-        console.error('检查部署平台配置失败:', error);
-        return { success: false, message: '检查部署平台配置失败: ' + error.message };
-    }
-}
+async function checkConfigPermission() { return checkAdminToken() ? {success:true} : {success:false,message:'请使用管理令牌访问系统配置。'}; }
 
 // 获取并设置配置信息
 async function fetchAndSetConfig() {
@@ -805,7 +661,7 @@ function renderValueInput(item) {
                 <input type="text" id="select-options" placeholder="例如: debug,info,warn,error"
                        value="\${options.join(',')}" onchange="updateTagOptions()">
             </div>
-        \`; 
+        \`;
 
         container.innerHTML = \`
             \${optionsInput}
@@ -830,12 +686,12 @@ function renderValueInput(item) {
             ? [...new Set(stringValue.split(',').map(v => v.trim()).filter(v => v)
                 .map(v => currentKey === 'PLATFORM_ORDER' ? [...new Set(v.split('&').map(p => p.trim()).map(p => platformNameAliases[p] || p))].join('&') : v))]
             : [];
-        
+
         // 检查是否为 SOURCE_ORDER，如果是则不显示合并模式
         const shouldShowMergeMode = currentKey === 'MERGE_SOURCE_PAIRS';
         const configuredMergePlatforms = currentKey === 'PLATFORM_ORDER'
             ? getConfiguredMergePlatforms(options) : [];
-        
+
         // 每次渲染时重置合并模式状态
         isMergeMode = false;
         stagingTags = [];
@@ -846,7 +702,7 @@ function renderValueInput(item) {
                 <input type="text" id="multi-options" placeholder="例如: auth,payment,analytics"
                        value="\${options.join(',')}" onchange="updateMultiOptions()">
             </div>
-        \`; 
+        \`;
 
         container.innerHTML = \`
             \${optionsInput}
@@ -959,7 +815,7 @@ function renderValueInput(item) {
         // 文本输入
         const currentKey = editingKeyName;
         const isBilibiliCookie = currentKey === 'BILIBILI_COOKIE';
-        const isAiApiKey = currentKey === 'AI_API_KEY';
+
         const isDandanplayPassword = currentKey === 'DANDANPLAY_PASSWORD';
         const isColorPool = currentKey === 'COLOR_POOL';
         const isDanmuOffset = currentKey === 'DANMU_OFFSET';
@@ -1062,25 +918,6 @@ function renderValueInput(item) {
                     </div>
                 </div>
             \`;
-        } else if (isAiApiKey) {
-            // AI API Key 专用编辑界面
-            container.innerHTML = \`
-                <div class="ai-apikey-editor">
-                    <label>API Key 值</label>
-                    <textarea class="form-group" id="text-value" placeholder="请输入 AI API Key" rows="3">\${value}</textarea>
-                    <div class="form-help">支持 OpenAI 兼容的 API，需配合 AI_BASE_URL 和 AI_MODEL 配置使用</div>
-
-                    <div class="ai-apikey-status" id="ai-apikey-status">
-                        <span class="ai-status-icon">\${uiIcon('search')}</span>
-                        <span class="ai-status-text">点击下方按钮测试连通性</span>
-                    </div>
-                    <div class="ai-apikey-actions" style="margin-bottom: 15px;">
-                        <button type="button" class="btn btn-primary btn-sm" id="ai-verify-btn" onclick="verifyAiConnection()">
-                            \${uiIcon('flask')} 测试连通性
-                        </button>
-                    </div>
-                </div>
-            \`;
         } else if (isDandanplayPassword) {
             // 弹弹play密码专用编辑界面
             container.innerHTML = \`
@@ -1089,14 +926,9 @@ function renderValueInput(item) {
                     <textarea class="form-group" id="text-value" placeholder="请输入弹弹play密码" rows="3">\${value}</textarea>
                     <div class="form-help">账号在 DANDANPLAY_ACCOUNT 中配置，两者同时填写后 dandan 源经 NipaPlay 中转弹弹play服务端获取弹幕</div>
 
-                    <div class="dandanplay-status" id="dandanplay-status">
-                        <span class="dandanplay-status-icon">\${uiIcon('search')}</span>
-                        <span class="dandanplay-status-text">点击下方按钮测试连通性</span>
-                    </div>
+
                     <div class="dandanplay-actions" style="margin-bottom: 15px;">
-                        <button type="button" class="btn btn-primary btn-sm" id="dandanplay-verify-btn" onclick="verifyDandanplayConnection()">
-                            \${uiIcon('flask')} 测试连通性
-                        </button>
+
                     </div>
                 </div>
             \`;
@@ -1109,19 +941,19 @@ function renderValueInput(item) {
                         <span class="bili-status-icon">\${uiIcon('search')}</span>
                         <span class="bili-status-text">检测中...</span>
                     </div>
-                    
+
                     <div class="bili-cookie-actions">
                         <button type="button" class="btn btn-primary btn-sm" onclick="startBilibiliQRLogin()">
                             \${uiIcon('qr-code')} 扫码登录
                         </button>
                     </div>
-                    
+
                     <label>Cookie 值</label>
                     <textarea class="form-group" id="text-value" placeholder="SESSDATA=xxx; bili_jct=xxx; DedeUserID=xxx;" rows="\${rows}">\${value}</textarea>
                     <div class="form-help">推荐使用扫码登录自动获取，或手动粘贴包含 SESSDATA 和 bili_jct 的完整 Cookie</div>
                 </div>
             \`;
-            
+
             // 自动检测 Cookie 状态 + 监听输入变化（防抖）
             setTimeout(() => {
                 autoCheckBilibiliCookieStatus();
@@ -1210,7 +1042,7 @@ function renderValueInput(item) {
                 <label>变量值 *</label>
                 <input type="text" id="text-value" placeholder="例如: localhost" value="\${value}" required>
                 \${recentDataBlock}
-            \`; 
+            \`;
         }
     }
 }
@@ -1695,10 +1527,10 @@ function updateTagStates() {
     const preventDuplicateSources = currentKey === 'SOURCE_ORDER' || currentKey === 'PLATFORM_ORDER';
     // 1. 获取当前暂存区中的Token (防止同组内重复)
     const stagingTokens = new Set(stagingTags);
-    
+
     // 2. 获取已确认的 Selected Tags (仅在非合并模式下需要检查)
     const selectedTagElements = getSelectedTagElements();
-    // PLATFORM_ORDER 的已选项可能是 dandan&animeko，需要将组合拆开后再判断源是否已添加。
+    // PLATFORM_ORDER 的已选项可能是 dandan&tencent，需要将组合拆开后再判断源是否已添加。
     const selectedSourceTokens = new Set(
         selectedTagElements.flatMap(element =>
             String(element.dataset.value || '').split('&').map(value => value.trim()).filter(Boolean)
@@ -1757,7 +1589,7 @@ function addSelectedTag(element) {
         }
         return;
     }
-    
+
     const container = document.getElementById('selected-tags');
 
     // 移除empty类
@@ -1806,7 +1638,7 @@ function updateMultiOptions() {
             </div>
         \`;
     }).join('');
-    
+
     updateTagStates(); // 初始化时更新状态
 }
 
@@ -1827,7 +1659,7 @@ function toggleMergeMode() {
         stagingArea.classList.remove('active');
         stagingTags = [];
     }
-    
+
     // 切换模式时立即刷新所有可选项状态
     updateTagStates();
 }
@@ -1836,7 +1668,7 @@ function toggleMergeMode() {
 function renderStagingArea() {
     const container = document.getElementById('staging-area');
     const confirmBtn = container.querySelector('.confirm-merge-btn');
-    
+
     while (container.firstChild && container.firstChild !== confirmBtn) {
         container.removeChild(container.firstChild);
     }
@@ -1888,10 +1720,10 @@ function confirmMergeGroup() {
     tag.draggable = true;
     tag.dataset.value = groupValue;
     tag.innerHTML = \`<span class="tag-text">\${groupValue}</span><button type="button" class="remove-btn" onclick="removeSelectedTag(this)">×</button>\`;
-    
+
     container.appendChild(tag);
     setupDragAndDrop();
-    
+
     stagingTags = []; // 清空暂存区
     renderStagingArea();
     updateTagStates(); // 关键：确认后立即重新计算所有可选项的禁用状态 (重置为可用)
@@ -1901,7 +1733,7 @@ function confirmMergeGroup() {
 function setupStagingDragAndDrop() {
     const container = document.getElementById('staging-area');
     const tags = container.querySelectorAll('.staging-tag');
-    
+
     tags.forEach(tag => {
         tag.addEventListener('dragstart', handleStagingDragStart);
         tag.addEventListener('dragend', handleStagingDragEnd);
@@ -1909,7 +1741,7 @@ function setupStagingDragAndDrop() {
         tag.addEventListener('drop', handleStagingDrop);
         tag.addEventListener('dragenter', handleStagingDragEnter);
         tag.addEventListener('dragleave', handleStagingDragLeave);
-        
+
         tag.addEventListener('touchstart', handleStagingTouchStart);
         tag.addEventListener('touchmove', handleStagingTouchMove);
         tag.addEventListener('touchend', handleStagingTouchEnd);
@@ -1959,10 +1791,10 @@ function handleStagingDrop(e) {
     if (stagingDraggedElement !== this) {
         const draggedIndex = parseInt(stagingDraggedElement.dataset.index);
         const targetIndex = parseInt(this.dataset.index);
-        
+
         const [movedItem] = stagingTags.splice(draggedIndex, 1);
         stagingTags.splice(targetIndex, 0, movedItem);
-        
+
         renderStagingArea();
     }
 
@@ -1974,11 +1806,11 @@ function handleStagingTouchStart(e) {
     if (e.target.classList.contains('remove-btn')) {
         return;
     }
-    
+
     e.preventDefault();
     stagingDraggedElement = this;
     this.classList.add('dragging');
-    
+
     this.style.transform = 'rotate(5deg)';
     this.style.opacity = '0.8';
     this.style.zIndex = '1000';
@@ -1987,10 +1819,10 @@ function handleStagingTouchStart(e) {
 function handleStagingTouchMove(e) {
     if (!stagingDraggedElement) return;
     e.preventDefault();
-    
+
     const touch = e.touches[0];
     const elementRect = stagingDraggedElement.getBoundingClientRect();
-    
+
     if (!document.getElementById('staging-touch-drag-ghost')) {
         const ghostElement = stagingDraggedElement.cloneNode(true);
         ghostElement.id = 'staging-touch-drag-ghost';
@@ -2009,11 +1841,11 @@ function handleStagingTouchMove(e) {
         const ghostElement = document.getElementById('staging-touch-drag-ghost');
         ghostElement.style.transform = 'translate(' + (touch.clientX - (elementRect.width / 2)) + 'px, ' + (touch.clientY - (elementRect.height / 2)) + 'px) rotate(5deg)';
     }
-    
+
     const container = document.getElementById('staging-area');
     const tags = Array.from(container.querySelectorAll('.staging-tag')).filter(tag => tag !== stagingDraggedElement);
     let targetElement = null;
-    
+
     for (const tag of tags) {
         const rect = tag.getBoundingClientRect();
         if (touch.clientX >= rect.left && touch.clientX <= rect.right &&
@@ -2022,13 +1854,13 @@ function handleStagingTouchMove(e) {
             break;
         }
     }
-    
+
     document.querySelectorAll('.staging-tag').forEach(tag => {
         if (tag !== stagingDraggedElement) {
             tag.classList.remove('drag-over');
         }
     });
-    
+
     if (targetElement) {
         targetElement.classList.add('drag-over');
     }
@@ -2037,35 +1869,35 @@ function handleStagingTouchMove(e) {
 function handleStagingTouchEnd(e) {
     if (!stagingDraggedElement) return;
     e.preventDefault();
-    
+
     const ghostElement = document.getElementById('staging-touch-drag-ghost');
     if (ghostElement) {
         document.body.removeChild(ghostElement);
     }
-    
+
     const touch = e.changedTouches[0];
     const targetElement = document.elementFromPoint(touch.clientX, touch.clientY);
     const targetTag = targetElement ? targetElement.closest('.staging-tag') : null;
-    
+
     if (targetTag && targetTag !== stagingDraggedElement) {
         const draggedIndex = parseInt(stagingDraggedElement.dataset.index);
         const targetIndex = parseInt(targetTag.dataset.index);
-        
+
         const [movedItem] = stagingTags.splice(draggedIndex, 1);
         stagingTags.splice(targetIndex, 0, movedItem);
-        
+
         renderStagingArea();
     }
-    
+
     stagingDraggedElement.style.transform = '';
     stagingDraggedElement.style.opacity = '';
     stagingDraggedElement.style.zIndex = '';
     stagingDraggedElement.classList.remove('dragging');
-    
+
     document.querySelectorAll('.staging-tag').forEach(tag => {
         tag.classList.remove('drag-over');
     });
-    
+
     stagingDraggedElement = null;
 }
 
@@ -2298,21 +2130,21 @@ function handleTouchStart(e) {
         // 如果点击的是删除按钮，则不执行拖动操作
         return;
     }
-    
+
     // 防止默认的触摸行为
     e.preventDefault();
-    
+
     // 模拟拖动开始
     cleanupSelectedTagsTouchDrag();
     draggedElement = this;
     this.classList.add('dragging');
     touchDragging = true;
-    
+
     // 添加拖动样式
     this.style.transform = 'rotate(5deg)';
     this.style.opacity = '0.8';
     this.style.zIndex = '1000';
-    
+
     // 添加触摸移动和结束事件监听器到文档
     document.addEventListener('touchmove', handleTouchMove, { passive: false });
     document.addEventListener('touchend', handleTouchEnd, { passive: false });
@@ -2321,10 +2153,10 @@ function handleTouchStart(e) {
 
 function handleTouchMove(e) {
     if (!touchDragging || !draggedElement) return;
-    
+
     // 防止默认的触摸行为
     e.preventDefault();
-    
+
     const touch = e.touches[0];
     if (!touch) return;
     const clientX = touch.clientX;
@@ -2375,10 +2207,10 @@ function handleTouchMove(e) {
 
 function handleTouchEnd(e) {
     if (!touchDragging || !draggedElement) return;
-    
+
     // 防止默认的触摸行为
     e.preventDefault();
-    
+
     const touch = e.changedTouches && e.changedTouches[0];
     if (touch) moveSelectedTagToPoint(touch.clientX, touch.clientY);
     cleanupSelectedTagsTouchDrag();
@@ -2613,12 +2445,12 @@ async function refreshRemoteMapping(button, kind = 'title') {
 function editEnv(category, index, editButton) {
     const item = (envVariables[category] || [])[index];
     if (!item || !editButton) return;
-    
+
     // 设置按钮为加载状态
     const originalText = editButton.innerHTML;
     editButton.innerHTML = '<span class="loading-spinner-small"></span>';
     editButton.disabled = true;
-    
+
     editingKey = index;
     editingCategory = category;
     editingKeyName = item.key;
@@ -2636,7 +2468,7 @@ function editEnv(category, index, editButton) {
 
     document.getElementById('env-modal').classList.add('active');
     lockPageScroll();
-    
+
     // 恢复按钮状态（在实际场景中，这会在编辑完成后发生，比如在保存后或取消后）
     // 为了演示，这里立即恢复按钮状态，实际使用中应该在适当的地方恢复按钮状态
     editButton.innerHTML = originalText;
@@ -2815,12 +2647,12 @@ document.getElementById('env-form').addEventListener('submit', async function(e)
         } else {
             addLog(\`操作失败: \${result.message}\`, 'error');
             addLog(\`❌ 操作失败: \${result.message}\`, 'error');
-            customAlert(result.message + '，请检查部署平台相关环境变量配置是否正确');
+            customAlert(result.message + '，请检查配置文件与目录权限');
         }
     } catch (error) {
         addLog(\`更新环境变量失败: \${error.message}\`, 'error');
         addLog(\`❌ 更新环境变量失败: \${error.message}\`, 'error');
-        customAlert(error.message + '，请检查部署平台相关环境变量配置是否正确');
+        customAlert(error.message + '，请检查配置文件与目录权限');
     }
 });
 
@@ -2914,38 +2746,38 @@ async function startBilibiliQRLogin() {
         \`;
         document.body.insertAdjacentHTML('beforeend', modalHTML);
     }
-    
+
     const modal = document.getElementById('bili-qr-modal');
     const qrCode = document.getElementById('bili-qr-code');
     const qrLoading = document.getElementById('bili-qr-loading');
     const qrStatus = document.getElementById('bili-qr-status');
-    
+
     modal.classList.add('active');
     qrCode.style.display = 'none';
     qrCode.innerHTML = '';
     qrLoading.style.display = 'block';
     qrStatus.textContent = '正在生成二维码...';
-    
+
     if (biliQRCheckInterval) {
         clearInterval(biliQRCheckInterval);
     }
-    
+
     try {
         const response = await fetch(buildApiUrl('/api/cookie/qr/generate', true), {
             method: 'POST'
         });
-        
+
         const result = await response.json();
-        
+
         if (result.success && result.data) {
             biliBiliQRKey = result.data.qrcode_key;
             const qrUrl = result.data.url;
-            
+
             qrCode.innerHTML = '<img src="https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(qrUrl) + '" alt="二维码">';
             qrCode.style.display = 'block';
             qrLoading.style.display = 'none';
             qrStatus.textContent = '请使用 Bilibili APP 扫描';
-            
+
             startBiliQRCheck();
         } else {
             throw new Error(result.message || '生成二维码失败');
@@ -2958,9 +2790,9 @@ async function startBilibiliQRLogin() {
 
 function startBiliQRCheck() {
     if (!biliBiliQRKey) return;
-    
+
     const qrStatus = document.getElementById('bili-qr-status');
-    
+
     biliQRCheckInterval = setInterval(async () => {
         try {
             const response = await fetch(buildApiUrl('/api/cookie/qr/check', true), {
@@ -2968,12 +2800,12 @@ function startBiliQRCheck() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ qrcode_key: biliBiliQRKey })
             });
-            
+
             const result = await response.json();
-            
+
             if (result.success && result.data) {
                 const code = result.data.code;
-                
+
                 switch (code) {
                     case 86101:
                         uiSetStatus(qrStatus, 'clock', '等待扫码...');
@@ -2988,11 +2820,11 @@ function startBiliQRCheck() {
                     case 0:
                         uiSetStatus(qrStatus, 'check-circle', '登录成功！');
                         clearInterval(biliQRCheckInterval);
-                        
+
                         if (result.data.cookie) {
                             fillBilibiliCookie(result.data.cookie);
                         }
-                        
+
                         setTimeout(() => {
                             closeBiliQRModal();
                         }, 1000);
@@ -3010,7 +2842,7 @@ function fillBilibiliCookie(cookie) {
     if (textInput) {
         textInput.value = cookie;
         textInput.dispatchEvent(new Event('input', { bubbles: true }));
-        
+
         textInput.style.borderColor = 'var(--success-color, #28a745)';
         setTimeout(() => {
             textInput.style.borderColor = '';
@@ -3025,7 +2857,7 @@ function closeBiliQRModal() {
     if (modal) {
         modal.classList.remove('active');
     }
-    
+
     if (biliQRCheckInterval) {
         clearInterval(biliQRCheckInterval);
     }
@@ -3034,17 +2866,17 @@ function closeBiliQRModal() {
 async function autoCheckBilibiliCookieStatus() {
     const textInput = document.getElementById('text-value');
     const statusEl = document.getElementById('bili-cookie-status');
-    
+
     if (!textInput || !statusEl) return;
-    
+
     const cookie = textInput.value.trim();
-    
+
     // 如果输入框为空,提示未配置
     if (!cookie) {
         statusEl.innerHTML = \`<span class="bili-status-icon">\${uiIcon('alert-triangle')}</span><span class="bili-status-text">未配置</span>\`;
         return;
     }
-    
+
     statusEl.innerHTML = \`<span class="bili-status-icon">\${uiIcon('search')}</span><span class="bili-status-text">检测中...</span>\`;
 
     // 脱敏后的 *...* 无法直接校验，后端会自动改为校验“已保存”的 Cookie
@@ -3103,7 +2935,7 @@ function showBilibiliCookieSaveHint(text) {
    连通性测试取值
    ======================================== */
 
-// 读取配置列表中某项的当前值，供连通性测试随请求提交；掩码（当前访问无权限读取明文）返回空串，由服务端回退到已保存配置
+// 读取配置列表中某项的当前值，供配置编辑使用；掩码（当前访问无权限读取明文）返回空串，由服务端回退到已保存配置
 function readLocalEnvValue(key) {
     for (const items of Object.values(envVariables)) {
         const item = items.find(entry => entry.key === key);
@@ -3116,119 +2948,14 @@ function readLocalEnvValue(key) {
 }
 
 /* ========================================
-   AI API Key 连通性测试功能
+
    ======================================== */
-async function verifyAiConnection() {
-    const statusEl = document.getElementById('ai-apikey-status');
-    const btn = document.getElementById('ai-verify-btn');
-    const textInput = document.getElementById('text-value');
-    
-    if (!statusEl || !textInput) return;
-    
-    const apiKey = textInput.value.trim();
-    
-    // 如果输入框为空，提示未配置
-    if (!apiKey) {
-        statusEl.innerHTML = \`<span class="ai-status-icon">\${uiIcon('alert-triangle')}</span><span class="ai-status-text">请先输入 API Key</span>\`;
-        return;
-    }
-    
-    // 设置按钮为加载状态
-    const originalText = btn.innerHTML;
-    btn.innerHTML = '<span class="loading-spinner-small"></span>';
-    btn.disabled = true;
-    
-    statusEl.innerHTML = \`<span class="ai-status-icon">\${uiIcon('search')}</span><span class="ai-status-text">正在测试连通性...</span>\`;
-    
-    // 地址与模型始终随请求提交，避免云部署下因未重新部署而取不到新配置；密钥为脱敏值时省略该字段，由服务端使用已保存的密钥
-    const isMasked = /^[*]+$/.test(apiKey);
-    const payload = {
-        aiBaseUrl: readLocalEnvValue('AI_BASE_URL'),
-        aiModel: readLocalEnvValue('AI_MODEL')
-    };
-    if (!isMasked) payload.aiApiKey = apiKey;
-    
-    try {
-        const response = await fetch(buildApiUrl('/api/ai/verify', true), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        
-        const result = await response.json();
-        
-        if (result.ok) {
-            statusEl.innerHTML = \`<span class="ai-status-icon">\${uiIcon('check-circle')}</span><span class="ai-status-text">\${result.message || 'AI 服务连通性测试成功'}</span>\`;
-            statusEl.style.color = 'var(--success-color, #28a745)';
-        } else {
-            statusEl.innerHTML = \`<span class="ai-status-icon">\${uiIcon('x-circle')}</span><span class="ai-status-text">\${result.message || '连通性测试失败'}</span>\`;
-            statusEl.style.color = 'var(--danger-color, #dc3545)';
-        }
-    } catch (error) {
-        statusEl.innerHTML = \`<span class="ai-status-icon">\${uiIcon('alert-triangle')}</span><span class="ai-status-text">测试请求失败: \${error.message}</span>\`;
-        statusEl.style.color = 'var(--warning-color, #ffc107)';
-    } finally {
-        // 恢复按钮状态
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-    }
-}
+
 
 /* ========================================
-   弹弹play密码连通性测试功能
+
    ======================================== */
-async function verifyDandanplayConnection() {
-    const statusEl = document.getElementById('dandanplay-status');
-    const btn = document.getElementById('dandanplay-verify-btn');
-    const passwordInput = document.getElementById('text-value');
 
-    if (!statusEl || !passwordInput) return;
-
-    const password = passwordInput.value.trim();
-
-    // 如果输入框为空，提示未配置
-    if (!password) {
-        statusEl.innerHTML = \`<span class="dandanplay-status-icon">\${uiIcon('alert-triangle')}</span><span class="dandanplay-status-text">请先输入弹弹play密码</span>\`;
-        return;
-    }
-
-    // 设置按钮为加载状态
-    const originalText = btn.innerHTML;
-    btn.innerHTML = '<span class="loading-spinner-small"></span>';
-    btn.disabled = true;
-
-    statusEl.innerHTML = \`<span class="dandanplay-status-icon">\${uiIcon('search')}</span><span class="dandanplay-status-text">正在测试连通性...</span>\`;
-
-    // 账号始终随请求提交，避免云部署下因未重新部署而取不到新账号；密码为脱敏值时省略该字段，由服务端使用已保存的密码
-    const isMasked = /^[*]+$/.test(password);
-    const payload = { dandanplayAccount: readLocalEnvValue('DANDANPLAY_ACCOUNT') };
-    if (!isMasked) payload.dandanplayPassword = password;
-
-    try {
-        const response = await fetch(buildApiUrl('/api/nipaplay/verify', true), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        const result = await response.json();
-
-        if (result.ok) {
-            statusEl.innerHTML = \`<span class="dandanplay-status-icon">\${uiIcon('check-circle')}</span><span class="dandanplay-status-text">\${result.message || '弹弹play账号连通性测试成功'}</span>\`;
-            statusEl.style.color = 'var(--success-color, #28a745)';
-        } else {
-            statusEl.innerHTML = \`<span class="dandanplay-status-icon">\${uiIcon('x-circle')}</span><span class="dandanplay-status-text">\${result.message || '连通性测试失败'}</span>\`;
-            statusEl.style.color = 'var(--danger-color, #dc3545)';
-        }
-    } catch (error) {
-        statusEl.innerHTML = \`<span class="dandanplay-status-icon">\${uiIcon('alert-triangle')}</span><span class="dandanplay-status-text">测试请求失败: \${error.message}</span>\`;
-        statusEl.style.color = 'var(--warning-color, #ffc107)';
-    } finally {
-        // 恢复按钮状态
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-    }
-}
 
 /* ========================================
    最近数据与animes缓存面板功能
@@ -3412,7 +3139,7 @@ function renderAnimeCachePanel(data, listContainer) {
                                 childTitleStr = (link.title || '').replace(/^【.*?】\\s*/, '');
                             }
                             childSide = \`【\${escapeHtml(child.source)}】\${escapeHtml(childTitleStr)}\`;
-                            
+
                             const numMatch = childTitleStr.match(/\\d+/);
                             if (numMatch) {
                                 childNum = parseInt(numMatch[0], 10);
@@ -3613,7 +3340,7 @@ function fillOffsetEntity(title, source) {
     // 视图层数据清洗：去除年份和类型后缀
     const cleanTitle = title
         .replace(/[\\u200B-\\u200F\\uFEFF]/g, '')
-        .replace(/\\s*[（(〔\\[]\\s*[0-9０-９]{4}\\s*年?\\s*[）)〕\\]]/g, '') 
+        .replace(/\\s*[（(〔\\[]\\s*[0-9０-９]{4}\\s*年?\\s*[）)〕\\]]/g, '')
         .replace(/(.+?)\\s*【[^】]+】$/, '$1')
         .trim();
 

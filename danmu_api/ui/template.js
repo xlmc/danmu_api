@@ -8,17 +8,9 @@ import { iconJsContent, iconsSpriteContent, renderIcon } from "./js/icons.js";
 import { mainJsContent } from "./js/main.js";
 import { previewJsContent } from "./js/preview.js";
 import { logviewJsContent } from "./js/logview.js";
-import { apitestJsContent } from "./js/apitest.js";
-import { pushDanmuJsContent } from "./js/pushdanmu.js";
 import { requestRecordsJsContent } from "./js/requestrecords.js";
 import { systemSettingsJsContent } from "./js/systemsettings.js";
-import { localDanmuJsContent } from "./js/localdanmu.js";
 
-const localDanmuLatestYear = new Date().getFullYear();
-const localDanmuYearOptions = Array.from({ length: localDanmuLatestYear - 1900 + 1 }, (_, index) => {
-    const year = localDanmuLatestYear - index;
-    return `<option value="${year}"${index === 0 ? ' selected' : ''}>${year}年</option>`;
-}).join('');
 
 // language=HTML
 export const HTML_TEMPLATE = /* html */ `
@@ -37,7 +29,7 @@ export const HTML_TEMPLATE = /* html */ `
     <style>${formsCssContent}</style>
     <style>${responsiveCssContent}</style>
     <style>${themesCssContent}</style>
-    
+
 </head>
 <body data-theme="globals.uiTheme">
     ${iconsSpriteContent}
@@ -81,9 +73,9 @@ export const HTML_TEMPLATE = /* html */ `
             <div class="nav-buttons">
                 <button class="nav-btn active" onclick="switchSection('preview', event)">配置预览</button>
                 <button class="nav-btn" onclick="switchSection('logs', event)">日志查看</button>
-                <button class="nav-btn" onclick="switchSection('api', event)">接口调试</button>
-                <button class="nav-btn" onclick="switchSection('push', event)">推送弹幕</button>
-                <button class="nav-btn" onclick="switchSection('local-danmu', event)">本地弹幕</button>
+
+
+
                 <button class="nav-btn" onclick="switchSection('request-records', event)">请求记录</button>
                 <button class="nav-btn" onclick="switchSection('env', event)" id="env-nav-btn">系统配置</button>
             </div>
@@ -93,7 +85,7 @@ export const HTML_TEMPLATE = /* html */ `
             <!-- 配置预览 -->
             <div class="section active" id="preview-section">
                 <h2>配置预览</h2>
-                
+
                 <div id="proxy-config-container" class="error-config-banner" style="display: none;">
                     <h3 class="error-config-title ui-icon-label">${renderIcon('alert-triangle')} 获取配置失败</h3>
                     <p class="error-config-text">
@@ -164,145 +156,9 @@ export const HTML_TEMPLATE = /* html */ `
                 <div class="log-container" id="log-container"></div>
             </div>
 
-            <!-- 接口调试 -->
-            <div class="section" id="api-section">
-                <h2>接口调试</h2>
-                <div class="api-top-tabs">
-                    <button class="api-top-tab active" onclick="switchApiTopTab('danmu-test', event)">弹幕测试</button>
-                    <button class="api-top-tab" onclick="switchApiTopTab('debug', event)">接口调试</button>
-                </div>
 
-                <div class="api-tab-content" id="api-debug-content">
-                    <div class="api-selector">
-                        <div class="form-group">
-                            <label>选择接口</label>
-                            <select id="api-select" onchange="loadApiParams()">
-                                <option value="">-- 请选择接口 --</option>
-                                <option value="searchAnime">搜索动漫 - /api/v2/search/anime</option>
-                                <option value="searchEpisodes">搜索剧集 - /api/v2/search/episodes</option>
-                                <option value="matchAnime">匹配动漫 - /api/v2/match</option>
-                                <option value="getBangumi">获取番剧详情 - /api/v2/bangumi/:animeId</option>
-                                <option value="getComment">获取弹幕 - /api/v2/comment/:commentId</option>
-                                <option value="getSegmentComment">获取分片弹幕 - /api/v2/segmentcomment</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="api-params" id="api-params" style="display: none;">
-                        <h3 style="margin-bottom: 15px;">接口参数</h3>
-                        <div id="params-form"></div>
-                        <button class="btn btn-success" onclick="testApi()">发送请求</button>
-                    </div>
-                    <div id="api-response-container" style="display: none;">
-                        <h3 style="margin: 20px 0 10px;">响应结果</h3>
-                        <div class="api-response" id="api-response"></div>
-                    </div>
-                </div>
 
-                <div class="api-tab-content active" id="danmu-test-content">
-                    <div class="danmu-test-tabs">
-                        <button class="danmu-test-tab active" onclick="switchDanmuTestTab('auto', event)">自动匹配测试</button>
-                        <button class="danmu-test-tab" onclick="switchDanmuTestTab('manual', event)">手动匹配测试</button>
-                        <button class="danmu-test-tab" onclick="switchDanmuTestTab('favorite', event)">收藏</button>
-                    </div>
 
-                    <div class="danmu-test-panel active" id="auto-match-panel">
-                        <p style="color: #666; margin-bottom: 15px;">模拟播放器自动匹配流程：输入文件名 → 匹配剧集 → 获取弹幕</p>
-                        <div class="form-group" style="margin-bottom: 15px;">
-                            <label>文件名</label>
-                            <div style="display:flex;gap:10px;margin-top:5px;flex-wrap:wrap;">
-                                <input type="text" id="auto-match-filename" placeholder="示例: 生万物 S02E08, 无忧渡.S02E08.2160p.WEB-DL" style="flex:1;">
-                                <button class="btn btn-success" id="auto-match-btn" onclick="autoMatchTest()">开始匹配</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="danmu-test-panel" id="manual-match-panel">
-                        <p style="color: #666; margin-bottom: 15px;">模拟播放器手动搜索流程：搜索动漫 → 选择番剧 → 选择剧集 → 获取弹幕</p>
-                        <div class="form-group" style="margin-bottom: 15px;">
-                            <label>搜索关键字</label>
-                            <div class="search-actions">
-                                <input type="text" id="manual-search-keyword" placeholder="请输入动漫名称" style="flex:1;">
-                                <button class="btn btn-success favorite-action-btn" id="manual-favorite-btn" onclick="favoriteManualSearch()" disabled>收藏</button>
-                                <button class="btn btn-primary" id="manual-search-btn" onclick="manualSearchAnime()">搜索</button>
-                            </div>
-                        </div>
-                        <div id="manual-anime-list" style="display:none;"></div>
-                        <div id="manual-episode-list" style="display:none;"></div>
-                    </div>
-
-                    <div class="danmu-test-panel" id="favorite-panel">
-                        <p style="color: #666; margin-bottom: 15px;">收藏后的剧集会永久缓存，后续匹配可秒级返回缓存结果；对于《火影忍者》《名侦探柯南》等集数较多的剧集尤其有用，无需每次重新搜索。可在“手动匹配测试”界面搜索剧集后，点击“收藏”按钮添加搜索结果收藏。只缓存剧集搜索结果，不缓存弹幕。Vercel、Netlify、Cloudflare 等云平台需配置 UPSTASH_REDIS_REST_URL 和 UPSTASH_REDIS_REST_TOKEN 才能使用收藏。</p>
-                        <div class="form-group" style="margin-bottom: 15px;">
-                            <label>搜索收藏</label>
-                            <div style="display:flex;gap:10px;margin-top:5px;">
-                                <input type="text" id="favorite-search-input" placeholder="搜索收藏剧名或来源" oninput="handleFavoriteSearch(event)" style="flex:1;">
-                                <button class="btn btn-primary" onclick="loadFavoriteList()">刷新列表</button>
-                            </div>
-                        </div>
-                        <div class="preview-status" id="favorite-list-status" aria-live="polite"></div>
-                        <div class="favorite-list" id="favorite-list"></div>
-                    </div>
-
-                    <div class="modal" id="favorite-schedule-modal">
-                        <div class="modal-content favorite-schedule-modal-content">
-                            <div class="modal-header">
-                                <h3>设置定时刷新</h3>
-                                <button class="close-btn" onclick="closeFavoriteScheduleModal()">&times;</button>
-                            </div>
-                            <div class="modal-body">
-                                <p class="favorite-schedule-hint">按北京时间执行，仅 Node/Docker 部署支持定时刷新。</p>
-                                <input type="hidden" id="favorite-schedule-keyword">
-                                <div class="form-group">
-                                    <label for="favorite-schedule-frequency">刷新频率</label>
-                                    <select id="favorite-schedule-frequency" onchange="toggleFavoriteScheduleWeekday()">
-                                        <option value="daily">每天</option>
-                                        <option value="weekly">每周</option>
-                                    </select>
-                                </div>
-                                <div class="form-group" id="favorite-schedule-weekday-group" style="display:none;">
-                                    <label for="favorite-schedule-weekday">星期</label>
-                                    <select id="favorite-schedule-weekday">
-                                        <option value="1">周一</option><option value="2">周二</option><option value="3">周三</option>
-                                        <option value="4">周四</option><option value="5">周五</option><option value="6">周六</option><option value="7">周日</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label for="favorite-schedule-time">时间</label>
-                                    <input type="time" id="favorite-schedule-time" value="03:00">
-                                </div>
-                            </div>
-                            <div class="modal-footer">
-                                <button class="btn btn-danger" id="favorite-schedule-disable-btn" onclick="disableFavoriteSchedule()">关闭定时刷新</button>
-                                <button class="btn btn-primary" onclick="closeFavoriteScheduleModal()">取消</button>
-                                <button class="btn btn-success" onclick="saveFavoriteSchedule()">保存</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div id="danmu-result-area" style="display:none;"></div>
-                </div>
-            </div>
-
-            <!-- 推送弹幕 -->
-            <div class="section" id="push-section">
-                <h2>推送弹幕</h2>
-                <p style="color: #666; margin-bottom: 15px;">支持OK影视等播放器，两端需要在同一局域网或使用公网ip，推送地址格式如 http://127.0.0.1:9978/action?do=refresh&type=danmaku&path=</p>
-                <div class="push-controls" style="margin-bottom: 20px;">
-                    <div class="form-group" style="margin-bottom: 15px;">
-                        <label>推送地址</label>
-                        <input type="text" id="push-url" placeholder="请输入推送地址，例如: http://127.0.0.1:9978/action?do=refresh&type=danmaku&path=" style="width: 100%; padding: 8px; margin-top: 5px;">
-                    </div>
-                    <div class="form-group" style="margin-bottom: 15px;">
-                        <label>搜索关键字</label>
-                        <div style="margin-top: 5px;">
-                            <input type="text" id="push-search-keyword" placeholder="请输入搜索关键字" style="width: calc(100% - 100px); padding: 8px; display: inline-block;">
-                            <button class="btn btn-primary" onclick="searchAnimeForPush()" style="width: 80px; display: inline-block; margin-left: 10px;">搜索</button>
-                        </div>
-                    </div>
-                </div>
-                <div id="push-anime-list" class="anime-list" style="display: none;"></div>
-                <div id="push-episode-list" class="episode-list" style="display: none; margin-top: 20px;"></div>
-            </div>
 
             <!-- 请求记录 -->
             <div class="section" id="request-records-section">
@@ -312,53 +168,12 @@ export const HTML_TEMPLATE = /* html */ `
                         <button class="btn btn-primary" id="refresh-request-records">${renderIcon('refresh-cw')} 刷新记录</button>
                         <span id="total-requests-today" style="color: #ff5722; font-size: 1.2em; font-weight: bold;"></span>
                     </div>
-                    <span style="color: #666;">云服务部署需要配置redis</span>
+                    <span style="color: #666;">记录随本地缓存保存</span>
                 </div>
                 <div class="request-records-container" id="request-records-list"></div>
             </div>
 
-            <div class="section" id="local-danmu-section">
-                <h2>本地弹幕</h2>
-                <p id="local-danmu-permission" class="preview-description"></p>
-                <div id="local-danmu-upload-panel">
-                    <div class="form-group local-danmu-file-field">
-                        <label for="local-danmu-file">弹幕文件</label>
-                        <input type="file" id="local-danmu-file" accept=".xml,.json,.ass,.ssa,.csv,.txt" multiple aria-describedby="local-danmu-file-hint" data-can-upload="globals.localDanmuCanUpload" onclick="return checkLocalDanmuWritePermission('上传', event)">
-                        <p id="local-danmu-file-hint" class="local-danmu-file-hint">支持 XML、JSON、ASS、SSA、CSV、TXT，可多选同一部剧的弹幕文件，每个文件不超过 10 MB</p>
-                    </div>
-                    <div class="local-danmu-fields" id="local-danmu-fields">
-                        <div class="form-group local-danmu-name-field"><label for="local-danmu-title">标题（必填）</label><input id="local-danmu-title" placeholder="电视剧或影片标题"></div>
-                        <div class="form-group">
-                            <label id="local-danmu-year-label" for="local-danmu-year">年份（必填）</label>
-                            <select id="local-danmu-year" required>
-                                ${localDanmuYearOptions}
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="local-danmu-type">类型（必填）</label>
-                            <select id="local-danmu-type" required>
-                                <option value="" disabled selected>请选择</option>
-                                <option value="tv">tv</option>
-                                <option value="movie">movie</option>
-                            </select>
-                        </div>
-                        <div class="form-group"><label id="local-danmu-season-label" for="local-danmu-season">季</label><input id="local-danmu-season" type="number" min="1" step="1" value="1"></div>
-                        <div class="form-group" id="local-danmu-episode-field"><label id="local-danmu-episode-label" for="local-danmu-episode">集</label><input id="local-danmu-episode" type="number" min="1" step="1" value="1"></div>
-                        <button id="local-danmu-upload-button" type="button" class="btn btn-success" onclick="uploadLocalDanmu()">上传并解析</button>
-                    </div>
-                    <p class="preview-description">tv 默认第 1 季第 1 集，movie 的季和集可留空。标题、年份、类型和季相同的文件会归为一个剧集，展开后可查看各集。同一季的同一集重新上传会替换原文件。</p>
-                    <div id="local-danmu-batch-preview" class="local-danmu-batch-preview" hidden>
-                        <p class="local-danmu-file-hint">批量导入用于同一部电视剧（tv），标题、年份和季沿用上方设置。集数从文件名识别，可逐个修改；未识别的请手动填写，同一批次不能重复。</p>
-                        <div id="local-danmu-batch-list"></div>
-                    </div>
-                    <div id="local-danmu-upload-status" class="preview-status" aria-live="polite"></div>
-                </div>
-                <div class="form-group local-danmu-search">
-                    <label for="local-danmu-search">搜索已上传标题</label>
-                    <input type="search" id="local-danmu-search" placeholder="输入标题关键词" autocomplete="off">
-                </div>
-                <div id="local-danmu-list" class="favorite-list"></div>
-            </div>
+
 
             <!-- 系统配置 -->
             <div class="section" id="env-section">
@@ -378,9 +193,7 @@ export const HTML_TEMPLATE = /* html */ `
                     <button class="btn btn-danger" onclick="showClearCacheModal()" title="清理系统缓存">
                         ${renderIcon('trash-2')} 清理缓存
                     </button>
-                    <button class="btn btn-success" onclick="showDeploySystemModal()" title="重新部署系统">
-                        ${renderIcon('cloud-up')} 重新部署
-                    </button>
+
                 </div>
 
                 <!-- 清理缓存确认模态框 -->
@@ -419,30 +232,7 @@ export const HTML_TEMPLATE = /* html */ `
                 </div>
 
                 <!-- 重新部署确认模态框 -->
-                <div class="modal" id="deploy-system-modal">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h3>确认重新部署</h3>
-                            <button class="close-btn" onclick="hideDeploySystemModal()">&times;</button>
-                        </div>
-                        <div class="modal-body">
-                            <p style="margin-bottom: 20px;">确定要重新部署系统吗？</p>
-                            <div class="warning-box">
-                                <p style="margin: 0;">部署过程中：</p>
-                                <ul class="confirmation-list">
-                                    <li>系统将短暂不可用</li>
-                                    <li>所有配置将重新加载</li>
-                                    <li>服务将自动重启</li>
-                                </ul>
-                                <p style="margin-top: 10px;">预计耗时：30-90秒</p>
-                            </div>
-                        </div>
-                        <div class="modal-footer">
-                            <button class="btn btn-success" onclick="confirmDeploySystem()">确认部署</button>
-                            <button class="btn btn-danger" onclick="hideDeploySystemModal()">取消</button>
-                        </div>
-                    </div>
-                </div>
+
                 </div>
 
                 <div class="preview-toolbar env-config-toolbar">
@@ -516,26 +306,7 @@ export const HTML_TEMPLATE = /* html */ `
         </div>
     </div>
 
-    <!-- 本地弹幕编辑弹窗放在页面顶层，避免命中 section 子元素的错峰动画延迟 -->
-    <div class="modal" id="local-danmu-edit-modal" aria-hidden="true">
-        <div class="modal-content">
-            <div class="modal-header"><h3 id="local-danmu-edit-title">编辑本地弹幕</h3><button type="button" class="close-btn" onclick="closeLocalDanmuEdit()">&times;</button></div>
-            <div class="modal-body">
-                <div id="local-danmu-edit-group-fields">
-                    <div class="form-group"><label for="local-danmu-edit-name">标题</label><input id="local-danmu-edit-name"></div>
-                    <div class="form-group"><label for="local-danmu-edit-year">年份</label><input id="local-danmu-edit-year" type="number" min="1900" step="1"></div>
-                    <div class="form-group"><label for="local-danmu-edit-type">类型</label><select id="local-danmu-edit-type"><option value="tv">tv</option><option value="movie">movie</option></select></div>
-                    <div class="form-group"><label for="local-danmu-edit-season">季</label><input id="local-danmu-edit-season" type="number" min="1" step="1"></div>
-                </div>
-                <div id="local-danmu-edit-resource-fields">
-                    <div class="form-group"><label for="local-danmu-edit-episode">集</label><input id="local-danmu-edit-episode" type="number" min="1" step="1"></div>
-                    <div class="form-group"><label for="local-danmu-edit-filename">显示文件名</label><input id="local-danmu-edit-filename"></div>
-                </div>
-                <p id="local-danmu-edit-status" class="preview-status" aria-live="polite"></p>
-            </div>
-            <div class="modal-footer"><button type="button" class="btn btn-secondary" onclick="closeLocalDanmuEdit()">取消</button><button type="button" class="btn btn-primary" onclick="submitLocalDanmuEdit()">保存</button></div>
-        </div>
-    </div>
+
 
     <!-- 编辑模态框 -->
     <div class="modal" id="env-modal">
@@ -598,11 +369,8 @@ export const HTML_TEMPLATE = /* html */ `
         ${mainJsContent}
         ${previewJsContent}
         ${logviewJsContent}
-        ${apitestJsContent}
-        ${pushDanmuJsContent}
         ${requestRecordsJsContent}
         ${systemSettingsJsContent}
-        ${localDanmuJsContent}
     </script>
 </body>
 </html>

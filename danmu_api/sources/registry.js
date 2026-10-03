@@ -1,7 +1,7 @@
 // =====================
 // 源注册表 (Source Registry)
 // =====================
-// 集中管理所有弹幕源的元数据与实例化，消除散落在 dandan-api.js / worker.test.js 中的
+// 集中管理所有弹幕源的元数据与实例化，消除散落在 dandan-api.js 中的
 // import + new + if/else 分发三段重复代码。
 //
 // 新增一个源只需：
@@ -14,15 +14,15 @@
 
 import { globals } from '../configs/globals.js';
 
-import Kan360Source from './kan360.js';
-import VodSource from './vod.js';
-import TmdbSource from './tmdb.js';
-import DoubanSource from './douban.js';
-import RenrenSource from './renren.js';
-import HanjutvSource from './hanjutv.js';
+
+
+
+
+
+
 import BahamutSource from './bahamut.js';
 import DandanSource from './dandan.js';
-import CustomSource from './custom.js';
+
 import TencentSource from './tencent.js';
 import IqiyiSource from './iqiyi.js';
 import MangoSource from './mango.js';
@@ -33,16 +33,16 @@ import SohuSource from './sohu.js';
 import LeshiSource from './leshi.js';
 import XiguaSource from './xigua.js';
 import MaiduiduiSource from './maiduidui.js';
-import AiyifanSource from './aiyifan.js';
+
 import HongguoSource from './hongguo.js';
-import AnimekoSource from './animeko.js';
-import OtherSource from './other.js';
-import LocalSource from './local.js';
+
+
+
 
 // 源注册表：每条记录描述一个源的调度身份与实例化方式。
 // 字段说明：
 //   key             —— sourceOrderArr 中的调度键名（如 "360"、"imgo"、"tencent"）
-//   logName         —— 日志标签规范名称；为空时默认等于 key。处理 360→360kan、imgo→mango 这类别名
+//   logName         —— 日志标签规范名称；为空时默认等于 key。处理 imgo→mango 这类别名
 //   factory         —— 实例工厂 (ctx) => instance。ctx 是已建好实例的 Map（key->instance），供有依赖的源取依赖
 //   extraSearchArgs —— search 调用是否需要额外参数 (preferAnimeId, preferSource)；仅 vod 为 true
 //   deps            —— 该源依赖的其他源 key 列表（用于排序），无依赖为空
@@ -51,42 +51,19 @@ import LocalSource from './local.js';
 //                      未提供时默认调用 instance.handleAnimes(searchResult, queryTitle, isolatedAnimes, isolatedDetailStore, targetSeason)
 //                      新增源若 handleAnimes 签名标准（5 参），可不提供 handleAdapter
 const SOURCE_REGISTRY = [
-  { key: '360',       logName: '360kan',  factory: () => new Kan360Source(), deps: [] },
-  { key: 'vod',       logName: '',        factory: () => new VodSource(), deps: [], extraSearchArgs: true,
-    handleAdapter: async (instance, searchResult, queryTitle, isolatedAnimes, isolatedDetailStore, targetSeason) => {
-      // vod 源: search 返回多服务器结果数组，需逐个遍历并传入 serverName
-      if (searchResult && Array.isArray(searchResult)) {
-        for (const vodResult of searchResult) {
-          if (vodResult && vodResult.list && vodResult.list.length > 0) {
-            await instance.handleAnimes(vodResult.list, queryTitle, isolatedAnimes, vodResult.serverName, isolatedDetailStore, targetSeason);
-          }
-        }
-      }
-    } },
-  { key: 'tmdb',      logName: '',        factory: (ctx) => new TmdbSource(ctx.get('douban')), deps: ['douban'] },
-  { key: 'douban',    logName: '',        factory: (ctx) => new DoubanSource(ctx.get('tencent'), ctx.get('iqiyi'), ctx.get('youku'), ctx.get('bilibili'), ctx.get('migu')), deps: ['tencent', 'iqiyi', 'youku', 'bilibili', 'migu'] },
-  { key: 'renren',    logName: '',        factory: () => new RenrenSource(), deps: [] },
-  { key: 'hanjutv',   logName: '',        factory: () => new HanjutvSource(), deps: [] },
-  { key: 'bahamut',   logName: '',        factory: () => new BahamutSource(), deps: [] },
-  { key: 'dandan',    logName: '',        factory: () => new DandanSource(), deps: [] },
-  { key: 'custom',    logName: '',        factory: () => new CustomSource(), deps: [],
-    handleAdapter: (instance, searchResult, queryTitle, isolatedAnimes, isolatedDetailStore) =>
-      instance.handleAnimes(searchResult, queryTitle, isolatedAnimes, isolatedDetailStore) },
-  { key: 'tencent',   logName: '',        factory: () => new TencentSource(), deps: [] },
-  { key: 'iqiyi',     logName: '',        factory: () => new IqiyiSource(), deps: [] },
-  { key: 'imgo',      logName: 'mango',   factory: () => new MangoSource(), deps: [] },
-  { key: 'bilibili',  logName: '',        factory: () => new BilibiliSource(), deps: [] },
-  { key: 'migu',      logName: '',        factory: () => new MiguSource(), deps: [] },
-  { key: 'youku',     logName: '',        factory: () => new YoukuSource(), deps: [] },
-  { key: 'sohu',      logName: '',        factory: () => new SohuSource(), deps: [] },
-  { key: 'leshi',     logName: '',        factory: () => new LeshiSource(), deps: [] },
-  { key: 'xigua',     logName: '',        factory: () => new XiguaSource(), deps: [] },
-  { key: 'maiduidui', logName: '',        factory: () => new MaiduiduiSource(), deps: [] },
-  { key: 'aiyifan',   logName: '',        factory: () => new AiyifanSource(), deps: [] },
-  { key: 'hongguo',   logName: '',        factory: () => new HongguoSource(), deps: [] },
-  { key: 'animeko',   logName: '',        factory: () => new AnimekoSource(), deps: [] },
-  { key: 'other',     logName: '',        factory: () => new OtherSource(), deps: [] },
-  { key: 'local',     logName: 'local',   factory: () => new LocalSource(), deps: [] },
+  { key: 'tencent', logName: 'tencent', factory: () => new TencentSource(), deps: [] },
+  { key: 'youku', logName: 'youku', factory: () => new YoukuSource(), deps: [] },
+  { key: 'iqiyi', logName: 'iqiyi', factory: () => new IqiyiSource(), deps: [] },
+  { key: 'imgo', logName: 'mango', factory: () => new MangoSource(), deps: [] },
+  { key: 'bilibili', logName: 'bilibili', factory: () => new BilibiliSource(), deps: [] },
+  { key: 'migu', logName: 'migu', factory: () => new MiguSource(), deps: [] },
+  { key: 'sohu', logName: 'sohu', factory: () => new SohuSource(), deps: [] },
+  { key: 'leshi', logName: 'leshi', factory: () => new LeshiSource(), deps: [] },
+  { key: 'xigua', logName: 'xigua', factory: () => new XiguaSource(), deps: [] },
+  { key: 'maiduidui', logName: 'maiduidui', factory: () => new MaiduiduiSource(), deps: [] },
+  { key: 'hongguo', logName: 'hongguo', factory: () => new HongguoSource(), deps: [] },
+  { key: 'bahamut', logName: 'bahamut', factory: () => new BahamutSource(), deps: [] },
+  { key: 'dandan', logName: 'dandan', factory: () => new DandanSource(), deps: [] },
 ];
 
 // ---- 实例缓存（按 key 索引）----

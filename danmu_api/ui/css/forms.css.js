@@ -1,5 +1,5 @@
 // language=CSS
-export const formsCssContent = /* css */ `
+export const formsCssContent = `
 /* 表单控件样式 — 保持 danmu_api 原有交互形态 + Bangumi-syncer 配色 */
 
 /* ============ 表单基础 ============ */

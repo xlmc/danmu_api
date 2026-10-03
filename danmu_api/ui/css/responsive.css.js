@@ -1,5 +1,5 @@
 // language=CSS
-export const responsiveCssContent = /* css */ `
+export const responsiveCssContent = `
 /* 响应式 — 参照 Bangumi-syncer 多断点策略 */
 
 /* ============ 平板 (<= 992px) ============ */
@@ -90,11 +90,6 @@ export const responsiveCssContent = /* css */ `
 
     .env-actions {
         width: 100%;
-    }
-
-    .favorite-action-btn {
-        max-width: none;
-        flex-basis: 100%;
     }
 
     .btn {
@@ -245,17 +240,11 @@ export const responsiveCssContent = /* css */ `
     margin-top: 5px;
     flex-wrap: wrap;
 }
-
-/* 手机端：输入框独占第一行，收藏和搜索按钮并排 */
 @media (max-width: 500px) {
     .search-actions input {
         flex-basis: 100%;
         min-width: 100%;
         order: 1;
-    }
-    .search-actions .favorite-action-btn {
-        flex: 1;
-        order: 2;
     }
     .search-actions #manual-search-btn {
         flex: 1;

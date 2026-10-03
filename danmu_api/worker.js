@@ -1,18 +1,19 @@
+import { initializePersistentCaches } from './utils/persistent-cache-util.js';
 import { Globals } from './configs/globals.js';
 import { jsonResponse } from './utils/http-util.js';
 import { log, formatLogMessage } from './utils/log-util.js'
-import { getFavoriteCachesFromRedis, judgeRedisValid, initializePersistentCaches } from "./utils/redis-util.js";
+
 import { cleanupExpiredIPs, findUrlById, getCommentCache, judgeLocalCacheValid } from "./utils/cache-util.js";
 import { formatDanmuResponse } from "./utils/danmu-util.js";
-import AIClient from './utils/ai-util.js';
+
 import { getBangumi, getComment, getCommentByUrl, getSegmentComment, matchAnime, searchAnime, searchEpisodes } from "./apis/dandan-api.js";
-import { handleFavoriteAdd, handleFavoriteList, handleFavoriteRefresh, handleFavoriteRemove, handleFavoriteSchedule } from "./apis/favorite-api.js";
+
 import { getFongmiDanmaku } from "./apis/clients/fongmi-api.js";
-import { handleConfig, handleUI, handleLogs, handleClearLogs, handleDeploy, handleClearCache, handleReqRecords, handleCacheAnimes, handleRemoteMappingLogs, handleRemoteMappingRefresh, handleRemoteAutoMatchMappingRefresh } from "./apis/system-api.js";
-import { handleForwardTrace } from "./apis/forward-trace-api.js";
-import { handleSetEnv, handleAddEnv, handleDelEnv, handleAiVerify, handleDandanplayVerify } from "./apis/env-api.js";
-import { handleLocalDanmuUpload, handleLocalDanmuList, handleLocalDanmuGet, handleLocalDanmuDelete, handleLocalDanmuUpdate } from "./apis/local-danmu-api.js";
-import { extendBangumiDownloadLifecycle } from "./utils/bangumi-data-util.js";
+import { handleConfig, handleUI, handleLogs, handleClearLogs, handleClearCache, handleReqRecords, handleCacheAnimes, handleRemoteMappingLogs, handleRemoteMappingRefresh, handleRemoteAutoMatchMappingRefresh } from "./apis/system-api.js";
+
+import { handleSetEnv, handleAddEnv, handleDelEnv } from './apis/env-api.js';
+
+
 import { Segment } from "./models/dandan-model.js"
 import {
     handleCookieStatus,
@@ -34,25 +35,6 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   const isLogReadRequest = method === 'GET' && /(?:^|\/)api\/logs(?:\/remote-mapping)?\/?$/.test(path);
 
   globals.deployPlatform = deployPlatform;
-  if (deployPlatform === "node") {
-    await judgeLocalCacheValid(path, deployPlatform);
-    const { judgeLocalRedisValid } = await import("./utils/local-redis-util.js");
-    await judgeLocalRedisValid(path);
-  }
-  await judgeRedisValid(path);
-  if (!globals.aiValid && globals.aiBaseUrl && globals.aiModel && globals.aiApiKey && path !== "/favicon.ico" && path !== "/robots.txt") {
-    const ai = new AIClient({
-      baseURL: globals.aiBaseUrl,
-      model: globals.aiModel,
-      apiKey: globals.aiApiKey,
-      systemPrompt: '回答尽量简洁',
-    })
-
-    const status = await ai.verify()
-    if (status.ok) {
-      globals.aiValid = true;
-    }
-  }
 
   if (!isLogReadRequest) {
     log("info", `[system] [server] request url: ${JSON.stringify(url)}`);
@@ -61,21 +43,12 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   }
 
   // --- IP 黑名单拦截 ---
-  if (globals.ipBlacklist?.length) {
-    const isBlocked = globals.ipBlacklist.some(rule => matchIpBlacklistRule(rule, clientIp));
-    if (isBlocked) {
-      log("warn", `[system] [IP Blacklist] Blocked request from IP: ${clientIp}`);
-      return jsonResponse(
-        { errorCode: 403, success: false, errorMessage: "Forbidden" },
-        403
-      );
-    }
-  }
+
 
   // --- 校验 token ---
   const parts = path.split("/").filter(Boolean); // 去掉空段
 
-  const knownApiPaths = ["api", "v1", "v2", "search", "match", "favorite", "bangumi", "comment", "danmaku", "local-danmu"];
+  const knownApiPaths = ["api", "v1", "v2", "search", "match", "bangumi", "comment", "danmaku"];
 
   const firstPart = parts[0] || "";
   const tokenAuthDisabled = globals.tokenAuthDisabled === true;
@@ -87,51 +60,18 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   globals.currentToken = tokenAuthDisabled ? "" : (
     isValidToken ? firstPart :
-    isDefaultToken && (firstPart === "87654321" || knownApiPaths.includes(firstPart)) ? 
+    isDefaultToken && (firstPart === "87654321" || knownApiPaths.includes(firstPart)) ?
       (firstPart === "87654321" ? firstPart : "87654321") :
     "");
 
-  // 自定义 TOKEN 时收藏接口必须显式携带 token；默认 TOKEN=87654321 时保持无 token 兼容。
   // FAVORITE_REQUIRE_ADMIN 开启后，无论 TOKEN 是否为默认值，都只能使用 ADMIN_TOKEN。
-  const tokenlessPath = explicitToken ? "/" + parts.slice(1).join("/") : path;
-  const isFavoriteRequest = /(?:^|\/)favorite(?:\/|$)/.test(tokenlessPath);
-  const isFavoriteListRequest = method === "GET"
-    && /^\/(?:api\/v2\/|api\/|v2\/)?favorite\/list$/.test(tokenlessPath);
-  if (method !== "OPTIONS" && isFavoriteRequest && !isFavoriteListRequest) {
-    if (!tokenAuthDisabled && !explicitToken && !isDefaultToken) {
-      return jsonResponse(
-        { errorCode: 401, success: false, errorMessage: "Favorite API requires an explicit token" },
-        401
-      );
-    }
-    if (globals.favoriteRequireAdmin && (!globals.adminToken || explicitToken !== globals.adminToken)) {
-      return jsonResponse(
-        { errorCode: 403, success: false, message: "权限不足", errorMessage: "Favorite API requires ADMIN_TOKEN" },
-        403
-      );
-    }
-  }
 
-  if (path !== '/favicon.ico' && path !== '/robots.txt' && method !== 'OPTIONS') {
-    const persistentCachesReady = await initializePersistentCaches(deployPlatform);
-    let favoriteReadSucceeded = true;
-    if (globals.redisValid && deployPlatform !== 'node' && isFavoriteRequest) {
-      favoriteReadSucceeded = await getFavoriteCachesFromRedis();
-    }
-    if (isFavoriteRequest && !isFavoriteListRequest && (
-      !persistentCachesReady || !favoriteReadSucceeded || (globals.redisUrl && globals.redisToken && globals.favoriteCacheWritable.upstash === false)
-      || (globals.localCacheValid && globals.favoriteCacheWritable.file === false)
-      || (deployPlatform !== 'node' && globals.redisUrl && globals.redisToken && !globals.redisValid)
-    )) {
-      return jsonResponse({ success: false, message: '收藏缓存暂时无法读取，本次修改未执行，请稍后重试' }, 503);
-    }
-  }
+  await initializePersistentCaches();
 
   // 检查路径是否包含指定的接口关键字
   const targetPaths = [
     '/api/v2/search/anime',
     '/api/v2/match',
-    '/api/v2/favorite',
     '/api/v2/search/episodes',
     '/api/v2/fongmi/danmaku',
     '/danmaku',
@@ -258,8 +198,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       if (path === "/api/config" && method === "GET") {
         return handleConfig(false); // 无权限
       }
-      // 收藏列表是公开只读接口；其他接口仍需严格校验 token
-      if (!isFavoriteListRequest) {
+      {
         log("error", `[system] [server] Invalid or missing token in path: ${path}`);
         return jsonResponse(
           { errorCode: 401, success: false, errorMessage: "Unauthorized" },
@@ -284,22 +223,11 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     return handleConfig(true); // 有权限
   }
 
-  const isLocalDanmuUpload = (path === '/api/local-danmu/upload' || path === '/api/v2/local-danmu/upload') && method === 'POST';
-  const isLocalDanmuList = (path === '/api/local-danmu/list' || path === '/api/v2/local-danmu/list') && method === 'GET';
-  const localResourceMatch = path.match(/^\/api(?:\/v2)?\/local-danmu\/([^/]+)$/);
-  if (isLocalDanmuUpload || isLocalDanmuList || (localResourceMatch && (method === 'GET' || method === 'DELETE' || method === 'PATCH'))) {
-    const isAdmin = !!globals.adminToken && globals.currentToken === globals.adminToken;
-    const isUser = !!globals.token && globals.currentToken === globals.token;
-    if (!isAdmin && !isUser) return jsonResponse({ errorCode: 401, success: false, errorMessage: 'Unauthorized' }, 401);
-    if ((isLocalDanmuUpload || method === 'DELETE' || method === 'PATCH') && !isAdmin && !globals.localDanmuNotRequireAdmin) {
-      return jsonResponse({ errorCode: 403, success: false, errorMessage: 'Local danmu upload and deletion require ADMIN_TOKEN or LOCAL_DANMU_NOT_REQUIRE_ADMIN=true' }, 403);
-    }
-    if (isLocalDanmuUpload) return handleLocalDanmuUpload(req);
-    if (isLocalDanmuList) return handleLocalDanmuList();
-    const key = decodeURIComponent(localResourceMatch[1]);
-    if (method === 'GET') return handleLocalDanmuGet(key);
-    if (method === 'PATCH') return handleLocalDanmuUpdate(req, key);
-    return handleLocalDanmuDelete(key);
+  if (method === 'POST' && (path.startsWith('/api/env/') || path === '/api/cache/clear' || path === '/api/cookie/save')) {
+    const configAdmin = tokenAuthDisabled || (globals.adminToken
+      ? explicitToken === globals.adminToken
+      : (explicitToken === globals.token || isDefaultToken));
+    if (!configAdmin) return jsonResponse({ success: false, message: '需要 ADMIN_TOKEN 权限' }, 403);
   }
 
   // GET /api/reqrecords - 获取请求记录 (需要 token)
@@ -310,12 +238,8 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   if (!isLogReadRequest) log("info", `[system] [server] ${path}`);
 
   // 智能处理API路径前缀，确保最终有一个正确的 /api/v2
-  if (path !== "/" && path !== "/danmaku" && path !== "/api/logs" && !path.startsWith('/api/env') 
-    && !path.startsWith('/api/deploy') && !path.startsWith('/api/cache')
+  if (path !== "/" && path !== "/danmaku" && path !== "/api/logs" && !path.startsWith('/api/env') && !path.startsWith('/api/cache')
     && !path.startsWith('/api/cookie') && !path.startsWith('/api/config')
-    && !path.startsWith('/api/favorite')
-    && !path.startsWith('/api/ai') && !path.startsWith('/api/nipaplay')
-    && !path.startsWith('/api/debug') && !path.startsWith('/api/local-danmu')
     && !path.startsWith('/api/title-mapping') && !path.startsWith('/api/auto-match-mapping')) {
       log("info", `[system] [path check] Starting path normalization for: "${path}"`);
       const pathBeforeCleanup = path; // 保存清理前的路径检查是否修改
@@ -337,12 +261,9 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
       // 补全：如果路径缺少前缀（例如请求原始路径为 /search/anime 或 /v2/search/anime），则智能补全
       const pathBeforePrefixCheck = path;
-      if (!path.startsWith('/api/v2') && path !== '/' && !path.startsWith('/api/logs') 
+      if (!path.startsWith('/api/v2') && path !== '/' && !path.startsWith('/api/logs')
         && !path.startsWith('/api/env') && !path.startsWith('/api/cache')
         && !path.startsWith('/api/cookie') && !path.startsWith('/api/config')
-        && !path.startsWith('/api/favorite')
-        && !path.startsWith('/api/ai') && !path.startsWith('/api/nipaplay')
-        && !path.startsWith('/api/debug') && !path.startsWith('/api/local-danmu')
         && !path.startsWith('/api/title-mapping') && !path.startsWith('/api/auto-match-mapping')) {
           if (path.startsWith('/v2/') || path === '/v2') {
               log("info", `[system] [path check] Path is missing /api prefix. Adding /api...`);
@@ -393,31 +314,6 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   if (path === "/api/v2/match" && method === "POST") {
     return matchAnime(url, req, clientIp);
   }
-  // POST /api/v2/favorite/add - 收藏剧集（永久缓存）
-  if ((path === "/api/v2/favorite/add" || path === "/api/favorite/add") && method === "POST") {
-    return handleFavoriteAdd(req, url);
-  }
-
-  // POST /api/v2/favorite/refresh - 刷新收藏缓存
-  if ((path === "/api/v2/favorite/refresh" || path === "/api/favorite/refresh") && method === "POST") {
-    return handleFavoriteRefresh(req, url);
-  }
-
-  // POST /api/v2/favorite/schedule - 设置或关闭定时刷新
-  if ((path === "/api/v2/favorite/schedule" || path === "/api/favorite/schedule") && method === "POST") {
-    return handleFavoriteSchedule(req);
-  }
-
-  // POST /api/v2/favorite/remove - 删除收藏
-  if ((path === "/api/v2/favorite/remove" || path === "/api/favorite/remove") && method === "POST") {
-    return handleFavoriteRemove(req);
-  }
-
-  // GET /api/v2/favorite/list - 收藏列表
-  if ((path === "/api/v2/favorite/list" || path === "/api/favorite/list") && method === "GET") {
-    return handleFavoriteList();
-  }
-
 
   // GET /api/v2/bangumi/:animeId
   if (path.startsWith("/api/v2/bangumi/") && method === "GET") {
@@ -603,15 +499,6 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     return handleRemoteAutoMatchMappingRefresh();
   }
 
-  if (path === '/api/debug/forward-trace') {
-    if (!isValidToken) {
-      return jsonResponse({ success: false, errorMessage: 'Explicit token required for Forward traces' }, 401);
-    }
-    if (method === 'POST') {
-      return handleForwardTrace(req);
-    }
-  }
-
   // POST /api/logs/clear
   if (path === "/api/logs/clear" && method === "POST") {
     return handleClearLogs();
@@ -633,9 +520,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   }
 
   // POST /api/deploy - 重新部署
-  if (path === "/api/deploy" && method === "POST") {
-    return handleDeploy();
-  }
+
 
   // GET /api/cache/animes - 获取最近 animes 缓存
   if (path === "/api/cache/animes" && method === "GET") {
@@ -674,204 +559,12 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     return handleCookieSave(req);
   }
 
-  // POST /api/ai/verify - 验证AI连通性
-  if (path === "/api/ai/verify" && method === "POST") {
-    return handleAiVerify(req);
-  }
+
 
   // POST /api/nipaplay/verify - 验证弹弹play账号连通性
-  if (path === "/api/nipaplay/verify" && method === "POST") {
-    return handleDandanplayVerify(req);
-  }
+
 
   return jsonResponse({ message: "Not found" }, 404);
 }
 
-function matchIpBlacklistRule(rule, clientIp) {
-  if (!rule || !clientIp || clientIp === 'unknown') return false;
-
-  if (rule.type === 'exact') {
-    return rule.value === clientIp;
-  }
-
-  if (rule.type === 'regex') {
-    return rule.value.test(clientIp);
-  }
-
-  if (rule.type === 'cidr') {
-    return isIpInCidr(clientIp, rule.ip, rule.prefix);
-  }
-
-  return false;
-}
-
-function isIpInCidr(ip, cidrIp, prefix) {
-  const isIpv6 = ip.includes(':') || cidrIp.includes(':');
-  if (isIpv6) {
-    const ipBytes = ipv6ToBytes(ip);
-    const cidrBytes = ipv6ToBytes(cidrIp);
-    if (!ipBytes || !cidrBytes || prefix < 0 || prefix > 128) return false;
-    const fullBytes = Math.floor(prefix / 8);
-    const remainingBits = prefix % 8;
-
-    for (let i = 0; i < fullBytes; i++) {
-      if (ipBytes[i] !== cidrBytes[i]) return false;
-    }
-
-    if (remainingBits > 0) {
-      const mask = (0xff << (8 - remainingBits)) & 0xff;
-      return (ipBytes[fullBytes] & mask) === (cidrBytes[fullBytes] & mask);
-    }
-
-    return true;
-  }
-
-  const ipInt = ipv4ToInt(ip);
-  const cidrInt = ipv4ToInt(cidrIp);
-  if (ipInt === null || cidrInt === null || prefix < 0 || prefix > 32) return false;
-  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
-  return (ipInt & mask) === (cidrInt & mask);
-}
-
-function ipv4ToInt(ip) {
-  const parts = ip.split('.');
-  if (parts.length !== 4) return null;
-  const nums = parts.map(part => Number(part));
-  if (nums.some(num => Number.isNaN(num) || num < 0 || num > 255)) return null;
-  return ((nums[0] << 24) >>> 0) + (nums[1] << 16) + (nums[2] << 8) + nums[3];
-}
-
-function ipv6ToBytes(ip) {
-  if (!ip || typeof ip !== 'string' || !ip.includes(':')) return null;
-  const normalized = ip.trim();
-  const segments = normalized.split('::');
-  if (segments.length > 2) return null;
-
-  let leftParts = segments[0] ? segments[0].split(':').filter(Boolean) : [];
-  let rightParts = segments[1] ? segments[1].split(':').filter(Boolean) : [];
-
-  const expandIpv4Part = (parts) => {
-    if (parts.length === 0) return parts;
-    const last = parts[parts.length - 1];
-    if (!last.includes('.')) return parts;
-    const ipv4Int = ipv4ToInt(last);
-    if (ipv4Int === null) return null;
-    const high = ((ipv4Int >>> 16) & 0xffff).toString(16);
-    const low = (ipv4Int & 0xffff).toString(16);
-    return [...parts.slice(0, -1), high, low];
-  };
-
-  leftParts = expandIpv4Part(leftParts);
-  rightParts = expandIpv4Part(rightParts);
-  if (!leftParts || !rightParts) return null;
-
-  if (segments.length === 1) {
-    if (leftParts.length !== 8) return null;
-  } else {
-    const totalParts = leftParts.length + rightParts.length;
-    if (totalParts > 8) return null;
-    const missing = 8 - totalParts;
-    rightParts = new Array(missing).fill('0').concat(rightParts);
-  }
-
-  const parts = leftParts.concat(rightParts);
-  if (parts.length !== 8) return null;
-
-  const bytes = [];
-  for (const part of parts) {
-    if (!/^[0-9a-fA-F]{1,4}$/.test(part)) return null;
-    const value = parseInt(part, 16);
-    bytes.push((value >> 8) & 0xff, value & 0xff);
-  }
-
-  return bytes;
-}
-
-function isRunningOnVercel() {
-  if (typeof process === 'undefined' || !process.env) {
-    return false;
-  }
-  return !!(
-    process.env.VERCEL ||
-    process.env.VERCEL_ENV ||
-    process.env.VERCEL_URL
-  );
-}
-
-function detectDeployPlatform(env) {
-  if (env?.SPACE_ID || (typeof process !== 'undefined' && process.env?.SPACE_ID)) {
-    return "huggingface";
-  }
-  return isRunningOnVercel() ? "vercel" : "cloudflare";
-}
-
-// --- Cloudflare Workers 入口 ---
-export default {
-  async fetch(request, env, ctx) {
-    // 获取客户端的真实 IP
-    const clientIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || 'unknown';
-
-    const response = await handleRequest(request, env, detectDeployPlatform(env), clientIp);
-    // 边缘运行时在响应返回后延长生命周期，容纳可能在途的 Bangumi Data 后台静默下载
-    extendBangumiDownloadLifecycle(ctx);
-    return response;
-  },
-};
-
-// --- Vercel 入口 ---
-export async function vercelHandler(req, res) {
-  // 从请求头获取真实 IP
-  const clientIp = req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
-
-  const cfReq = new Request(req.url, {
-    method: req.method,
-    headers: req.headers,
-    body:
-      req.method === "POST" || req.method === "PUT"
-        ? JSON.stringify(req.body)
-        : undefined,
-  });
-
-  const response = await handleRequest(cfReq, process.env, "vercel", clientIp);
-
-  res.status(response.status);
-  response.headers.forEach((value, key) => res.setHeader(key, value));
-  const text = await response.text();
-  res.send(text);
-}
-
-// --- Netlify 入口 ---
-export async function netlifyHandler(event, context) {
-  // 获取客户端 IP
-  const clientIp = event.headers['x-nf-client-connection-ip'] ||
-                   event.headers['x-forwarded-for'] ||
-                   context.ip ||
-                   'unknown';
-
-  // 构造标准 Request 对象
-  const url = event.rawUrl || `https://${event.headers.host}${event.path}`;
-
-  const request = new Request(url, {
-    method: event.httpMethod,
-    headers: new Headers(event.headers),
-    body: event.body ? event.body : undefined,
-  });
-
-  // 调用核心处理函数
-  const response = await handleRequest(request, process.env, "netlify", clientIp);
-
-  // 转换为 Netlify 响应格式
-  const headers = {};
-  response.headers.forEach((value, key) => {
-    headers[key] = value;
-  });
-
-  return {
-    statusCode: response.status,
-    headers,
-    body: await response.text(),
-  };
-}
-
-// 为了测试导出 handleRequest
-export { handleRequest};
+export { handleRequest };

@@ -1,8 +1,9 @@
+import { isSupportedSource, isSupportedLocation, pruneSourcePreferences } from '../sources/policy.js';
 import { globals } from '../configs/globals.js';
 import { log } from './log-util.js'
 import { Anime } from "../models/dandan-model.js";
 import { simpleHash } from "./codec-util.js";
-import { loadFavorites, resolveFavoriteForSearchKeyword, saveFavorites } from "./favorite-util.js";
+
 let fs, path;
 let nodeModulesPromise;
 async function loadFileCacheModules() {
@@ -120,9 +121,7 @@ function sweepExpiredCache(cacheMap, cacheMinutes, cacheName) {
     let sweptCount = 0;
 
     for (const [key, entry] of cacheMap.entries()) {
-        if (cacheMap === globals.searchCache && globals.favoriteCache instanceof Map && globals.favoriteCache.has(key)) {
-            continue;
-        }
+
         const ageMinutes = (now - entry.timestamp) / (1000 * 60);
         if (ageMinutes > cacheMinutes) {
             cacheMap.delete(key);
@@ -179,25 +178,7 @@ function* iterateSearchCacheDetails() {
         }
     }
 
-    // 收藏剧集的详情也纳入解析范围（永久缓存）
-    if (globals.favoriteCache instanceof Map) {
-        for (const cached of globals.favoriteCache.values()) {
-            if (!Array.isArray(cached.details)) {
-                continue;
-            }
 
-            for (const anime of cached.details) {
-                const identityKey = getAnimeIdentityKey(anime);
-                if (identityKey && seen.has(identityKey)) {
-                    continue;
-                }
-                if (identityKey) {
-                    seen.add(identityKey);
-                }
-                yield anime;
-            }
-        }
-    }
 }
 
 export function resolveAnimeById(id, detailStore = null, source = null) {
@@ -291,11 +272,9 @@ export function resolveEpisodeContextById(id, detailStore = null) {
 }
 // 检查搜索缓存是否有效（未过期）
 export function isSearchCacheValid(keyword) {
-    if (resolveFavoriteForSearchKeyword(keyword)) {
-        return true;
-    }
 
-    if (!globals.searchCache.has(keyword)) {
+
+    if (globals.searchCacheMinutes <= 0 || !globals.searchCache.has(keyword)) {
         return false;
     }
 
@@ -315,18 +294,6 @@ export function isSearchCacheValid(keyword) {
 
 // 获取搜索缓存
 export function getSearchCache(keyword, detailsMap = null) {
-    // 收藏剧集永久缓存优先命中（无 TTL、无数量上限）
-    const favorite = resolveFavoriteForSearchKeyword(keyword);
-    if (favorite) {
-        const favoriteEntry = favorite.entry;
-        log("info", `[cache] Using favorite cache for "${keyword}"`);
-        if (detailsMap instanceof Map && Array.isArray(favoriteEntry.details)) {
-            favoriteEntry.details.forEach(anime => {
-                storeAnimeDetail(detailsMap, anime);
-            });
-        }
-        return favoriteEntry.results;
-    }
 
     if (isSearchCacheValid(keyword)) {
         log("info", `[cache] Using search cache for "${keyword}"`);
@@ -345,6 +312,7 @@ export function getSearchCache(keyword, detailsMap = null) {
 
 // 设置搜索缓存
 export function setSearchCache(keyword, results, detailsMap = null) {
+    if (globals.searchCacheMinutes <= 0) return;
     const details = collectUniqueAnimeDetails(detailsMap);
 
     // 写入前先清理所有过期条目
@@ -368,7 +336,7 @@ export function setSearchCache(keyword, results, detailsMap = null) {
 
 // 检查弹幕缓存是否有效（未过期）
 export function isCommentCacheValid(videoUrl) {
-    if (!globals.commentCache.has(videoUrl)) {
+    if (globals.commentCacheMinutes <= 0 || !globals.commentCache.has(videoUrl)) {
         return false;
     }
 
@@ -406,6 +374,7 @@ export function getCommentCache(videoUrl) {
 
 // 设置弹幕缓存
 export function setCommentCache(videoUrl, comments) {
+    if (globals.commentCacheMinutes <= 0) return;
     // 写入前先清理所有过期条目
     sweepExpiredCache(globals.commentCache, globals.commentCacheMinutes, 'commentCache');
 
@@ -438,9 +407,7 @@ export function getEpisodeIdFloor() {
     };
     globals.episodeIds.forEach(include);
     includeDetails(globals.animes);
-    if (globals.favoriteCache instanceof Map) {
-        for (const cached of globals.favoriteCache.values()) includeDetails(cached?.details);
-    }
+
     const now = Date.now();
     if (globals.searchCache instanceof Map) {
         for (const cached of globals.searchCache.values()) {
@@ -686,9 +653,9 @@ export function removeEarliestAnime() {
 // 将所有动漫的 animeId 存入 lastSelectMap 的 animeIds 数组中
 export function storeAnimeIdsToMap(curAnimes, key) {
     const uniqueAnimeIds = new Set();
-    
+
     const oldValue = globals.lastSelectMap.get(key);
-    
+
     // 保留旧的 animeIds，确保包含全量季度的 ID 列表不被单季度搜索结果覆盖
     if (oldValue && Array.isArray(oldValue.animeIds)) {
         for (const id of oldValue.animeIds) {
@@ -864,7 +831,7 @@ export const queryCacheKeys = [
 
 // 业务可以降级到内存；未成功读取的后端在本进程内保持只读，避免覆盖未知快照。
 export function canPersistCacheKey(key, backend) {
-  if (key === 'favoriteCache' || key === 'favoritesCache') return globals.favoriteCacheWritable[backend] !== false;
+
   return !queryCacheKeys.includes(key)
     || (globals.queryCacheInitialized && globals.queryCacheWritable[backend] === true);
 }
@@ -919,6 +886,15 @@ export async function restoreQueryCache(backend, read, hashes, restored = {}, is
     }
     episodes.set(episode.id, episode);
   }
+  // Discard retired providers while retaining the maximum allocated ID.
+  if (Array.isArray(data.animes)) data.animes = data.animes.filter(anime =>
+    String(anime.source || '').split(/[＆&]/).every(isSupportedSource) &&
+    (anime.links || []).every(link => String(link.url || '').split('$$$').every(url => isSupportedLocation(url, anime.source))));
+  for (const [id, episode] of episodes) if (!isSupportedLocation(episode.url)) {
+    const owner = (data.animes || []).find(anime => anime.links?.some(link => link.id === id));
+    if (!owner) episodes.delete(id);
+  }
+  if (data.lastSelectMap) data.lastSelectMap = Object.fromEntries(Object.entries(data.lastSelectMap).map(([key, value]) => [key, pruneSourcePreferences(value)]).filter(([, value]) => value !== null));
   // 校验整个后端后才提交计数器和 hash；无效快照不能先污染全局状态。
   globals.episodeNum = maxId;
   restored.idFloorKnown ||= data.episodeNum !== undefined || episodes.size > 0;
@@ -1038,25 +1014,7 @@ export async function getLocalCaches(restored = {}) {
     log('error', `[cache] 查询缓存恢复失败: ${error.message}`);
     success = false;
   }
-  if (!globals.localCacheInitialized) {
-    globals.favoriteCacheWritable.file = false;
-    try {
-      await loadFileCacheModules();
-      const raw = readCacheFromFile('favoritesCache');
-      if (raw !== null) {
-        const value = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('收藏缓存数据类型无效');
-        loadFavorites(value);
-        globals.localFileHashes.favoriteCache = simpleHash(JSON.stringify(saveFavorites()));
-      }
-      globals.favoriteCacheWritable.file = true;
-    } catch (error) {
-      log('error', `[cache] 收藏缓存恢复失败，暂停文件收藏写入至重启: ${error.message}`);
-      success = false;
-    } finally {
-      globals.localCacheInitialized = true;
-    }
-  }
+
   return success;
 }
 
@@ -1077,7 +1035,6 @@ export async function updateLocalCaches({ keys, force = false } = {}) {
       { key: 'reqRecords', value: globals.reqRecords },
       { key: 'lastSelectMap', value: globals.lastSelectMap },
       { key: 'todayReqNum', value: globals.todayReqNum },
-      { key: 'favoritesCache', value: globals.favoriteCache }
     ];
 
     for (const { key, value } of variables) {
@@ -1086,11 +1043,9 @@ export async function updateLocalCaches({ keys, force = false } = {}) {
       // 对于 lastSelectMap（Map 对象），需要转换为普通对象后再序列化
       const serializedValue = key === 'lastSelectMap'
         ? JSON.stringify(Object.fromEntries(value))
-        : key === 'favoritesCache'
-          ? JSON.stringify(saveFavorites())
-          : JSON.stringify(value);
+        : JSON.stringify(value);
       const currentHash = simpleHash(serializedValue);
-      const hashKey = key === 'favoritesCache' ? 'favoriteCache' : key;
+      const hashKey = key;
       if (force || currentHash !== globals.localFileHashes[hashKey]) {
         if (!writeCacheToFile(key, serializedValue, { force })) { saved = false; continue; }
         globals.localFileHashes[hashKey] = currentHash;

@@ -1,5 +1,5 @@
 // language=CSS
-export const themesCssContent = /* css */ `
+export const themesCssContent = `
 /* 设计令牌与七色主题 + 独立明暗切换 — 参照 Bangumi-syncer 柔和圆角设计风格 */
 
 /* ============ 全局设计令牌 ============ */

@@ -5,7 +5,7 @@ import { HTML_TEMPLATE } from "../ui/template.js";
 import { formatLogMessage, log } from "../utils/log-util.js";
 import { getRemoteMappingLogText, refreshRemoteTitleMappingNow } from "../utils/title-mapping-url-util.js";
 import { refreshRemoteAutoMatchMappingNow } from "../utils/auto-match-mapping-url-util.js";
-import { HandlerFactory } from "../configs/handlers/handler-factory.js";
+
 import { clearBangumiDataCache, initBangumiData } from "../utils/bangumi-data-util.js";
 
 const UI_THEMES = new Set([
@@ -18,14 +18,10 @@ function resolveUiTheme(theme) {
 }
 
 export function handleUI() {
-  const localDanmuCanUpload = globals.localDanmuNotRequireAdmin
-    || (!!globals.adminToken && globals.currentToken === globals.adminToken);
+
   const html = HTML_TEMPLATE
     .replace("globals.currentToken", () => globals.currentToken)
-    .replace("globals.uiTheme", resolveUiTheme(globals.uiTheme))
-    .replace("globals.localDanmuCanUpload", String(localDanmuCanUpload))
-    .replace("globals.localDanmuRedisValid", String(globals.redisValid === true))
-    .replace("globals.localDanmuIsCloud", String(Boolean(globals.deployPlatform && globals.deployPlatform.toLowerCase() !== 'node')));
+    .replace("globals.uiTheme", resolveUiTheme(globals.uiTheme));
 
   return new Response(html, {
     headers: {
@@ -38,7 +34,7 @@ export function handleUI() {
 export function handleConfig(hasPermission = false) {
   // 获取环境变量配置
   const envVarConfig = globals.envVarConfig;
-  
+
   // 分类环境变量
   const categorizedVars = {
     api: [],
@@ -48,22 +44,20 @@ export function handleConfig(hasPermission = false) {
     cache: [],
     system: []
   };
-  
+
   // 获取所有环境变量 - 这是用于配置预览的
   const previewEnvVars = {
     ...globals.accessedEnvVars,
     localCacheValid: globals.localCacheValid,
-    redisValid: globals.redisValid,
     localRedisValid: globals.localRedisValid,
-    aiValid: globals.aiValid,
     deployPlatform: globals.deployPlatform
   };
-  
+
   // 将环境变量按分类组织 - 使用原始环境变量进行分类，但保持预览格式
   Object.keys(previewEnvVars).forEach(key => {
     const varConfig = envVarConfig[key] || { category: 'system', type: 'text', description: '未分类配置项' };
     const category = varConfig.category || 'system';
-    
+
     categorizedVars[category].push({
       key: key,
       value: previewEnvVars[key].value || previewEnvVars[key], // 如果是新格式则取value字段，否则直接使用原值
@@ -72,11 +66,11 @@ export function handleConfig(hasPermission = false) {
       options: previewEnvVars[key].options || varConfig.options // 如果是新格式则取options字段
     });
   });
-  
+
   // 检查是否配置了ADMIN_TOKEN
   const adminToken = globals.adminToken || '';
   const hasAdminToken = adminToken.trim() !== '';
-  
+
   // 准备原始环境变量，无权限时也需要脱敏。
   // 未配置 ADMIN_TOKEN 时，普通 TOKEN 就是配置管理令牌；只有明确配置
   // ADMIN_TOKEN 后，才要求使用 ADMIN_TOKEN 才能读取完整配置。
@@ -96,7 +90,7 @@ export function handleConfig(hasPermission = false) {
       }
     });
   }
-  
+
   return jsonResponse({
     message: "Welcome to the LogVar Danmu API server",
     version: globals.VERSION,
@@ -115,38 +109,7 @@ export function handleConfig(hasPermission = false) {
  * 处理重新部署请求
  * @returns {Response} 部署操作结果
  */
-export async function handleDeploy() {
-  try {
-    const deployPlatform = globals.deployPlatform;
-    log("info", `[system] [server] Deployment request received for platform: ${deployPlatform}`);
-    
-    // 如果是 Node 部署，直接返回成功，因为 Node 环境不需要重新部署
-    if (deployPlatform.toLowerCase() === 'node') {
-      log("info", `[system] [server] Node/Docker deployment - no redeployment needed, config changes take effect automatically`);
-      return jsonResponse({ success: true, message: "Node/Docker deployment - configuration changes take effect automatically" }, 200);
-    }
-    
-    // 对于其他平台（如 Cloudflare、Vercel、Netlify 等），使用相应的 Handler 触发部署
-    const handler = await HandlerFactory.getHandler(deployPlatform);
-    if (!handler) {
-      log("error", `[system] [server] No handler found for platform: ${deployPlatform}`);
-      return jsonResponse({ success: false, message: `No handler found for platform: ${deployPlatform}` }, 400);
-    }
-    
-    // 调用 handler 的 deploy 方法
-    const deployResult = await handler.deploy();
-    if (deployResult) {
-      log("info", `[system] [server] Deployment triggered successfully for platform: ${deployPlatform}`);
-      return jsonResponse({ success: true, message: "Deployment triggered successfully" }, 200);
-    } else {
-      log("error", `[system] [server] Failed to trigger deployment for platform: ${deployPlatform}`);
-      return jsonResponse({ success: false, message: "Failed to trigger deployment" }, 500);
-    }
-  } catch (error) {
-    log("error", `[system] [server] Deployment error: ${error.message}`);
-    return jsonResponse({ success: false, message: `Deployment failed: ${error.message}` }, 500);
-  }
-}
+
 
 /**
  * 处理获取日志的请求
@@ -168,7 +131,7 @@ export function handleLogs(format = 'text') {
         `[${log.timestamp}] ${log.level}: ${formatLogMessage(log.message)}`
     )
     .join("\n");
-    
+
   // 检查当前 token 是否为 admin_token
   let processedLogText = logText;
   if (globals.currentToken !== globals.adminToken) {
@@ -179,7 +142,7 @@ export function handleLogs(format = 'text') {
       return prefix + maskedIp;
     });
   }
-  
+
   return new Response(processedLogText, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
 }
 
@@ -271,7 +234,6 @@ export async function handleClearCache(req) {
     if (effectiveItems.includes('episodeNum')) globals.episodeNum = getEpisodeIdFloor();
     log("info", `[system] [server] Memory cache cleared successfully`);
 
-    // 显式清理仅写选中键，不携带默认收藏或未读取的其他查询数据。
     const keys = queryCacheKeys.filter(key => effectiveItems.includes(key)
       || (effectiveItems.includes('requestHistory') && ['reqRecords', 'todayReqNum'].includes(key)));
     const failedBackends = [];
@@ -279,7 +241,6 @@ export async function handleClearCache(req) {
     if (keys.length) {
       const targets = [
         ['file', globals.localCacheValid && globals.localCacheEnabled !== false, async () => (await import('../utils/cache-util.js')).updateLocalCaches({ keys, force: true })],
-        ['upstash', globals.redisUrl && globals.redisToken, async () => (await import('../utils/redis-util.js')).updateRedisCaches({ keys, force: true, timeoutMs: 5000 })],
         ['localRedis', globals.deployPlatform === 'node' && globals.localRedisUrl, async () => (await import('../utils/local-redis-util.js')).updateLocalRedisCaches({ keys, force: true, timeoutMs: 5000 })]
       ];
       // 各后端独立清理，网络等待不串行累加；按固定顺序汇总部分失败。
@@ -358,7 +319,7 @@ export function handleReqRecords() {
   // 返回请求记录，按时间倒序排列（最新的在前）
   let records = [...globals.reqRecords].reverse();
   const todayReqNum = globals.todayReqNum || 0;
-  
+
   // 非 admin token 时，对请求记录脱敏：IP / 接口查询值 / 请求体值
   if (globals.currentToken !== globals.adminToken) {
     records = records.map(record => {
@@ -378,7 +339,7 @@ export function handleReqRecords() {
       return masked;
     });
   }
-  
+
   return jsonResponse({ records, todayReqNum }, 200);
 }
 
@@ -418,7 +379,7 @@ export function handleCacheAnimes() {
             return {
               ...child,
               episodes: child.episodeCount || child.episodes || 1,
-              links: fullLinks 
+              links: fullLinks
             };
           })
         };

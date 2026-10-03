@@ -1,5 +1,5 @@
 // language=CSS
-export const componentsCssContent = /* css */ `
+export const componentsCssContent = `
 /* 组件样式 — 参照 Bangumi-syncer 柔和圆角设计风格 */
 
 /* ============ 图标 ============ */
@@ -203,324 +203,6 @@ export const componentsCssContent = /* css */ `
 
 .btn:active {
     transform: scale(0.97);
-}
-
-.favorite-action-btn {
-    max-width: 260px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.favorite-action-btn:disabled,
-.favorite-action-btn:disabled:hover,
-body[data-theme] .favorite-action-btn:disabled,
-body[data-theme] .favorite-action-btn:disabled:hover {
-    background: #d1d5db !important;
-    color: #6b7280 !important;
-    border-color: #d1d5db !important;
-    cursor: not-allowed;
-    opacity: 1;
-    box-shadow: none;
-    transform: none;
-}
-
-.favorite-action-btn:disabled::before {
-    display: none;
-}
-
-.favorite-cover {
-    width: 78px;
-    height: auto;
-    flex: 0 0 auto;
-    align-self: stretch;
-    border-radius: 6px;
-    object-fit: cover;
-    background: #e5e7eb;
-}
-
-.favorite-info-row {
-    display: flex;
-    align-items: stretch;
-    gap: 12px;
-    min-width: 0;
-}
-
-.favorite-copy {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-}
-
-.favorite-meta {
-    color: #6b7280;
-    font-size: 12px;
-    line-height: 1.7;
-}
-
-.favorite-schedule-btn {
-    min-width: 92px;
-}
-
-.favorite-schedule-btn:disabled,
-.favorite-schedule-btn:disabled:hover,
-body[data-theme] .favorite-schedule-btn:disabled,
-body[data-theme] .favorite-schedule-btn:disabled:hover {
-    background: #d1d5db !important;
-    color: #6b7280 !important;
-    border-color: #d1d5db !important;
-    cursor: not-allowed;
-    opacity: 1;
-    box-shadow: none;
-    transform: none;
-}
-
-.favorite-schedule-hint {
-    color: #6b7280;
-    font-size: 13px;
-    margin: 0 0 16px;
-}
-
-.favorite-schedule-modal-content {
-    max-width: 460px;
-}
-
-.favorite-list {
-    margin-top: 8px;
-}
-
-.local-danmu-file-field input[type="file"] {
-    min-height: 48px;
-    padding: 6px;
-    border-radius: var(--app-radius-btn);
-    cursor: pointer;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.local-danmu-file-field input[type="file"]::file-selector-button {
-    margin-right: 12px;
-    padding: 9px 18px;
-    border: none;
-    border-radius: 10px;
-    background: linear-gradient(135deg, var(--theme-accent), var(--theme-accent-hover));
-    color: #ffffff;
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-    box-shadow: 0 2px 6px var(--theme-accent-soft);
-    transition: filter 0.2s ease, box-shadow 0.2s ease;
-}
-
-.local-danmu-file-field input[type="file"]::file-selector-button:hover {
-    filter: brightness(1.06);
-    box-shadow: 0 3px 10px var(--theme-accent-soft);
-}
-
-.local-danmu-file-field input[type="file"]::file-selector-button:active {
-    filter: brightness(0.96);
-}
-
-.local-danmu-file-hint {
-    margin: 7px 0 0;
-    color: var(--theme-muted);
-    font-size: 12px;
-    line-height: 1.6;
-}
-
-.local-danmu-fields {
-    display: grid;
-    grid-template-columns: minmax(190px, 2fr) repeat(4, minmax(100px, 1fr)) auto;
-    align-items: end;
-    gap: 12px;
-    margin-bottom: 12px;
-}
-
-.local-danmu-fields[data-batch="true"] {
-    grid-template-columns: minmax(190px, 2fr) repeat(3, minmax(100px, 1fr)) auto;
-}
-
-.local-danmu-fields .form-group {
-    display: flex;
-    flex-direction: column;
-    margin-bottom: 0;
-    min-width: 0;
-}
-
-.local-danmu-fields .form-group[hidden] {
-    display: none;
-}
-
-.local-danmu-fields .form-group label {
-    min-height: 18px;
-    margin-bottom: 6px;
-    line-height: 18px;
-    white-space: nowrap;
-}
-
-.local-danmu-fields .form-group input,
-.local-danmu-fields .form-group select {
-    box-sizing: border-box;
-    width: 100%;
-    height: 42px;
-    min-height: 42px;
-    margin: 0;
-    padding: 10px 14px;
-    font-family: inherit;
-    font-size: 13px;
-    line-height: 20px;
-}
-
-.local-danmu-fields select {
-    cursor: pointer;
-}
-
-.local-danmu-fields > button {
-    height: 42px;
-    min-height: 42px;
-}
-
-.local-danmu-batch-preview {
-    margin-top: 12px;
-}
-
-#local-danmu-upload-status {
-    overflow-wrap: anywhere;
-}
-
-.local-danmu-batch-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 90px minmax(120px, 0.65fr);
-    align-items: center;
-    gap: 12px;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--theme-border);
-}
-
-.local-danmu-batch-file {
-    min-width: 0;
-}
-
-.local-danmu-batch-episode {
-    margin: 0;
-}
-
-.local-danmu-batch-status {
-    color: var(--theme-muted);
-    font-size: 12px;
-    overflow-wrap: anywhere;
-}
-
-@media (max-width: 600px) {
-    .local-danmu-batch-row {
-        grid-template-columns: minmax(0, 1fr) 90px;
-    }
-    .local-danmu-batch-status {
-        grid-column: 1 / -1;
-    }
-}
-
-.local-danmu-search {
-    max-width: 480px;
-    margin: 18px 0 12px;
-}
-
-.local-danmu-group {
-    margin-bottom: 12px;
-    border: 1px solid var(--theme-border);
-    border-radius: var(--app-radius-card-sm);
-    background: var(--theme-input-bg);
-    overflow: hidden;
-}
-
-.local-danmu-group > summary {
-    padding: 14px 16px;
-    cursor: pointer;
-    color: var(--theme-text);
-    overflow-wrap: anywhere;
-}
-
-.local-danmu-group-actions {
-    display: flex;
-    gap: 8px;
-    margin: 0 16px 8px 34px;
-}
-
-.local-danmu-group > summary::marker {
-    color: var(--theme-accent);
-}
-
-.local-danmu-group[open] > summary {
-    border-bottom: 1px solid var(--theme-border);
-}
-
-.local-danmu-group-title {
-    font-size: 15px;
-    font-weight: 600;
-}
-
-.local-danmu-group-meta,
-.local-danmu-group-count {
-    display: block;
-    margin: 5px 0 0 18px;
-    font-size: 12px;
-    color: var(--theme-muted);
-}
-
-.local-danmu-episodes {
-    margin: 8px 16px 12px 34px;
-    padding: 0 0 0 16px;
-    border-left: 2px solid var(--theme-border);
-}
-
-.local-danmu-episode {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--theme-border);
-}
-
-.local-danmu-episode:last-child {
-    border-bottom: 0;
-}
-
-.local-danmu-episode-info {
-    min-width: 0;
-    margin-left: 12px;
-}
-
-.local-danmu-episode-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--theme-text);
-}
-
-.local-danmu-filename,
-.local-danmu-episode-meta {
-    margin-top: 4px;
-    font-size: 12px;
-    color: var(--theme-muted);
-    overflow-wrap: anywhere;
-}
-
-.local-danmu-episode-actions {
-    display: flex;
-    flex-shrink: 0;
-    gap: 8px;
-}
-
-@media (max-width: 960px) {
-    .local-danmu-fields,
-    .local-danmu-fields[data-batch="true"] {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .local-danmu-name-field,
-    .local-danmu-fields > button {
-        grid-column: 1 / -1;
-    }
 }
 
 .btn-primary {
@@ -1549,8 +1231,6 @@ body[data-theme] input[type="checkbox"].app-checkbox:focus-visible {
 .font-size-12 { font-size: 12px; }
 .margin-bottom-15 { margin-bottom: 15px; }
 .text-monospace { font-family: ui-monospace, monospace; }
-
-/* ============ 推送弹幕 ============ */
 .anime-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
@@ -1973,8 +1653,6 @@ body[data-theme] input[type="checkbox"].app-checkbox:focus-visible {
     line-height: 1.6;
     border: 1px solid var(--theme-border);
 }
-
-/* ============ 弹幕测试 ============ */
 .api-top-tabs {
     display: flex;
     gap: 0;
@@ -2808,8 +2486,6 @@ body[data-theme] input[type="checkbox"].app-checkbox:focus-visible {
 body[data-theme$="-dark"] .heatmap-bar {
     filter: brightness(0.9);
 }
-
-/* ============ 弹幕测试响应式 ============ */
 @media (max-width: 768px) {
     .danmu-stats-grid {
         grid-template-columns: repeat(2, 1fr);
@@ -3068,7 +2744,7 @@ body[data-theme$="-dark"] .heatmap-bar {
     border-radius: 8px;
 }
 
-/* ============ 凭证编辑器（AI API Key / 弹弹play密码 / B站 Cookie 共用） ============ */
+/* ============ 凭证编辑器（弹弹play密码 / B站 Cookie） ============ */
 .ai-apikey-editor,
 .dandanplay-editor,
 .bili-cookie-editor {
@@ -3199,11 +2875,6 @@ body[data-theme$="-dark"] .heatmap-bar {
     background: var(--theme-accent-soft);
     color: var(--theme-accent);
     border-color: var(--theme-accent);
-}
-
-/* ============ 推送弹幕容器 ============ */
-.push-controls {
-    margin-bottom: 20px;
 }
 
 .anime-list {

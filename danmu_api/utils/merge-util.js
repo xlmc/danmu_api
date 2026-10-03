@@ -177,7 +177,7 @@ const RegexStore = {
         SEASON_PREFIX:       /(?:^|\s)(?:第\s*[0-9一二三四五六七八九十]+\s*季|S(?:eason)?\s*\d+)(?:\s+|_)/gi,
         CLEAN_SMART:         /(?:^|\s)(?:EP|E|Vol|Episode|No|Part|第)\s*\d+(?:\.\d+)?(?:\s*[话話集])?(?!\s*[季期部])/gi,
         PUNCTUATION:         /[!！?？,，.。、~～:：\-–—]/g,
-        DANDAN_TAG:          /^【(dandan|animeko)】/i,
+        DANDAN_TAG:          /^【(dandan)】/i,
         SPECIAL_START:       /^S\d+/i,
         MOVIE_CHECK:         /剧场版|劇場版|movie|film/i,
         PV_CHECK:            /(pv|trailer|预告)/i,
@@ -193,8 +193,7 @@ const RegexStore = {
     /** 内容分类正则 */
     Category: {
         ANIME_KW:        /(动画|TV动画|动漫|日漫|国漫)/,
-        REAL_KW:         /(电视剧|真人剧|综艺|纪录片)/,
-        ANIMEKO_SOURCE:  /animeko/i
+        REAL_KW:         /(电视剧|真人剧|综艺|纪录片)/
     },
     /** 相似度计算专用正则 */
     Similarity: {
@@ -725,11 +724,10 @@ function getStrictMediaType(title, typeDesc) {
  * 用于在合并前检测真人剧与动漫之间的类别冲突
  * @param {string} title    - 标题
  * @param {string} typeDesc - 类型描述
- * @param {string} source   - 来源名（animeko 来源直接判定为 ANIME）
+ * @param {string} source   - 来源名
  * @returns {'ANIME'|'REAL'|'UNKNOWN'}
  */
 function getContentCategory(title, typeDesc, source) {
-    if (source && RegexStore.Category.ANIMEKO_SOURCE.test(source)) return 'ANIME';
     const fullText = (title + ' ' + (typeDesc || '')).toLowerCase();
     if (RegexStore.Category.ANIME_KW.test(fullText)) return 'ANIME';
     if (RegexStore.Category.REAL_KW.test(fullText))  return 'REAL';
@@ -1015,7 +1013,7 @@ function checkDateMatch(dateA, dateB, isDub = false) {
 /**
  * 验证合并覆盖率
  * 防止剧场版误匹配 TV 版等低覆盖率情况（匹配上的集数占比过低则视为无效合并）
- * dandan/animeko 来源的集数元数据可信度高，直接放行
+ * dandan 来源的集数元数据可信度高，直接放行
  * @param {number}  mergedCount    - 实际匹配上的集数
  * @param {number}  totalA         - 主源过滤后的集数
  * @param {number}  totalB         - 副源过滤后的集数
@@ -1026,7 +1024,7 @@ function checkDateMatch(dateA, dateB, isDub = false) {
  */
 function isMergeRatioValid(mergedCount, totalA, totalB, sourceA, sourceB, isAnyCollection = false) {
     // 高可信度源直接放行
-    if (/^(dandan|animeko)$/i.test(sourceA) || /^(dandan|animeko)$/i.test(sourceB)) return true;
+    if (/^(dandan)$/i.test(sourceA) || /^(dandan)$/i.test(sourceB)) return true;
     if (isAnyCollection) {
         const minTotal = Math.min(totalA, totalB);
         if (minTotal > 0 && (mergedCount / minTotal) > 0.5) return true;
@@ -1064,7 +1062,7 @@ function getSpecialEpisodeType(title) {
 
 /**
  * 提取集数信息 (Episode Info Extraction)
- * 包含对 dandan/animeko 来源的特殊番外检测逻辑：
+ * 包含对 dandan 来源的特殊番外检测逻辑：
  * 这些来源的 S开头/C开头 标题在该源内就代表番外，不走通用正则
  * @param {string} title      - 集标题
  * @param {string} [sourceName=''] - 来源平台名称
@@ -1078,13 +1076,13 @@ function extractEpisodeInfo(title, sourceName = '') {
         const tagMatch = title.match(RegexStore.Episode.DANDAN_TAG);
         if (tagMatch) effectiveSource = tagMatch[1].toLowerCase();
     }
-    const isDandanOrAnimeko = /^(dandan|animeko)$/i.test(effectiveSource);
+    const isDandanOrAnimeko = /^(dandan)$/i.test(effectiveSource);
     if (isDandanOrAnimeko && title) {
         let rawTemp = title
             .replace(RegexStore.Clean.SOURCE_TAG,  '')
             .replace(RegexStore.Clean.FROM_SUFFIX, '')
             .trim();
-        // dandan/animeko 来源中，S开头或 dandan 专属格式直接标记为严格番外
+        // dandan 来源中，S开头或 dandan 专属格式直接标记为严格番外
         if (RegexStore.Episode.SPECIAL_START.test(rawTemp) || RegexStore.Episode.DANDAN_IGNORE.test(rawTemp)) {
             isStrictSpecial = true;
         }
@@ -1125,7 +1123,7 @@ function extractEpisodeInfo(title, sourceName = '') {
 function filterEpisodes(links, filterRegex, sourceName = '') {
     if (!links) return [];
     // 白名单来源：集标题比较规范，免除正则拦截
-    const skipFilterSources = ['animeko', 'bilibili', 'bilibili1', 'bahamut', 'dandan'];
+    const skipFilterSources = ['bilibili', 'bilibili1', 'bahamut', 'dandan'];
     const shouldSkipFilter  = skipFilterSources.includes(sourceName);
     if (!filterRegex || shouldSkipFilter) {
         return links.map((link, index) => ({ link, originalIndex: index }));
@@ -1320,8 +1318,8 @@ function findBestAlignmentOffset(
         const info        = extractEpisodeInfo(cleanTitle, source);
         const epLang      = getLanguageType(cleanTitle);
         const effLang     = epLang !== 'Unspecified' ? epLang : seriesLang;
-        // dandan/animeko 来源无语言标识时默认为日语
-        const finalLang   = (effLang === 'Unspecified' && /^(dandan|animeko)$/i.test(source)) ? 'JP' : effLang;
+        // dandan 来源无语言标识时默认为日语
+        const finalLang   = (effLang === 'Unspecified' && /^(dandan)$/i.test(source)) ? 'JP' : effLang;
         const cleanEpText = cleanEpisodeText(cleanTitle);
         // 中文严格匹配所需的核心词（去除所有数字和结构标记）
         const strictCnCore = (finalLang === 'CN') ? cleanTitle.replace(RegexStore.Similarity.CN_STRICT_CORE_REMOVE, '') : null;
@@ -1475,7 +1473,7 @@ function findBestAlignmentOffset(
  */
 function buildSeasonLengthMap(allGroupAnimes, epFilter, collectionAnimeIds) {
     // 结构: Map<seasonNum, Map<count, Array<sourceName>>>
-    // 含义: S1 → { 11集: ['dandan', 'animeko'], 8集: ['renren'] }
+    // 含义: S1 → { 11集: ['dandan', 'bilibili'], 8集: ['tencent'] }
     const seasonStats = new Map();
     const debugLogs   = [];
 
@@ -1505,8 +1503,8 @@ function buildSeasonLengthMap(allGroupAnimes, epFilter, collectionAnimeIds) {
                 const title    = item.link.title || item.link.name || '';
                 const cleanT   = cleanText(title);
                 const rawTemp  = cleanT.replace(RegexStore.Clean.SOURCE_TAG, '').replace(RegexStore.Clean.FROM_SUFFIX, '').trim();
-                // dandan/animeko 来源的番外过滤
-                if (/^(dandan|animeko)$/i.test(realAnime.source)) {
+                // dandan 来源的番外过滤
+                if (/^(dandan)$/i.test(realAnime.source)) {
                     if (RegexStore.Episode.SPECIAL_CHECK.test(rawTemp) || RegexStore.Episode.DANDAN_IGNORE.test(rawTemp)) return false;
                 }
                 if (RegexStore.Episode.MAP_EXCLUDE_KEYWORDS.test(rawTemp) || RegexStore.Episode.MAP_EXCLUDE_KEYWORDS.test(title)) return false;
@@ -1881,8 +1879,7 @@ export function findSecondaryMatches(primaryAnime, secondaryList, collectionAnim
     const rawPrimaryTitle    = primaryAnime.animeTitle || '';
     const primaryTitleForSim = rawPrimaryTitle.replace(RegexStore.Clean.YEAR_TAG, '').replace(/【(电影|电视剧)】/g, '').trim();
     const isPrimaryDub       = !!(primaryTitleForSim.match(RegexStore.Lang.CN_DUB_VER)) || RegexStore.Lang.CN.test(primaryTitleForSim);
-    const isPrimaryIgnoredYear = primaryAnime.source === 'hanjutv';
-    const primaryDate        = (rawPrimaryTitle.includes('N/A') || isPrimaryIgnoredYear) ? { year: null, month: null } : parseDate(primaryAnime.startDate);
+    const primaryDate        = (rawPrimaryTitle.includes('N/A')) ? { year: null, month: null } : parseDate(primaryAnime.startDate);
     const primaryCount       = primaryAnime.episodeCount || (primaryAnime.links ? primaryAnime.links.length : 0);
     const primaryLang        = getLanguageType(rawPrimaryTitle);
     const primaryCleanForZhi = cleanText(primaryTitleForSim);
@@ -1937,8 +1934,7 @@ export function findSecondaryMatches(primaryAnime, secondaryList, collectionAnim
 
         const isSecCollection = collectionAnimeIds.has(secAnime.animeId);
         const isAnyCollection = isPrimaryCollection || isSecCollection;
-        const isSecIgnoredYear= secAnime.source === 'hanjutv';
-        const secDate         = (rawSecTitle.includes('N/A') || isSecIgnoredYear) ? { year: null, month: null } : parseDate(secAnime.startDate);
+        const secDate         = (rawSecTitle.includes('N/A')) ? { year: null, month: null } : parseDate(secAnime.startDate);
         const secLang         = getLanguageType(rawSecTitle);
         const secTitleForSim  = rawSecTitle.replace(RegexStore.Clean.YEAR_TAG, '').replace(/【(电影|电视剧)】/g, '').trim();
         const isSecDub        = !!(secTitleForSim.match(RegexStore.Lang.CN_DUB_VER)) || RegexStore.Lang.CN.test(secTitleForSim);
@@ -2215,10 +2211,10 @@ function detectCollectionCandidates(curAnimes) {
             }
             if (seasonNum > groupGlobalMaxSeason) groupGlobalMaxSeason = seasonNum;
 
-            // 计算有效集数（dandan/animeko 来源需严格过滤番外）
+            // 计算有效集数（dandan 来源需严格过滤番外）
             let validCount = 0;
             if (realAnime.links) {
-                if (/^(dandan|animeko)$/i.test(realAnime.source)) {
+                if (/^(dandan)$/i.test(realAnime.source)) {
                     validCount = realAnime.links.filter((l) => {
                         const rawTitle   = l.title || l.name || '';
                         const rawContent = rawTitle.replace(RegexStore.Clean.SOURCE_TAG, '').replace(RegexStore.Clean.FROM_SUFFIX, '').trim();

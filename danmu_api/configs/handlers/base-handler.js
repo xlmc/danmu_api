@@ -46,18 +46,19 @@ export default class BaseHandler {
   getAllEnv() {
     // 获取原始环境变量
     const originalEnvVars = globals.originalEnvVars;
-    
+
     // 获取环境变量配置信息
     const envVarConfig = globals.envVarConfig;
-    
+
     // 构建带类型信息的环境变量对象
     const envWithTypes = {};
-    
+
     // 遍历所有环境变量
     for (const [key, value] of Object.entries(originalEnvVars)) {
+      if (!Object.hasOwn(envVarConfig, key)) continue;
       // 获取该环境变量的配置信息
       const config = envVarConfig[key] || { category: 'system', type: 'text', description: '未分类配置项' };
-      
+
       // 构建带类型信息的对象
       envWithTypes[key] = {
         value: value,
@@ -67,7 +68,7 @@ export default class BaseHandler {
         options: config.options // 仅对 select 和 multi-select 类型有效
       };
     }
-    
+
     return envWithTypes;
   }
 
@@ -92,12 +93,8 @@ export default class BaseHandler {
   }
 
   // 校验必填参数
-  async checkParams(accountId, projectId, token) {
-    throw new Error("Method 'checkParams' must be implemented");
-  }
+
 
   // 部署
-  async deploy(accountId, projectId, token) {
-    throw new Error("Method 'deploy' must be implemented");
-  }
+
 }

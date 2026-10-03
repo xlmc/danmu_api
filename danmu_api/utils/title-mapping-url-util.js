@@ -593,7 +593,7 @@ export function buildMappingCandidateKeys(rawTitle, season = null, year = null) 
  *   若表里有 "Monster Island -> 怪物岛"，则最终返回 "怪物岛"。
  *
  * @param {string} rawTitle 用户输入/解析出的原始剧名
- * @param {string} source   调用来源标识（match/fongmi/favorite/search），只用于日志
+ * @param {string} source   调用来源标识（match/fongmi/search），只用于日志
  * @param {number|null} season 季数（可为空）
  * @param {number|null} year  年份（可为空）
  * @returns {string} 映射后的标题；没命中就原样返回

@@ -1,14 +1,14 @@
 // language=JavaScript
-export const previewJsContent = /* javascript */ `
+export const previewJsContent = `
 const previewCategoryOrder = ['api', 'source', 'match', 'danmu', 'cache', 'system'];
 
 const previewCategoryMeta = {
     api: { icon: 'link', label: 'API 配置', description: '访问凭证与请求控制' },
-    source: { icon: 'layers', label: '源配置', description: '弹幕源、VOD 服务与平台凭证' },
-    match: { icon: 'search', label: '匹配配置', description: '标题处理、匹配策略与 AI 服务' },
+    source: { icon: 'layers', label: '源配置', description: '弹幕源与平台凭证' },
+    match: { icon: 'search', label: '匹配配置', description: '标题处理与匹配策略' },
     danmu: { icon: 'comment', label: '弹幕配置', description: '过滤、转换、输出与时间调整' },
     cache: { icon: 'database', label: '缓存配置', description: '缓存时效、容量与 Redis 服务' },
-    system: { icon: 'settings', label: '系统配置', description: '界面、网络、部署与安全设置' }
+    system: { icon: 'settings', label: '系统配置', description: '界面与网络设置' }
 };
 
 // 分类按钮（图标 + 名称 + 计数）：配置预览与环境变量配置两个导航共用
@@ -45,27 +45,24 @@ const previewGroupDefinitions = {
     match: [
         { name: '匹配策略', keys: ['PLATFORM_ORDER', 'STRICT_TITLE_MATCH', 'ENABLE_ANIME_EPISODE_FILTER'] },
         { name: '标题与季集映射', keys: ['ANIME_TITLE_FILTER', 'EPISODE_TITLE_FILTER', 'TITLE_TO_CHINESE', 'ANIME_TITLE_SIMPLIFIED', 'TITLE_MAPPING_TABLE', 'TITLE_MAPPING_TABLE_URL', 'AUTO_MATCH_MAPPING_TABLE', 'AUTO_MATCH_MAPPING_TABLE_URL', 'TITLE_NOISE_FILTER'] },
-        { name: 'AI 匹配', keys: ['AI_BASE_URL', 'AI_MODEL', 'AI_API_KEY', 'AI_MATCH_PROMPT'] },
         { name: '动画元数据', keys: ['USE_BANGUMI_DATA'] }
     ],
     danmu: [
         { name: '过滤与数量', keys: ['BLOCKED_WORDS', 'BLOCK_DOMESTIC_CELEBRITIES', 'PERSON_FILTER_EXCLUDED_TITLES', 'GROUP_MINUTE', 'DANMU_LIMIT'] },
         { name: '显示与转换', keys: ['DANMU_SIMPLIFIED_TRADITIONAL', 'CONVERT_TOP_BOTTOM_TO_SCROLL', 'CONVERT_COLOR', 'COLOR_POOL', 'GRADIENT_CHANCE', 'GRADIENT_COLORS', 'LIKE_SWITCH'] },
-        { name: '输出与推送', keys: ['DANMU_OUTPUT_FORMAT', 'DANMU_PUSH_URL'] },
+        { name: '输出格式', keys: ['DANMU_OUTPUT_FORMAT', ] },
         { name: '时间与来源适配', keys: ['DANMU_OFFSET', 'HONGGUO_MERGE_ALL_EPISODES'] }
     ],
     cache: [
         { name: '文件缓存', keys: ['LOCAL_CACHE_ENABLED'] },
         { name: '缓存时效', keys: ['SEARCH_CACHE_MINUTES', 'COMMENT_CACHE_MINUTES', 'COMMENT_CACHE_MIN_COUNT', 'BANGUMI_DATA_CACHE_DAYS'] },
         { name: '容量与历史', keys: ['REMEMBER_LAST_SELECT', 'MAX_LAST_SELECT_MAP', 'MAX_ANIMES'] },
-        { name: 'Redis 服务', keys: ['UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN', 'LOCAL_REDIS_URL'] }
+        { name: 'Redis 服务', keys: ['LOCAL_REDIS_URL'] }
     ],
     system: [
         { name: '界面与运行', keys: ['UI_THEME', 'LOG_LEVEL'] },
         { name: '网络与数据服务', keys: ['PROXY_URL', 'TMDB_API_KEY'] },
-        { name: '部署平台', keys: ['DEPLOY_PLATFROM_ACCOUNT', 'DEPLOY_PLATFROM_PROJECT', 'DEPLOY_PLATFROM_TOKEN', 'deployPlatform'] },
-        { name: '安全策略', keys: ['NODE_TLS_REJECT_UNAUTHORIZED', 'IP_BLACKLIST'] },
-        { name: '运行状态', keys: ['localCacheValid', 'redisValid', 'localRedisValid', 'aiValid'] }
+        { name: '运行状态', keys: ['localCacheValid', 'localRedisValid', ] }
     ]
 };
 

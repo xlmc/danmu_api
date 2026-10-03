@@ -13,9 +13,9 @@ import { Globals, globals } from './configs/globals.js';
 import { Envs } from './configs/envs.js';
 import { LEGACY_BLOCKED_WORD_KEYS, migrateLegacyBlockedWords, migrateLegacyBlockedWordsText } from './utils/blocked-word-presets.js';
 import { clearBangumiDataCache, initBangumiData, syncBangumiDataLifecycleOnConfigChange } from './utils/bangumi-data-util.js';
-import { judgeRedisValid, initializePersistentCaches } from './utils/redis-util.js';
-import { persistFavorites, refreshFavoriteByKeyword } from './apis/favorite-api.js';
-import { startFavoriteScheduler, stopFavoriteScheduler } from './utils/favorite-schedule-util.js';
+
+
+
 import { formatHostForUrl, listenOnAllInterfaces } from './utils/server-listen-util.js';
 import { initializeRemoteAutoMatchMapping } from './utils/auto-match-mapping-url-util.js';
 import { ensureRemoteTitleMapping } from './utils/title-mapping-url-util.js';
@@ -65,12 +65,7 @@ checkAndCopyConfigFiles();
 // 初始加载
 loadEnv();
 
-function detectNodeDeployPlatform() {
-  if (process.env.SPACE_ID) {
-    return "huggingface";
-  }
-  return "node";
-}
+function detectNodeDeployPlatform() { return 'node'; }
 
 function resolvePublicRequestProtocol(req) {
   const forwardedProto = String(req.headers['x-forwarded-proto'] || '')
@@ -116,7 +111,7 @@ function checkAndCopyConfigFiles() {
     } catch (error) {
       console.log('[server] Error copying .env.example to .env:', error.message);
     }
-  } 
+  }
   // 如果config目录下没有.env.example，但在config_example目录下有，则从config_example复制
   else if (configExampleExists && configExampleEnvExists) {
     try {
@@ -320,7 +315,7 @@ async function setupEnvWatcher() {
  * 优雅关闭：清理文件监听器并关闭服务器
  */
 function cleanupWatcher(exitCode = 0) {
-  stopFavoriteScheduler();
+
   if (envWatcher) {
     console.log('[server] Closing file watcher...');
     envWatcher.close();
@@ -368,7 +363,7 @@ function createServer() {
 
       // 获取请求客户端的ip，兼容反向代理场景
       let clientIp = 'unknown';
-      
+
       // 优先级：X-Forwarded-For > X-Real-IP > 直接连接IP
       const forwardedFor = req.headers['x-forwarded-for'];
       if (forwardedFor) {
@@ -383,7 +378,7 @@ function createServer() {
         clientIp = req.socket.remoteAddress || 'unknown';
         console.log(`[server] Using direct connection IP: ${clientIp}`);
       }
-      
+
       // 清理IPv6前缀（如果存在）
       if (clientIp && clientIp.startsWith('::ffff:')) {
         clientIp = clientIp.substring(7);
@@ -407,7 +402,7 @@ function createServer() {
 
       // 将 Web API Response 对象转换为 Node.js 响应
       res.statusCode = webResponse.status;
-      
+
       // 净化 Header：透传上游头信息，但强制移除传输相关字段 (Encoding/Length)
       // (防止 Node.js 自动解压后，Header 仍残留 Gzip 标识导致客户端解析乱码)
       webResponse.headers.forEach((value, key) => {
@@ -470,7 +465,7 @@ function createProxyServer() {
       if (proxyConfig) {
         // 支持多个配置，用逗号分隔
         const proxyConfigs = proxyConfig.split(',').map(s => s.trim()).filter(s => s);
-        
+
         for (const config of proxyConfigs) {
           // 通用忽略逻辑：忽略所有专用反代和万能反代规则
           if (/^@/.test(config) || /^[\w-]+@http/i.test(config)) {
@@ -480,12 +475,12 @@ function createProxyServer() {
           forwardProxy = config.trim();
           console.log('[Proxy Server] Forward proxy detected:', forwardProxy);
           // 找到第一个有效代理就停止，避免逻辑混乱
-          break; 
+          break;
         }
       }
       const targetUrl = queryObject.url;
       console.log('[Proxy Server] Target URL:', targetUrl);
-      
+
       const originalUrlObj = new URL(targetUrl);
       let options = {
         hostname: originalUrlObj.hostname,
@@ -494,10 +489,10 @@ function createProxyServer() {
         method: 'GET',
         headers: { ...req.headers } // 传递原始请求头
       };
-      
+
       // Host 头必须被移除，以便 protocol.request 根据 options.hostname 设置正确的值
-      delete options.headers.host; 
-      
+      delete options.headers.host;
+
       let protocol = originalUrlObj.protocol === 'https:' ? https : http;
 
       // 处理正向代理逻辑
@@ -576,11 +571,7 @@ async function startServer() {
     serviceName: 'main server'
   });
   console.log(`Server running on http://${formatHostForUrl(mainBinding.address)}:${mainBinding.port}`);
-  if (detectNodeDeployPlatform() === 'node') {
-    initializeFavoriteScheduler(mainPort).catch(error => {
-      console.error('[server] Favorite scheduler initialization failed:', error.message);
-    });
-  }
+
 
   // 启动5321端口的代理服务
   proxyServer = createProxyServer();
@@ -593,17 +584,7 @@ async function startServer() {
   setTimeout(() => initBangumiData('node', true).catch(console.error), 1000);
 }
 
-async function initializeFavoriteScheduler(mainPort) {
-  await judgeRedisValid('/api/v2/favorite/list');
-  await initializePersistentCaches('node');
 
-  const refreshUrl = new URL(`http://127.0.0.1:${mainPort}/api/v2/favorite/refresh`);
-  await startFavoriteScheduler({
-    refresh: keyword => refreshFavoriteByKeyword(keyword, refreshUrl, { persist: false }),
-    persist: persistFavorites
-  });
-  console.log('[server] Favorite scheduler started (Node/Docker only, Asia/Shanghai)');
-}
 
 // 启动
 startServer().catch(error => {

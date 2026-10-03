@@ -1,8 +1,8 @@
 // 模板中的脚本保持字面量，所有日志内容只经转义后显示。
 export const logConsoleJsContent = String.raw`
 const logViewState = { view: 'all', category: 'all', sources: new Set(), query: '', level: 'all', sort: 'new', context: '', auto: false, follow: true };
-const logCategories = { all: '全部', match: '匹配', mapping: '映射', filter: '弹幕过滤', cache: '缓存', source: '来源请求', merge: '合并', ai: 'AI', system: '系统' };
-const logSources = { tencent: '腾讯', iqiyi: '爱奇艺', bilibili: 'B站', dandan: '弹弹', mango: '芒果', youku: '优酷', imgo: '芒果', qq: '腾讯', '360kan': '360' };
+const logCategories = { all: '全部', match: '匹配', mapping: '映射', filter: '弹幕过滤', cache: '缓存', source: '来源请求', merge: '合并', system: '系统' };
+const logSources = { tencent: '腾讯', iqiyi: '爱奇艺', bilibili: 'B站', dandan: '弹弹', mango: '芒果', youku: '优酷', imgo: '芒果', qq: '腾讯', migu: '咪咕', sohu: '搜狐', leshi: '乐视', xigua: '西瓜', maiduidui: '埋堆堆', hongguo: '红果', bahamut: '巴哈姆特' };
 let logFetchPending = false;
 let logInitialized = false;
 let logCapacity = 1000;

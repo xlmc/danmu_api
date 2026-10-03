@@ -1,5 +1,5 @@
 // language=CSS
-export const baseCssContent = /* css */ `
+export const baseCssContent = `
 /* 基础布局样式 — 参照 Bangumi-syncer 柔和圆角设计风格 */
 
 /* ============ 全局重置 ============ */
@@ -374,4 +374,3 @@ body::before {
 }
 
 `;
-

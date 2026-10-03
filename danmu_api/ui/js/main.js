@@ -1,5 +1,5 @@
-// language=JavaScript
-export const mainJsContent = /* javascript */ `
+// Browser code bundled into the management page.
+export const mainJsContent = `
 // 自定义弹窗组件
 function createCustomAlert() {
     // 检查是否已存在自定义弹窗元素
@@ -161,7 +161,7 @@ function buildApiUrl(path, isSystemPath = false) {
         // 否则使用普通token
         res = (currentToken ? '/' + currentToken : "") + path;
     }
-    
+
     // 如果配置了自定义基础URL (解决反代问题)
     if (customBaseUrl) {
         // 确保路径以/开头
@@ -181,10 +181,9 @@ function loadEnvVariables() {
             // 从配置中获取admin token
             currentAdminToken = config.originalEnvVars?.ADMIN_TOKEN || '';
             tokenAuthDisabled = config.envs?.TOKEN_AUTH_DISABLED === true || config.envs?.TOKEN_AUTH_DISABLED === 'true' || config.tokenAuthDisabled === true;
-            updateLocalDanmuPermission(config);
 
             originalToken = config.originalEnvVars?.TOKEN || '';
-            
+
             // 使用从API获取的原始环境变量，用于系统设置
             const originalEnvVars = config.originalEnvVars || {};
             // 浏览器偏好覆盖部署环境变量；云函数更新变量通常要等重新部署后才会进入新实例。
@@ -208,19 +207,19 @@ function loadEnvVariables() {
 
             // 重新组织数据结构以适配现有UI
             envVariables = {};
-            
+
             // 将原始环境变量转换为UI所需格式
             // 这里需要将原始环境变量按类别组织
             Object.keys(originalEnvVars).forEach(key => {
                 // 从envVarConfig获取配置信息
                 const varConfig = config.envVarConfig?.[key] || { category: 'system', type: 'text', description: '未分类配置项' };
                 const category = varConfig.category || 'system';
-                
+
                 // 如果该分类不存在，创建它
                 if (!envVariables[category]) {
                     envVariables[category] = [];
                 }
-                
+
                 // 添加到对应分类，包含完整的配置信息
                 envVariables[category].push({
                     key: key,
@@ -233,7 +232,7 @@ function loadEnvVariables() {
                     sources: varConfig.sources || null // 仅对 DANMU_OFFSET 等需要来源配置的有效
                 });
             });
-            
+
             // 渲染环境变量列表
             renderEnvList();
         })
@@ -270,10 +269,10 @@ function updateApiEndpoint() {
       let urlPath = window.location.pathname;
       if(_reverseProxy) {
           try {
-              let proxyPath = _reverseProxy.startsWith('http') 
-                  ? new URL(_reverseProxy).pathname 
+              let proxyPath = _reverseProxy.startsWith('http')
+                  ? new URL(_reverseProxy).pathname
                   : _reverseProxy;
-              
+
               if (proxyPath.endsWith('/')) {
                   proxyPath = proxyPath.slice(0, -1);
               }
@@ -286,7 +285,7 @@ function updateApiEndpoint() {
       const pathParts = urlPath.split('/').filter(part => part !== '');
       const urlToken = pathParts.length > 0 ? pathParts[0] : '';
       let apiToken = '********';
-      
+
       // 判断是否使用默认token
       if (authDisabled) {
         apiToken = '';
@@ -299,13 +298,13 @@ function updateApiEndpoint() {
           apiToken = token; // 更新全局token变量
         }
       }
-      
+
       // 构造API端点URL
       let baseUrlStr;
       if (_reverseProxy) {
           // 如果配置了反代，且是相对路径，则补全协议和主机，确保显示为绝对路径
-          baseUrlStr = _reverseProxy.startsWith('http') 
-              ? _reverseProxy 
+          baseUrlStr = _reverseProxy.startsWith('http')
+              ? _reverseProxy
               : (protocol + '//' + host + _reverseProxy);
       } else {
           baseUrlStr = protocol + '//' + host;
@@ -317,7 +316,7 @@ function updateApiEndpoint() {
           cleanBaseUrl = cleanBaseUrl.slice(0, -1);
       }
       const apiEndpoint = apiToken ? cleanBaseUrl + '/' + apiToken : cleanBaseUrl;
-      
+
       const apiEndpointElement = document.getElementById('api-endpoint');
       if (apiEndpointElement) {
         apiEndpointElement.textContent = apiEndpoint;
@@ -330,12 +329,12 @@ function updateApiEndpoint() {
       const protocol = window.location.protocol;
       const host = window.location.host;
       let _reverseProxy = customBaseUrl;
-      
+
       // 构造显示用的BaseUrl
       let baseUrlStr;
       if (_reverseProxy) {
-          baseUrlStr = _reverseProxy.startsWith('http') 
-              ? _reverseProxy 
+          baseUrlStr = _reverseProxy.startsWith('http')
+              ? _reverseProxy
               : (protocol + '//' + host + _reverseProxy);
       } else {
           baseUrlStr = protocol + '//' + host;
@@ -346,12 +345,12 @@ function updateApiEndpoint() {
           cleanBaseUrl = cleanBaseUrl.slice(0, -1);
       }
       const apiEndpoint = cleanBaseUrl + '/********';
-      
+
       const apiEndpointElement = document.getElementById('api-endpoint');
       if (apiEndpointElement) {
         apiEndpointElement.textContent = apiEndpoint;
       }
-      
+
       // 如果是因为反代导致的问题，显示输入框 (交由renderPreview处理，或者在这里也可以触发)
       const proxyContainer = document.getElementById('proxy-config-container');
       if(proxyContainer) {
@@ -361,7 +360,7 @@ function updateApiEndpoint() {
               document.getElementById('custom-base-url').value = customBaseUrl;
           }
       }
-      
+
       throw error; // 抛出错误，以便调用者可以处理
     });
 }
@@ -398,8 +397,7 @@ function switchSection(section, event = null) {
         return;
     }
 
-    // 检查是否尝试访问受token保护的section（日志查看、接口调试、推送弹幕、请求记录、系统配置需要token访问）
-    if (section === 'logs' || section === 'api' || section === 'env' || section === 'push' || section === 'request-records' || section === 'local-danmu') {
+    if (section === 'logs' || section === 'env' || section === 'request-records') {
         let _reverseProxy = customBaseUrl; // 使用全局配置
 
         // 获取URL路径并提取token
@@ -409,15 +407,15 @@ function switchSection(section, event = null) {
             try {
                 // 如果_reverseProxy包含完整URL，提取pathname
                 // 如果只是相对路径，直接使用
-                let proxyPath = _reverseProxy.startsWith('http') 
-                    ? new URL(_reverseProxy).pathname 
+                let proxyPath = _reverseProxy.startsWith('http')
+                    ? new URL(_reverseProxy).pathname
                     : _reverseProxy;
-                
+
                 // 确保移除尾部斜杠，防止匹配失败
                 if (proxyPath.endsWith('/')) {
                     proxyPath = proxyPath.slice(0, -1);
                 }
-                
+
                 if(proxyPath && urlPath.startsWith(proxyPath)) {
                     urlPath = urlPath.substring(proxyPath.length);
                 }
@@ -425,10 +423,10 @@ function switchSection(section, event = null) {
                 console.error("解析反代路径失败", e);
             }
         }
-        
+
         const pathParts = urlPath.split('/').filter(part => part !== '');
         const urlToken = pathParts.length > 0 ? pathParts[0] : '';
-        
+
         // 检查URL中是否有token
         if (!tokenAuthDisabled && !urlToken && originalToken !== "87654321") {
             // 提示用户需要在URL中配置TOKEN
@@ -436,32 +434,32 @@ function switchSection(section, event = null) {
                 // 获取当前页面的协议、主机和端口
                 const protocol = window.location.protocol;
                 const host = window.location.host;
-                
+
                 // 构造显示的BaseUrl，确保是绝对路径
                 let displayBase;
                 if (_reverseProxy) {
-                    displayBase = _reverseProxy.startsWith('http') 
-                        ? _reverseProxy 
+                    displayBase = _reverseProxy.startsWith('http')
+                        ? _reverseProxy
                         : (protocol + '//' + host + _reverseProxy);
                 } else {
                     displayBase = protocol + '//' + host;
                 }
-                
+
                 if (displayBase.endsWith('/')) {
                     displayBase = displayBase.slice(0, -1);
                 }
-                
+
                 // 根据section类型显示不同的token提示
                 const tokenType = section === 'env' ? 'ADMIN_TOKEN' : 'TOKEN';
                 customAlert('请在URL中配置相应的' + tokenType + '以访问此功能！\\n\\n访问方式：' + displayBase + '/{' + tokenType + '}');
             }, 100);
             return;
         }
-        
+
         // 如果是系统配置页面，还需要检查是否配置了ADMIN_TOKEN且URL中的token等于currentAdminToken
         if (section === 'env') {
             // 检查部署平台配置
-            checkDeployPlatformConfig().then(result => {
+            checkConfigPermission().then(result => {
                 if (!result.success) {
                     // 如果配置检查不通过，只显示提示，不切换页面
                     setTimeout(() => {
@@ -478,11 +476,10 @@ function switchSection(section, event = null) {
                         event.target.classList.add('active');
                     }
 
-                    addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : section === 'push' ? '推送弹幕' : section === 'request-records' ? '请求记录' : '接口调试'}模块\`, 'info');
+                    addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : section === 'request-records' ? '请求记录' : '请求记录'}模块\`, 'info');
                 }
             });
         } else {
-            // 对于日志查看、接口调试和推送弹幕页面，只要URL中有token就可以访问
             document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
             document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
 
@@ -491,8 +488,8 @@ function switchSection(section, event = null) {
                 event.target.classList.add('active');
             }
 
-            addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : section === 'push' ? '推送弹幕' : section === 'request-records' ? '请求记录' : '接口调试'}模块\`, 'info');
-            
+            addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : section === 'request-records' ? '请求记录' : '请求记录'}模块\`, 'info');
+
             // 如果切换到日志查看页面，则立即刷新日志
             if (section === 'logs') {
                 if (typeof fetchRealLogs === 'function') {
@@ -510,7 +507,7 @@ function switchSection(section, event = null) {
             event.target.classList.add('active');
         }
 
-        addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : section === 'push' ? '推送弹幕' : '接口调试'}模块\`, 'info');
+        addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : '请求记录'}模块\`, 'info');
     }
 }
 
@@ -572,33 +569,26 @@ async function init() {
         // 从API获取配置信息，包括检查是否有admin token
         const config = await fetchAndSetConfig();
 
-        // 设置默认推送地址
-        setDefaultPushUrl(config);
+
 
         // 检查并处理管理员令牌
         checkAndHandleAdminToken();
-        
+
         loadEnvVariables(); // 从API加载真实环境变量数据
         renderEnvList();
         renderPreview();
         addLog('系统初始化完成', 'success');
         // 获取真实日志数据
         fetchRealLogs();
-        
-        // 初始化推送弹幕界面
-        if (typeof initPushDanmuInterface === 'function') {
-            initPushDanmuInterface();
-        }
-        
-        // 初始化接口调试界面
-        if (typeof initApiTestInterface === 'function') {
-            initApiTestInterface();
-        }
-        
+
+
+
+
+
     } catch (error) {
         console.error('初始化失败:', error);
         addLog('系统初始化失败: ' + error.message, 'error');
-        
+
         // 确保反代配置框显示
         const proxyContainer = document.getElementById('proxy-config-container');
         if(proxyContainer) {
@@ -607,7 +597,7 @@ async function init() {
                 document.getElementById('custom-base-url').value = customBaseUrl;
             }
         }
-        
+
         // 即使初始化失败，也要尝试获取日志
         fetchRealLogs();
     }
@@ -666,10 +656,10 @@ function escapeHtml(text) {
     if (text === null || text === undefined) {
         return '';
     }
-    
+
     // 将非字符串值转换为字符串
     const str = String(text);
-    
+
     const map = {
         '&': '&amp;',
         '<': '&lt;',

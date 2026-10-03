@@ -2,6 +2,16 @@
 
 仅维护 NAS Docker Compose 部署。首次部署见 [README](../README.md#nas-首次部署)，模板为 [compose.nas.yml](../compose.nas.yml)。本文不记录任何真实 NAS 地址、私人目录或部署凭据。
 
+## 本次精简源码的本地构建
+
+精简版镜像随 main 推送发布；确认对应发布流程成功并且 Release 记录已更新 latest 后，再按下文升级。也可在项目根目录自行构建：
+
+```bash
+docker build -t danmu-api-nas-slim:local .
+```
+
+测试 Compose 使用 `image: danmu-api-nas-slim:local`，并保留模板中的端口和配置、缓存目录挂载。配置文件从 `config/.env.example` 复制，填入自己的 TOKEN 和 ADMIN_TOKEN。Node.js 22 回归测试及本地管理页面已验证；Docker 构建、NAS 启动和真实上游弹幕获取待部署验收。下文远程镜像升级流程仅适用于后续已发布的版本。
+
 ## 选择镜像
 
 - 部署镜像：`ghcr.io/xlmc/danmu_api:latest`，由 GitHub Actions 构建，不需要 Docker Hub 账户，不要求固定版本。
@@ -15,7 +25,7 @@
 ## 1. 保存现状与备份
 
 1. 在原项目记录服务名、项目名、Compose 文件和所有环境文件，记录旧容器的镜像 ID、digest、端口、实际挂载目录及网络设置。保留旧镜像，必要时导出为离线备份。
-2. 停止写入后备份挂载到 `/app/config`、`/app/.cache` 的整个目录，以及其他自定义持久化目录。缓存目录中可能包含收藏计划和本地弹幕，不可当作临时文件丢弃。
+2. 停止写入后备份挂载到 `/app/config`、`/app/.cache` 的整个目录，以及其他自定义持久化目录。旧缓存目录可能含有已停用功能的数据，升级前仍需完整备份。精简版不再读取收藏和本地弹幕文件，不自动删除旧文件。
 3. 存在 Redis 或其他外置持久化时另行备份，确认恢复方法。备份放在项目之外并限制读取权限。
 4. 测试期间如恢复旧服务供日常使用，正式切换前再次停止写入并做最终备份，避免丢失测试期间新增的数据。
 
@@ -46,7 +56,7 @@ docker compose -p danmu-migration-test -f compose.test.yml up -d
 docker compose -p danmu-migration-test -f compose.test.yml logs --tail=100
 ```
 
-测试清单：管理登录及鉴权、已知剧名和季集匹配、弹幕获取、过滤、收藏读写、本地弹幕列表/上传，以及实际播放器调用。检查容器架构、目录权限、是否意外生成空配置。验收后停止测试项目。
+测试清单：管理登录及鉴权、已知剧名和季集匹配、弹幕获取、分片、过滤、缓存命中与重启恢复，以及实际播放器调用。检查容器架构、目录权限、是否意外生成空配置。验收后停止测试项目。
 
 ## 3. 切换原生产项目
 

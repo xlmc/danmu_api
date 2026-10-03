@@ -10,8 +10,8 @@ import { parseOffsetRules, resolveOffset } from './utils/offset-util.js';
 import { getSegmentComment } from './apis/dandan-api.js';
 import { getSourceByKey } from './sources/registry.js';
 import { convertToDanmakuJson } from './utils/danmu-util.js';
-import Kan360Source from './sources/kan360.js';
-import VodSource from './sources/vod.js';
+
+
 
 Globals.init({ PLATFORM_ORDER: 'tencent&iqiyi&bilibili,dandan', DANMU_OUTPUT_FORMAT: 'json' });
 
@@ -72,22 +72,4 @@ test('danmu tags normalize old source labels and avoid duplicate real-time alias
  const result=convertToDanmakuJson([{p:'1,1,16777215,0',m:'测试',_sourceLabel:'dandan&qq',realTimeSource:'tencent'}],'qq');
  assert.match(result[0].p,/\[dandan[&＆]tencent\]/);
  assert.doesNotMatch(result[0].p,/qq|tencent.*tencent/);
-});
-
-test('360 keeps upstream site keys while exposing canonical labels', async () => {
- const source=new Kan360Source(),details=new Map(),results=[];
- source.getEpisodesV2=async (_cat,_id,site)=>{
-  assert.equal(site,'qq');
-  return [{name:'1',url:'https://v.qq.com/episode1'}];
- };
- await source.handleAnimes([{titleTxt:'统一命名测试',cat_name:'电视剧',id:321,en_id:'test',year:'2026',cover:'',playlinks:{qq:'https://v.qq.com/test'}}], '统一命名测试',results,details);
- assert.equal(results.length,1);
- assert.equal([...details.values()][0].links[0].title,'【tencent】 第1集');
-});
-
-test('VOD accepts upstream aliases and emits canonical platform tags', async () => {
- const source=new VodSource(),details=new Map(),results=[];
- await source.handleAnimes([{vod_name:'统一命名电影',vod_id:123,vod_year:'2026',vod_pic:'',type_name:'电影',vod_play_from:'qq$$$qiyi$$$bilibili1',vod_play_url:'正片$https://v.qq.com/a$$$正片$https://iqiyi.com/b$$$正片$https://bilibili.com/c'}], '统一命名电影',results,'测试VOD',details);
- assert.equal(results.length,1);
- assert.deepEqual([...details.values()][0].links.map(l=>l.title),['【tencent】 正片','【iqiyi】 正片','【bilibili】 正片']);
 });

@@ -84,7 +84,7 @@ const UI_ICON_PATHS = {
     film: '<rect x="2" y="3" width="20" height="18" rx="2"/><path d="M7 3v18M17 3v18M2 9h5M2 15h5M17 9h5M17 15h5"/>',
     // 二维码：扫码登录
     'qr-code': '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3z"/><path d="M21 14v3M21 21h.01M14 21h3"/>',
-    // 锥形瓶：AI API Key 连通性测试
+    // 锥形瓶：通用工具图标
     flask: '<path d="M10 2v7.3L4.6 18.9A1.5 1.5 0 0 0 5.9 21h12.2a1.5 1.5 0 0 0 1.3-2.1L14 9.3V2"/><path d="M8.5 2h7"/><path d="M7.2 14h9.6"/>',
 };
 

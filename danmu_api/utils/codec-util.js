@@ -19,7 +19,7 @@ export function simpleHash(str) {
 // 辅助函数：序列化值，处理 Map 对象
 export function serializeValue(key, value) {
   // Redis 中持久化的 Map 转成普通对象，避免 JSON.stringify(Map) 得到空对象。
-  if ((key === 'lastSelectMap' || key === 'favoriteCache') && value instanceof Map) {
+  if (key === 'lastSelectMap' && value instanceof Map) {
     return JSON.stringify(Object.fromEntries(value));
   }
   return JSON.stringify(value);
@@ -1001,7 +1001,7 @@ function fromCodePoint(codePoint) {
   if (codePoint <= 0xFFFF) {
     return String.fromCharCode(codePoint);
   }
-  
+
   // 超出 BMP 的字符需要转换为代理对
   codePoint -= 0x10000;
   const highSurrogate = (codePoint >> 10) + 0xD800;

@@ -1,7 +1,7 @@
 // 分类与来源独立；不根据附近的日志猜测当前来源。
-const sources = new Set(['360kan','vod','tencent','youku','iqiyi','mango','bilibili','migu','sohu','leshi','xigua','maiduidui','aiyifan','hongguo','renren','hanjutv','bahamut','dandan','animeko','custom','local','douban','tmdb','other','nipaplay']);
+const sources = new Set(['tencent','youku','iqiyi','mango','bilibili','migu','sohu','leshi','xigua','maiduidui','hongguo','bahamut','dandan','nipaplay']);
 export function normalizeLogSource(source) {
-  return ({imgo:'mango',qq:'tencent','360':'360kan','bilibili-proxy':'bilibili','tmdb-source':'tmdb'}[source] || source);
+  return ({imgo:'mango',qq:'tencent','bilibili-proxy':'bilibili'}[source] || source);
 }
 export function getLogMetadata(message) {
   const prefix = String(message).match(/^(?:\s*\[[^\]]+\])+/)?.[0] || '';
@@ -14,7 +14,6 @@ export function getLogMetadata(message) {
   if (tags.some(t => ['blocked-words','person-filter','person-metadata','domestic-filter','danmu'].includes(t))) categories.push('filter');
   if (tags.some(t => /cache|redis/.test(t))) categories.push('cache');
   if (tags.includes('merge')) categories.push('merge');
-  if (tags.some(t => t === 'ai' || t.startsWith('ai-'))) categories.push('ai');
   const normalized = tags.map(normalizeLogSource);
   const source = normalized.find(t => sources.has(t)) || null;
   if (source) categories.push('source');

@@ -28,21 +28,15 @@ export const Globals = {
   localRedisCacheInitialized: false, // 本地 Redis 缓存是否已初始化
   queryCacheInitialized: false, // 查询数据只恢复一次，之后以内存为准
   queryCacheWritable: {}, // 后端成功读取后才可写入；失败后本进程保留远端数据
-  favoriteCacheWritable: {}, // 收藏读取失败时保护原快照，与查询恢复状态独立
-  redisValid: false, // redis是否生效
   localRedisValid: false, // 本地redis是否生效
-  aiValid: false, // AI配置是否生效
-  redisCacheInitialized: false, // redis 缓存是否已初始化
   lastSelectMap: new Map(), // 存储查询关键字上次选择的animeId，用于下次match自动匹配时优先选择该anime
   reqRecords: [], // 记录请求历史，包括接口/参数/请求时间
   todayReqNum: 0, // 今日请求数量统计
   // 各后端只记录自身已确认持有的数据；缺少哈希表示尚未持久化。
   localFileHashes: {},
-  upstashHashes: {},
   localRedisHashes: {},
   searchCache: new Map(), // 搜索结果缓存，存储格式：{ keyword: { results, timestamp } }
   commentCache: new Map(), // 弹幕缓存，存储格式：{ videoUrl: { comments, timestamp } }
-  favoriteCache: new Map(), // 收藏剧集永久缓存，存储格式：{ keyword: { results, details, timestamp } }，无 TTL、无数量上限
   deployPlatform: '', // 部署平台配置
   currentToken: '', // 标识当前可用token
 
@@ -78,7 +72,7 @@ export const Globals = {
    */
   makeProxyUrl(targetUrl) {
     const proxyConfig = this.envs.proxyUrl || '';
-    
+
     if (!proxyConfig || !targetUrl) return targetUrl;
 
     const configs = proxyConfig.split(',').map(s => s.trim()).filter(s => s);
@@ -105,9 +99,6 @@ export const Globals = {
          break;
       } else if (conf.startsWith('bilibili@') && hostname.includes('bilibili')) {
          specificProxy = conf.substring(9);
-         break;
-      } else if (conf.startsWith('animeko@') && (hostname.includes('animeko') || hostname.includes('bgm.tv'))) {
-         specificProxy = conf.substring(8);
          break;
       } else if (conf.startsWith('@') && !universalProxy) {
          universalProxy = conf.substring(1);

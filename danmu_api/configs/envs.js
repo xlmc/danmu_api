@@ -2,7 +2,7 @@ import { migrateLegacyBlockedWords, LEGACY_BLOCKED_WORD_KEYS } from '../utils/bl
 import { canonicalPlatformGroup, canonicalPlatformName } from '../utils/platform-util.js';
 /**
  * 环境变量管理模块
- * 提供获取和设置环境变量的函数，支持 Cloudflare Workers 和 Node.js
+ * 提供获取和设置环境变量的函数，支持 NAS Node/Docker
  */
 import { danAnyFormats } from '../utils/dan-any.js';
 import { parseOffsetRules } from '../utils/offset-util.js';
@@ -23,49 +23,12 @@ export class Envs {
   static sensitiveKeys = new Set();
 
   // 允许在值中写入 # 等 dotenv 视为注释字符的变量；读取时绕过 dotenv 截断以保留完整内容。加密变量按掩码写入预览集合，原始值仅供运行期使用与日志脱敏。
-  static RAW_ENV_KEYS = new Set(['ADMIN_TOKEN', 'AI_API_KEY', 'AI_MATCH_PROMPT', 'ANIME_TITLE_FILTER', 'AUTO_MATCH_MAPPING_TABLE', 'BLOCKED_WORDS', 'BILIBILI_COOKIE', 'COLOR_POOL', 'CUSTOM_MERGE_RULES', 'CUSTOM_SOURCE_API_URL', 'DANDANPLAY_ACCOUNT', 'DANDANPLAY_PASSWORD', 'DANMU_OFFSET', 'DANMU_PUSH_URL', 'DANMUX_GRADIENT_STOPS', 'DEPLOY_PLATFROM_ACCOUNT', 'DEPLOY_PLATFROM_PROJECT', 'DEPLOY_PLATFROM_TOKEN', 'DOUBAN_COOKIE', 'EPISODE_TITLE_FILTER', 'IP_BLACKLIST', 'LOCAL_REDIS_URL', 'OTHER_SERVER', 'PROXY_URL', 'TITLE_MAPPING_TABLE', 'TITLE_NOISE_FILTER', 'TMDB_API_KEY', 'TOKEN', 'UPSTASH_REDIS_REST_TOKEN', 'UPSTASH_REDIS_REST_URL', 'VOD_SERVERS']);
+  static RAW_ENV_KEYS = new Set(['ADMIN_TOKEN', 'ANIME_TITLE_FILTER', 'AUTO_MATCH_MAPPING_TABLE', 'BLOCKED_WORDS', 'BILIBILI_COOKIE', 'COLOR_POOL', 'CUSTOM_MERGE_RULES', 'DANDANPLAY_ACCOUNT', 'DANDANPLAY_PASSWORD', 'DANMU_OFFSET', 'DANMUX_GRADIENT_STOPS', 'EPISODE_TITLE_FILTER', 'LOCAL_REDIS_URL', 'PROXY_URL', 'TITLE_MAPPING_TABLE', 'TITLE_NOISE_FILTER', 'TMDB_API_KEY', 'TOKEN', ]);
 
-  static VOD_ALLOWED_PLATFORMS = ['iqiyi', 'bilibili', 'imgo', 'youku', 'tencent', 'migu', 'sohu', 'leshi', 'xigua', 'maiduidui', 'aiyifan']; // vod允许的播放平台
-  static ALLOWED_PLATFORMS = ['iqiyi', 'bilibili', 'imgo', 'youku', 'tencent', 'migu', 'renren', 'hanjutv', 'sohu', 'leshi', 'xigua', 'maiduidui', 'aiyifan', 'hongguo', 'dandan', 'bahamut', 'animeko', 'custom']; // 全部源允许的播放平台
-  static ALLOWED_SOURCES = ['360', 'vod', 'tmdb', 'douban', 'tencent', 'youku', 'iqiyi', 'imgo', 'bilibili', 'migu', 'renren', 'hanjutv', 'sohu', 'leshi', 'xigua', 'maiduidui', 'aiyifan', 'hongguo', 'dandan', 'bahamut', 'animeko', 'custom', 'local']; // 允许的源
-  static MERGE_ALLOWED_SOURCES = ['tencent', 'youku', 'iqiyi', 'imgo', 'bilibili', 'migu', 'renren', 'hanjutv', 'sohu', 'leshi', 'xigua', 'maiduidui', 'aiyifan', 'hongguo', 'dandan', 'bahamut', 'animeko']; // 允许的源合并
-  static DEFAULT_AI_MATCH_PROMPT = `你是一个专业的影视匹配专家，你的的任务是根据用户提供的 JSON 数据，从候选动漫列表中匹配最符合条件的动漫及集数。
+  static ALLOWED_PLATFORMS = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","xigua","maiduidui","hongguo","bahamut","dandan"];
+  static ALLOWED_SOURCES = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","xigua","maiduidui","hongguo","bahamut","dandan"];
+  static MERGE_ALLOWED_SOURCES = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","xigua","maiduidui","hongguo","bahamut","dandan"];
 
-输入字段说明：
-- title: 查询标题
-- season: 季数（可为 null）
-- episode: 集数（可为 null）
-- year: 年份（可为 null）
-- dynamicPlatformOrder: 平台偏好列表（可为 null）
-- preferAnimeId: 偏好动漫 ID（可为 null）
-- animes: 候选动漫列表
-  - animeId: 动漫id
-    animeTitle: 动漫标题，(年份)前面才是真实的标题
-	aliases: 动漫标题的别名，视情况可以作为(动漫标题)看待
-    type: 类型
-    startDate: 发布日期，有年份
-    episodeCount: 总集数
-    source: 弹幕来源
-
-匹配规则 (按优先级排序):
-1. 如果preferAnimeId非空，且animes存在该animeId，则返回该id对应的anime和episode
-2. 标题相似度: 优先匹配标题相似度最高的条目
-3. 季度严格匹配: 如果指定了季度,必须严格匹配
-4. 类型匹配: episode为空则优先匹配电影，非空则匹配电视剧等
-5. 年份接近: 优先选择年份接近的
-6. 平台匹配：如果有多个高度相似的结果且dynamicPlatformOrder非空，则从前往后选择相对应的平台
-7. 集数完整: 如果有多个高度相似的结果,选择集数最完整的
-
-请分析哪个动漫最符合查询条件，如果指定了季数和集数，请也返回对应的集信息。
-请严格按照以下 JSON 格式返回结果，不要包含任何其他内容：
-{
-  "animeIndex": 匹配的动漫在列表中的索引(从0开始) 或 null
-}
-
-如果没有找到合适的匹配，返回：
-{
-  "animeIndex": null
-}`;
 
   /**
    * 获取环境变量
@@ -200,34 +163,14 @@ export class Envs {
    * 解析 VOD 服务器配置
    * @returns {Array} 服务器列表
    */
-  static resolveVodServers() {
-    const defaultVodServers = '金蝉@https://zy.jinchancaiji.com,789@https://www.caiji.cyou,听风@https://gctf.tfdh.top';
-    let vodServersConfig = this.get('VOD_SERVERS', defaultVodServers, 'string');
 
-    if (!vodServersConfig || vodServersConfig.trim() === '') {
-      return [];
-    }
-
-    return vodServersConfig
-      .split(',')
-      .map(s => s.trim())
-      .filter(s => s.length > 0)
-      .map((item, index) => {
-        if (item.includes('@')) {
-          const [name, url] = item.split('@').map(s => s.trim());
-          return { name: name || `vod-${index + 1}`, url };
-        }
-        return { name: `vod-${index + 1}`, url: item };
-      })
-      .filter(server => server.url && server.url.length > 0);
-  }
 
   /**
    * 解析源排序
    * @returns {Array} 源排序数组
    */
   static resolveSourceOrder() {
-    let sourceOrder = this.get('SOURCE_ORDER', 'douban,360,renren,hanjutv', 'string');
+    let sourceOrder = this.get('SOURCE_ORDER', 'tencent,iqiyi,youku,imgo,bilibili,dandan', 'string');
 
     const orderArr = sourceOrder
       .split(',')
@@ -236,7 +179,7 @@ export class Envs {
 
     this.accessedEnvVars.set('SOURCE_ORDER', orderArr);
 
-    return orderArr.length > 0 ? orderArr : ['douban', '360', 'renren', 'hanjutv'];
+    return orderArr.length > 0 ? orderArr : ['tencent', 'iqiyi', 'youku', 'imgo', 'bilibili', 'dandan'];
   }
 
   /**
@@ -272,8 +215,8 @@ export class Envs {
    * 支持使用分号或逗号分隔多组配置
    * 支持一主多从配置，第一个为主源，后续为副源
    * 允许单源配置（用于保留特定源的原始结果，不被合并消耗）
-   * 格式示例: dandan&bahamut&animeko,renren&hanjutv,renren
-   * @returns {Array} 合并配置数组 [{primary: 'dandan', secondaries: ['bahamut', 'animeko']}, {primary: 'renren', secondaries: ['hanjutv']}, {primary: 'renren', secondaries: []}]
+   * 格式示例: tencent&iqiyi,youku&bilibili,dandan
+   * @returns {Array} 合并配置数组 [{primary: 'tencent', secondaries: ['iqiyi']}, {primary: 'dandan', secondaries: []}]
    */
   static resolveMergeSourcePairs() {
     const config = this.get('MERGE_SOURCE_PAIRS', '', 'string');
@@ -470,122 +413,21 @@ export class Envs {
    * @description 支持逗号/分号/换行分隔，支持 /regex/ 或 /regex/i 的正则格式，支持 IPv4/IPv6 CIDR（如 127.0.0.0/24、2001:db8::/64）
    * @returns {Array} IP 黑名单规则列表
    */
-  static resolveIpBlacklist() {
-    const rawList = this.get('IP_BLACKLIST', '', 'string', false).trim();
 
-    if (!rawList) {
-      this.accessedEnvVars.set('IP_BLACKLIST', []);
-      return [];
-    }
-
-    const entries = rawList
-      .split(/[\n,;]+/)
-      .map(item => item.trim())
-      .filter(Boolean);
-
-    const rules = [];
-
-    for (const entry of entries) {
-      try {
-        if (entry.startsWith('/') && entry.lastIndexOf('/') > 0) {
-          const lastSlashIndex = entry.lastIndexOf('/');
-          const pattern = entry.slice(1, lastSlashIndex);
-          const flags = entry.slice(lastSlashIndex + 1);
-          rules.push({ type: 'regex', value: new RegExp(pattern, flags) });
-          continue;
-        }
-
-        if (entry.includes('/')) {
-          const [ip, prefix] = entry.split('/').map(s => s.trim());
-          const prefixNum = Number(prefix);
-          const isIpv4 = this.isValidIpv4(ip);
-          const isIpv6 = this.isValidIpv6(ip);
-          if (Number.isInteger(prefixNum)) {
-            if (isIpv4 && prefixNum >= 0 && prefixNum <= 32) {
-              rules.push({ type: 'cidr', ip, prefix: prefixNum });
-              continue;
-            }
-            if (isIpv6 && prefixNum >= 0 && prefixNum <= 128) {
-              rules.push({ type: 'cidr', ip, prefix: prefixNum });
-              continue;
-            }
-          }
-        }
-
-        if (this.isValidIpv4(entry) || this.isValidIpv6(entry)) {
-          rules.push({ type: 'exact', value: entry });
-          continue;
-        }
-
-        const escaped = entry.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        rules.push({ type: 'regex', value: new RegExp(`^${escaped}$`) });
-      } catch (error) {
-        console.warn(`Invalid IP_BLACKLIST entry: ${entry}, skipped.`);
-      }
-    }
-
-    this.accessedEnvVars.set('IP_BLACKLIST', entries);
-
-    return rules;
-  }
 
   /**
    * 校验 IPv4 地址合法性
    * @param {string} ip IPv4 地址
    * @returns {boolean}
    */
-  static isValidIpv4(ip) {
-    if (!ip || typeof ip !== 'string') return false;
-    const parts = ip.split('.');
-    if (parts.length !== 4) return false;
-    return parts.every(part => {
-      if (!/^(\d{1,3})$/.test(part)) return false;
-      const num = Number(part);
-      return num >= 0 && num <= 255;
-    });
-  }
+
 
   /**
    * 校验 IPv6 地址合法性（支持 :: 缩写与 IPv4 映射）
    * @param {string} ip IPv6 地址
    * @returns {boolean}
    */
-  static isValidIpv6(ip) {
-    if (!ip || typeof ip !== 'string') return false;
-    const normalized = ip.trim();
-    if (!normalized.includes(':')) return false;
 
-    const [left, right] = normalized.split('::');
-    if (normalized.split('::').length > 2) return false;
-
-    const leftParts = left ? left.split(':').filter(Boolean) : [];
-    let rightParts = right ? right.split(':').filter(Boolean) : [];
-
-    const expandIpv4Part = (parts) => {
-      if (parts.length === 0) return parts;
-      const last = parts[parts.length - 1];
-      if (!last.includes('.')) return parts;
-      if (!this.isValidIpv4(last)) return null;
-      const nums = last.split('.').map(n => Number(n));
-      const high = ((nums[0] << 8) | nums[1]).toString(16);
-      const low = ((nums[2] << 8) | nums[3]).toString(16);
-      return [...parts.slice(0, -1), high, low];
-    };
-
-    const leftExpanded = expandIpv4Part(leftParts);
-    if (!leftExpanded) return false;
-    rightParts = expandIpv4Part(rightParts);
-    if (!rightParts) return false;
-
-    const totalParts = leftExpanded.length + rightParts.length;
-    if (totalParts > 8) return false;
-
-    const isValidGroup = (part) => /^[0-9a-fA-F]{1,4}$/.test(part);
-    if (!leftExpanded.every(isValidGroup)) return false;
-    if (!rightParts.every(isValidGroup)) return false;
-
-    return true;
-  }
 
   /**
    * 解析剧名过滤正则
@@ -716,27 +558,19 @@ export class Envs {
       'TOKEN': { category: 'api', type: 'text', description: 'API访问令牌' },
       'TOKEN_AUTH_DISABLED': { category: 'api', type: 'boolean', description: '关闭 API 和管理界面的 TOKEN 鉴权（仅建议在受信任的内网环境使用）' },
       'ADMIN_TOKEN': { category: 'api', type: 'text', description: '系统管理访问令牌' },
-      'FAVORITE_REQUIRE_ADMIN': { category: 'api', type: 'boolean', description: '收藏写入和管理接口是否必须使用 ADMIN_TOKEN，默认关闭；收藏列表始终可公开读取' },
-      'LOCAL_DANMU_NOT_REQUIRE_ADMIN': { category: 'api', type: 'boolean', description: '本地弹幕上传和删除是否无需 ADMIN 权限，默认 false；开启后允许普通 TOKEN 用户上传和删除，ADMIN_TOKEN 始终允许；普通 TOKEN 用户可查看已导入列表' },
       'RATE_LIMIT_MAX_REQUESTS': { category: 'api', type: 'number', description: '限流配置：1分钟内最大请求次数，0表示不限流，默认3', min: 0, max: 50 },
 
       // 源配置
-      'SOURCE_ORDER': { category: 'source', type: 'multi-select', options: this.ALLOWED_SOURCES, description: '源排序配置，默认douban,360,renren,hanjutv；添加 local 可搜索已上传的本地弹幕，按配置顺序排列搜索结果' },
-      'MERGE_SOURCE_PAIRS': { category: 'source', type: 'multi-select', options: this.MERGE_ALLOWED_SOURCES, description: '源合并配置，配置后将对应源合并同时一起获取弹幕返回，允许多组，允许多源，允许填单源表示保留原结果，一组中第一个为主源其余为副源，副源往主源合并，主源如果没有结果会轮替下一个作为主源。\n格式：源1&源2&源3 ，多组用逗号分隔。\n示例：dandan&bahamut&animeko,renren&hanjutv,renren' },
+      'SOURCE_ORDER': { category: 'source', type: 'multi-select', options: this.ALLOWED_SOURCES, description: '源排序配置，默认腾讯、爱奇艺、优酷、芒果、B站、dandan，按配置顺序排列搜索结果' },
+      'MERGE_SOURCE_PAIRS': { category: 'source', type: 'multi-select', options: this.MERGE_ALLOWED_SOURCES, description: '源合并配置，配置后将对应源合并同时一起获取弹幕返回，允许多组，允许多源，允许填单源表示保留原结果，一组中第一个为主源其余为副源，副源往主源合并，主源如果没有结果会轮替下一个作为主源。\n格式：源1&源2&源3 ，多组用逗号分隔。\n示例：tencent&iqiyi,youku&bilibili,dandan' },
       'CUSTOM_MERGE_RULES': { category: 'source', type: 'text', sources: this.MERGE_ALLOWED_SOURCES, description: '合并映射表，用于自定义源合并行为。\n格式1(合并)：副源剧名/S季数@来源 -> 主源剧名/S季数@来源 | E副源集数>E主源集数\n格式2(阻断)：副源剧名/S季数@来源 × 主源剧名/S季数@来源\n说明：[/S季数] 与 [|路由规则] 为可选项，留空则交由程序判断。多个规则用分号隔开，多段路由用逗号分隔。\n示例：\n1. 常规合并：天气之子@bilibili -> 天气之子@dandan\n2. 多集路由：我推的孩子/S01@bahamut -> 我推的孩子/S03@dandan | E25~E35>E25~E35\n3. 阻断合并：辉夜大小姐想让我告白？～天才们的恋爱头脑战～(2020)@bilibili × 辉夜大小姐想让我告白～天才们的恋爱头脑战～ OVA(2021)【OVA】@dandan' },
-      'OTHER_SERVER': { category: 'source', type: 'text', description: '第三方弹幕服务器，默认https://api.danmu.icu' },
-      'CUSTOM_SOURCE_API_URL': { category: 'source', type: 'text', description: '自定义弹幕源API地址，默认为空，配置后还需在SOURCE_ORDER添加custom源' },
-      'VOD_SERVERS': { category: 'source', type: 'text', description: 'VOD站点配置，格式：名称@URL,名称@URL，默认金蝉@https://zy.jinchancaiji.com,789@https://www.caiji.cyou,听风@https://gctf.tfdh.top' },
-      'VOD_RETURN_MODE': { category: 'source', type: 'select', options: ['all', 'fastest'], description: 'VOD返回模式：all（所有站点）或 fastest（最快的站点），默认fastest' },
-      'VOD_REQUEST_TIMEOUT': { category: 'source', type: 'number', description: 'VOD请求超时时间，默认10000', min: 5000, max: 30000 },
       'BILIBILI_COOKIE': { category: 'source', type: 'text', description: 'B站Cookie' },
-      'DOUBAN_COOKIE': { category: 'source', type: 'text', description: '豆瓣Cookie' },
       'YOUKU_CONCURRENCY': { category: 'source', type: 'number', description: '优酷并发配置，默认8', min: 1, max: 16 },
       'DANDANPLAY_ACCOUNT': { category: 'source', type: 'text', description: '弹弹play账号（dandan 源获取弹幕使用）。\n与密码同时填写后自动开启，无需额外开关。\n开启后 dandan 源改由 NipaPlay 中转弹弹play服务端获取弹幕，并把同一请求下发的弹弹关联链接分发给对应平台源实时拉取（需开启对应源）：\n最终弹幕为 NipaPlay 中转弹弹play服务端弹幕与自有链路弹幕合并去重后的结果。\n注意：关联链接指向的平台视频若已下架将无法通过自有链路补取；关联含巴哈姆特平台时需确保能够连通巴哈' },
-      'DANDANPLAY_PASSWORD': { category: 'source', type: 'text', description: '弹弹play密码（dandan 源获取弹幕使用）。\n点击编辑界面的测试连通性按钮可验证账号与 NipaPlay 中转弹弹play服务端是否可用' },
+      'DANDANPLAY_PASSWORD': { category: 'source', type: 'text', description: '弹弹play密码（dandan 源获取弹幕使用），与账号同时填写后启用。' },
 
       // 匹配配置
-      'PLATFORM_ORDER': { category: 'match', type: 'multi-select', options: this.ALLOWED_PLATFORMS, description: '平台排序配置，可以配置自动匹配时的优选平台。\n当配置合并平台的时候，可以指定期望的合并源，\n示例：一个结果返回了"dandan&bilibili&animeko"和"youku"时，\n当配置"youku"时返回"youku" \n当配置"dandan&animeko"时返回"dandan&bilibili&animeko"' },
+      'PLATFORM_ORDER': { category: 'match', type: 'multi-select', options: this.ALLOWED_PLATFORMS, description: '平台排序配置，可以配置自动匹配时的优选平台。\n当配置合并平台的时候，可以指定期望的合并源，\n示例：一个结果返回了"dandan&bilibili"和"youku"时，\n当配置"youku"时返回"youku" \n当配置"dandan&bilibili"时返回"dandan&bilibili"' },
       'ANIME_TITLE_FILTER': { category: 'match', type: 'text', description: '剧名过滤规则' },
       'EPISODE_TITLE_FILTER': { category: 'match', type: 'text', description: '剧集标题过滤规则' },
       'ENABLE_ANIME_EPISODE_FILTER': { category: 'match', type: 'boolean', description: '控制手动搜索的时候是否根据ANIME_TITLE_FILTER进行剧名过滤以及根据EPISODE_TITLE_FILTER进行集标题过滤' },
@@ -748,10 +582,6 @@ export class Envs {
       'AUTO_MATCH_MAPPING_TABLE': { category: 'match', type: 'map', description: '自动匹配映射表，仅作用于 POST /api/v2/match。多个规则使用分号分隔。\n开放映射：永生 S05E02 -> 永生 S01E58\n有限范围：永生 S05E02~03 -> 永生 S01E58~59\n指定结果：海贼王 S02E01 -> 航海王(1999)【动漫】 S01E62\n指定平台：航海王 S01E01 -> 航海王 S01E01 @iqiyi\n可选发布组：作品 S01E01 {[group=ANi]} -> 作品 S01E02；文件名有发布组时优先专用规则，失败后回退通用规则' },
       'AUTO_MATCH_MAPPING_TABLE_URL': { category: 'match', type: 'text', description: '远程季集映射表（默认关闭）。推荐填写 danmu-mapping 的 Word/season-candidates.txt。下载后保存到本机缓存，匹配过程中只读取本机缓存；每天北京时间05:30更新，失败沿用旧缓存。本机 AUTO_MATCH_MAPPING_TABLE 优先。为防止过度转换，远程表只接受同时写明起止集的有限范围规则；源侧可选使用 {[group=ANi]} 发布组标记。' },
       'TITLE_NOISE_FILTER': { category: 'match', type: 'text', description: '剧名杂音清理规则，按正则表达式清理搜索与匹配阶段的剧名杂音词（如`百花杀（真彩）`→`百花杀`）。\n默认值：[（(\\[［](?:臻彩|真彩|高清|标清|超清|国配|中配|日配|粤语|原声|台配|无修|未删减|完整版|日语版|国语版|英语版|中字|字幕|助听|原版)[\\])）］]，中英文圆方括号均匹配。\n设为空值可禁用' },
-      'AI_BASE_URL': { category: 'match', type: 'text', description: 'AI服务基础URL，不填默认为https://api.openai.com/v1' },
-      'AI_MODEL': { category: 'match', type: 'text', description: 'AI模型名称，不填默认为gpt-4o' },
-      'AI_API_KEY': { category: 'match', type: 'text', description: 'AI服务API密钥，默认为空，需手动填写' },
-      'AI_MATCH_PROMPT': { category: 'match', type: 'text', description: 'AI自动匹配提示词模板，不填提供默认提示词，默认提示词请查看README' },
       'USE_BANGUMI_DATA': { category: 'match', type: 'boolean', description: 'Bangumi Data 加速匹配开关，开启后将动画元数据缓存至本地或内存中给源调用，提升动画源的检索与匹配速度并解锁隐藏/区域番剧。\n本地和Docker部署使用时请先挂载.cache目录获得最佳体验，云部署使用时会将数据缓存至临时内存中如果体验不佳请关闭。' },
 
       // 弹幕配置
@@ -769,7 +599,6 @@ export class Envs {
       'DANMUX_GRADIENT_STOPS': { category: 'danmu', type: 'text', description: 'DanmuX 标准渐变 stops JSON；留空时使用 GRADIENT_COLORS 皮肤' },
       'DANMUX_GRADIENT_ANGLE': { category: 'danmu', type: 'number', min: 0, max: 360, description: 'DanmuX 标准线性渐变角度，默认0' },
       'DANMU_OUTPUT_FORMAT': { category: 'danmu', type: 'select', options: ['json', 'xml', 'danmux', ...danAnyFormats], description: '弹幕输出格式，默认json' },
-      'DANMU_PUSH_URL': { category: 'danmu', type: 'text', description: '弹幕推送地址，示例 http://127.0.0.1:9978/action?do=refresh&type=danmaku&path= ' },
       'LIKE_SWITCH': { category: 'danmu', type: 'boolean', description: '弹幕点赞数显示开关，默认开启' },
       'HONGGUO_MERGE_ALL_EPISODES': { category: 'danmu', type: 'boolean', description: '红果短剧合并全集弹幕，默认关闭' },
       'DANMU_OFFSET': { category: 'danmu', type: 'text', sources: this.ALLOWED_SOURCES, description: '弹幕时间偏移配置，格式：剧名:秒 或 剧名/季:秒 或 剧名/季/集:秒，支持指定来源：剧名@来源:秒 或 剧名/季@来源1&来源2:秒，多条用逗号分隔，正数表示弹幕延后（向右），负数表示弹幕提前（向左）。支持百分比模式：在路径或来源末尾追加 %，如 东方/S03/E02@tencent%:11，按公式 原时间 * (视频时长 + 偏移秒数) / 视频时长 缩放全部弹幕时间。示例：overlord/S01:90,re-zero/S02@bilibili:120,re-zero/S02/E03@dandan&bilibili:10,东方/S03/E02@tencent%:11' },
@@ -783,8 +612,6 @@ export class Envs {
       'REMEMBER_LAST_SELECT': { category: 'cache', type: 'boolean', description: '记住明确手动选择的结果；自动匹配后直接获取其返回结果不会写入偏好' },
       'MAX_LAST_SELECT_MAP': { category: 'cache', type: 'number', description: '记住上次选择映射缓存大小限制，默认100', min: 10, max: 1000 },
       'MAX_ANIMES': { category: 'cache', type: 'number', description: '动漫标题缓存最大数量，默认100', min: 100, max: 1000 },
-      'UPSTASH_REDIS_REST_URL': { category: 'cache', type: 'text', description: 'Upstash Redis请求链接' },
-      'UPSTASH_REDIS_REST_TOKEN': { category: 'cache', type: 'text', description: 'Upstash Redis访问令牌' },
       'LOCAL_REDIS_URL': { category: 'cache', type: 'text', description: '本地 Redis 连接URL，示例：redis://:password@127.0.0.1:6379/0，只支持本地部署和docker部署' },
       'BANGUMI_DATA_CACHE_DAYS': { category: 'cache', type: 'number', description: 'Bangumi Data 缓存有效期(天)，设置0则每次请求时强制异步更新，默认7天', min: 0, max: 30 },
 
@@ -793,31 +620,17 @@ export class Envs {
       'PROXY_URL': { category: 'system', type: 'text', description: '代理/反代地址' },
       'TMDB_API_KEY': { category: 'system', type: 'text', description: 'TMDB API密钥' },
       'LOG_LEVEL': { category: 'system', type: 'select', options: ['debug', 'info', 'warn', 'error'], description: '日志级别配置' },
-      'DEPLOY_PLATFROM_ACCOUNT': { category: 'system', type: 'text', description: '部署平台账号ID' },
-      'DEPLOY_PLATFROM_PROJECT': { category: 'system', type: 'text', description: '部署平台项目名称' },
-      'DEPLOY_PLATFROM_TOKEN': { category: 'system', type: 'text', description: '部署平台访问令牌' },
-      'NODE_TLS_REJECT_UNAUTHORIZED': { category: 'system', type: 'number', description: '在建立 HTTPS 连接时是否验证服务器的 SSL/TLS 证书，0表示忽略，默认为1', min: 0, max: 1 },
-      'IP_BLACKLIST': { category: 'system', type: 'text', description: 'IP 黑名单列表，支持逗号/分号/换行分隔，支持 /regex/ 或 /regex/i 正则，支持 IPv4/IPv6 CIDR（如 10.0.0.0/4、2001:db8::/64）。命中则拒绝请求' },
     };
 
     return {
-      vodAllowedPlatforms: this.VOD_ALLOWED_PLATFORMS,
       allowedPlatforms: this.ALLOWED_PLATFORMS,
       token: this.get('TOKEN', '87654321', 'string', true), // token，默认为87654321
       tokenAuthDisabled: this.get('TOKEN_AUTH_DISABLED', false, 'boolean'), // 是否关闭 TOKEN 鉴权
       adminToken: this.get('ADMIN_TOKEN', '', 'string', true), // admin token，用于系统管理访问控制
-      favoriteRequireAdmin: this.get('FAVORITE_REQUIRE_ADMIN', false, 'boolean'), // 收藏写入和管理接口是否必须使用 admin token；列表始终公开
-      localDanmuNotRequireAdmin: this.get('LOCAL_DANMU_NOT_REQUIRE_ADMIN', false, 'boolean'),
       sourceOrderArr: this.resolveSourceOrder(), // 源排序
       mergeSourcePairs: this.resolveMergeSourcePairs(), // 源合并配置，用于将源合并获取
       customMergeRules: this.resolveCustomMergeRules(), // 合并映射表，用于自定义源合并行为。
-      otherServer: this.get('OTHER_SERVER', 'https://api.danmu.icu', 'string'), // 第三方弹幕服务器
-      customSourceApiUrl: this.get('CUSTOM_SOURCE_API_URL', '', 'string', true), // 自定义弹幕源API地址，默认为空，配置后还需在SOURCE_ORDER添加custom源
-      vodServers: this.resolveVodServers(), // vod站点配置，格式：名称@URL,名称@URL
-      vodReturnMode: this.get('VOD_RETURN_MODE', 'fastest', 'string').toLowerCase(), // vod返回模式：all（所有站点）或 fastest（最快的站点）
-      vodRequestTimeout: this.get('VOD_REQUEST_TIMEOUT', '10000', 'string'), // vod超时时间（默认10秒）
       bilibliCookie: this.get('BILIBILI_COOKIE', '', 'string', true), // b站cookie
-      doubanCookie: this.get('DOUBAN_COOKIE', '', 'string', true), // 豆瓣cookie
       youkuConcurrency: Math.min(this.get('YOUKU_CONCURRENCY', 8, 'number'), 16), // 优酷并发配置
       dandanplayAccount: this.get('DANDANPLAY_ACCOUNT', '', 'string', true), // 弹弹play账号，dandan 源获取弹幕使用
       dandanplayPassword: this.get('DANDANPLAY_PASSWORD', '', 'string', true), // 弹弹play密码，dandan 源获取弹幕使用
@@ -833,13 +646,10 @@ export class Envs {
       uiTheme: this.get('UI_THEME', 'lavender', 'string').toLowerCase(), // 管理界面主题
       proxyUrl: this.get('PROXY_URL', '', 'string', true), // 代理/反代地址
       danmuSimplifiedTraditional: this.get('DANMU_SIMPLIFIED_TRADITIONAL', 'default', 'string'), // 弹幕简繁体转换设置：default（默认不转换）、simplified（繁转简）、traditional（简转繁）
-      danmuPushUrl: this.get('DANMU_PUSH_URL', '', 'string'), // 代理/反代地址
       likeSwitch: this.get('LIKE_SWITCH', true, 'boolean'), // 弹幕点赞数显示开关，默认开启
       danmuOffset: this.get('DANMU_OFFSET', '', 'string'), // 弹幕时间偏移配置
       danmuOffsetRules: parseOffsetRules(this.get('DANMU_OFFSET', '', 'string')), // 解析后的偏移规则（缓存）
       tmdbApiKey: this.get('TMDB_API_KEY', '', 'string', true), // TMDB API KEY
-      redisUrl: this.get('UPSTASH_REDIS_REST_URL', '', 'string', true), // upstash redis url
-      redisToken: this.get('UPSTASH_REDIS_REST_TOKEN', '', 'string', true), // upstash redis url
       localCacheEnabled: this.get('LOCAL_CACHE_ENABLED', true, 'boolean'), // 允许使用已有 .cache 目录保存通用文件缓存
       localRedisUrl: this.get('LOCAL_REDIS_URL', '', 'string', true), // 本地 Redis 连接URL，示例：redis://:password@127.0.0.1:6379/0，只支持本地部署和docker部署
       rateLimitMaxRequests: this.get('RATE_LIMIT_MAX_REQUESTS', 3, 'number'), // 限流配置：时间窗口内最大请求次数（默认 3，0表示不限流）
@@ -866,20 +676,11 @@ export class Envs {
       titleMappingTableUrl: this.get('TITLE_MAPPING_TABLE_URL', '', 'string'), // 远程剧名映射表地址（由用户托管维护，自动拉取生效）
       autoMatchMappingTable: this.resolveAutoMatchMappingTable(), // 自动匹配标题/季度/集数映射规则
       autoMatchMappingTableUrl: this.get('AUTO_MATCH_MAPPING_TABLE_URL', '', 'string'), // 远程季集映射表地址
-      ipBlacklist: this.resolveIpBlacklist(), // IP 黑名单（支持正则）
-      aiBaseUrl: this.get('AI_BASE_URL', 'https://api.openai.com/v1', 'string'), // AI服务基础URL
-      aiModel: this.get('AI_MODEL', 'gpt-4o', 'string'), // AI模型名称
-      aiApiKey: this.get('AI_API_KEY', '', 'string', true), // AI服务API密钥
-      aiMatchPrompt: this.get('AI_MATCH_PROMPT', this.DEFAULT_AI_MATCH_PROMPT, 'string'), // AI自动匹配提示词模板
       useBangumiData: this.get('USE_BANGUMI_DATA', false, 'boolean'), // Bangumi Data 加速匹配开关
       rememberLastSelect: this.get('REMEMBER_LAST_SELECT', true, 'boolean'), // 是否记住手动选择结果，用于match自动匹配时优选上次的选择（默认 true，记住）
       MAX_LAST_SELECT_MAP: this.get('MAX_LAST_SELECT_MAP', 100, 'number'), // 记住上次选择映射缓存大小限制（默认 100）
       MAX_ANIMES: this.get('MAX_ANIMES', 100, 'number'), // 动漫标题缓存最大数量（默认 100）
       bangumiDataCacheDays: this.get('BANGUMI_DATA_CACHE_DAYS', 7, 'number'), // Bangumi Data 缓存有效期(天)，默认7天
-      deployPlatformAccount: this.get('DEPLOY_PLATFROM_ACCOUNT', '', 'string', true), // 部署平台账号ID配置（默认空）
-      deployPlatformProject: this.get('DEPLOY_PLATFROM_PROJECT', '', 'string', true), // 部署平台项目名称配置（默认空）
-      deployPlatformToken: this.get('DEPLOY_PLATFROM_TOKEN', '', 'string', true), // 部署平台项目名称配置（默认空）
-      NODE_TLS_REJECT_UNAUTHORIZED: this.get('NODE_TLS_REJECT_UNAUTHORIZED', 1, 'number'), // 在建立 HTTPS 连接时是否验证服务器的 SSL/TLS 证书，0表示忽略，默认为1
       envVarConfig: envVarConfig // 环境变量分类和描述映射
     };
   }
