@@ -1,4 +1,5 @@
 import { globals } from '../configs/globals.js';
+import { getMatchTracePrefix } from './match-trace-util.js';
 
 // =====================
 // 日志记录工具
@@ -24,6 +25,8 @@ export function log(level, ...args) {
     }
   });
 
+  const prefix = getMatchTracePrefix();
+  if (prefix) processedArgs.unshift(prefix.trimEnd());
   const message = processedArgs
     .map((arg) => (typeof arg === "object" ? JSON.stringify(arg) : arg))
     .join(" ");
