@@ -247,7 +247,7 @@ export function parseAutoMatchMappingRules(value, allowedPlatforms = []) {
   return { rules, warnings };
 }
 
-export function resolveAutoMatchMapping(rules, { title, season, episode, releaseGroups = [], releaseGroup = '' } = {}) {
+export function resolveAutoMatchMapping(rules, { title, season, episode, releaseGroups = [], releaseGroup = '', preferredPlatform = '', rejectAmbiguous = false } = {}) {
   const titleKey = normalizeRuleTitle(title);
   const seasonNumber = Number(season);
   const episodeNumber = Number(episode);
@@ -294,13 +294,50 @@ export function resolveAutoMatchMapping(rules, { title, season, episode, release
     return leftRule.order - rightRule.order;
   });
 
-  const selected = matches[0];
+  let selected = matches[0];
+  if (selected && rejectAmbiguous) {
+    const top = selected.rule;
+    const peers = matches.filter(item => item.groupSpecificity === selected.groupSpecificity
+      && Number(item.rule.originPriority || 0) === Number(top.originPriority || 0)
+      && item.rule.bounded === top.bounded
+      && (top.bounded || item.rule.sourceStartEpisode === top.sourceStartEpisode));
+    const platform = canonicalPlatformName(preferredPlatform);
+    const preferred = platform ? peers.filter(item => item.rule.targetPlatform === platform) : [];
+    const eligible = preferred.length ? preferred : peers;
+    const signatures = new Set(eligible.map(({ rule }) => JSON.stringify([
+      normalizeRuleTitle(rule.targetTitle), rule.targetSeason,
+      rule.targetStartEpisode - rule.sourceStartEpisode, rule.targetPlatform,
+      rule.targetYear, rule.targetType, rule.targetTmdbId
+    ])));
+    if (signatures.size > 1) return null;
+    selected = eligible[0];
+  }
   const rule = selected?.rule;
   if (!rule) return null;
   return {
     ...rule,
     targetEpisode: rule.targetStartEpisode + episodeNumber - rule.sourceStartEpisode
   };
+}
+
+/** Original filename rules first; aliases supply identity only, never season guesses. */
+export function collectAutoMatchCandidates(rules, { title, aliasTitle, season, episode, releaseGroups = [], preferredPlatform = '' }) {
+  const queries = [...new Set([title, aliasTitle].filter(Boolean))];
+  const result = [];
+  const seen = new Set();
+  for (const groups of releaseGroups.length ? [releaseGroups, []] : [[]]) {
+    for (const queryTitle of queries) {
+      const rule = resolveAutoMatchMapping(rules, { title: queryTitle, season, episode,
+        releaseGroups: groups, preferredPlatform, rejectAmbiguous: true });
+      if (!rule) continue;
+      const key = JSON.stringify([rule.targetTitle, rule.targetSeason, rule.targetEpisode,
+        rule.targetPlatform, rule.targetYear, rule.targetType, rule.targetTmdbId]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(rule);
+    }
+  }
+  return result;
 }
 
 export function mergeAutoMatchMappingRules(localRules, remoteRules) {

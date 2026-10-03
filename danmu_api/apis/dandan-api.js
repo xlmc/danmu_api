@@ -14,7 +14,7 @@ import { resolveFavoriteForSearchKeyword } from "../utils/favorite-util.js";
 import { formatDanmuResponse, convertToDanmakuJson, filterDanmusByBlockedNames } from "../utils/danmu-util.js";
 import { resolveOffset, resolveOffsetRule, applyOffset, stripLinkOffset } from "../utils/offset-util.js";
 import { applySearchKeywordMapping, ensureRemoteTitleMapping, ensureCachedRemoteTitleMapping, resolveLocalTitleMapping, resolveCachedRemoteTitleMapping } from "../utils/title-mapping-url-util.js";
-import { filterMappingQualifierCandidates, filterMappingTargetCandidates, resolveAutoMatchMapping } from "../utils/auto-match-mapping-util.js";
+import { filterMappingQualifierCandidates, filterMappingTargetCandidates, collectAutoMatchCandidates } from "../utils/auto-match-mapping-util.js";
 import { ensureRemoteAutoMatchMapping, getCachedRemoteAutoMatchMappingRules } from "../utils/auto-match-mapping-url-util.js";
 import {
   extractEpisodeTitle, convertChineseNumber, parseFileName, extractReleaseGroups, createDynamicPlatformOrder, normalizeSpaces, normalizeTitleForMatch,
@@ -2044,7 +2044,11 @@ async function selectReadyMatch({ animes, details, title, season, episode, year,
 
 async function executeMatchAttempt({ req, title, season, episode, year, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false }) {
   const startedAt = Date.now();
-  const dynamicPlatformOrder = createMatchPlatformOrder(preferredPlatform, secondaryPreferredPlatform);
+  // A platform-qualified rule describes that platform's numbering. Never
+  // apply its offset to another source if the platform has no matching episode.
+  const dynamicPlatformOrder = mapping?.targetPlatform
+    ? [mapping.targetPlatform]
+    : createMatchPlatformOrder(preferredPlatform, secondaryPreferredPlatform);
   const targetPlatform = dynamicPlatformOrder.length > 0 ? dynamicPlatformOrder[0] : null;
   const detailStore = new Map();
   const searchUrl = buildSearchAnimeUrl(req.url, title, season, episode, true);
@@ -2143,6 +2147,13 @@ async function executeMatchAttempt({ req, title, season, episode, year, preferre
       detailStore
     });
     if (selected.resAnime && selected.resEpisode) {
+      // Explicit mappings must yield that episode in that numbering system.
+      // The ordinary fallback may use array positions or another platform;
+      // those results are not evidence that a mapped path succeeded.
+      if (mapping && (selected.spilloverMatched
+          || extractEpisodeNumberFromTitle(selected.resEpisode.episodeTitle) !== episode
+          || (mapping.targetPlatform && getPlatformMatchScore(
+            extractEpisodeTitle(selected.resEpisode.episodeTitle), mapping.targetPlatform) <= 0))) continue;
       if (mapping && pass.label === 'qualified') {
         log('info', `[system] [auto-match-mapping] Matched preferred target qualifiers for "${mapping.targetDisplayTitle}"`);
       }
@@ -2278,10 +2289,21 @@ export async function matchAnime(url, req, clientIp) {
       attempt = await tryTitlePath({ stage: '本机手动选择', title: manualPreferenceTitle, preferAnimeId, preferSource, offsets });
     }
 
-    // 2. 本机标题表；规则存在不算成功，必须真正找到作品和剧集。
+    // 2. 本机规则先按原始标题/别名查找明确季集修正，失败再仅替换标题。
+    // 本机手动选择和本机配置仍优先于远程数据；所有阶段以实际匹配为准。
     if (!succeeded(attempt)) {
       localTitleMapping = resolveLocalTitleMapping(parsed.title, originalSeason, originalYear);
-      if (localTitleMapping.matched) {
+      const localCandidates = collectAutoMatchCandidates(globals.autoMatchMappingTable, {
+        title: originalTitle,
+        aliasTitle: localTitleMapping.matched ? normalizeMatchTitle(localTitleMapping.title) : '',
+        season: originalSeason, episode: originalEpisode,
+        releaseGroups: originalReleaseGroups, preferredPlatform
+      });
+      for (const rule of localCandidates) {
+        attempt = await tryAutoMappingPath('本机标题+季集映射', rule) || attempt;
+        if (succeeded(attempt)) break;
+      }
+      if (!succeeded(attempt) && localTitleMapping.matched) {
         const title = normalizeMatchTitle(localTitleMapping.title);
         const [preferAnimeId, preferSource, offsets] = globals.rememberLastSelect
           ? getPreferAnimeId(title, originalSeason) : [null, null, null];
@@ -2289,112 +2311,26 @@ export async function matchAnime(url, req, clientIp) {
       }
     }
 
-    // 3. 本机季集表。标题表实际失败后，先尝试明确的标题+季集组合，
-    // 再用原始标题查季集规则；命中规则不等于成功，仍以作品和剧集为准。
-    if (!succeeded(attempt)) {
-      const localRuleCandidates = [];
-      const seenLocalRules = new Set();
-      const addLocalRule = (rule, stage) => {
-        if (!rule) return;
-        const key = `${rule.raw || ''}\u0000${rule.targetTitle || ''}\u0000${rule.targetSeason}\u0000${rule.targetEpisode}`;
-        if (seenLocalRules.has(key)) return;
-        seenLocalRules.add(key);
-        localRuleCandidates.push({ rule, stage });
-      };
-      const resolveLocalRuleCandidates = query => {
-        const exact = resolveAutoMatchMapping(globals.autoMatchMappingTable, {
-          ...query,
-          releaseGroups: originalReleaseGroups
-        });
-        const generic = originalReleaseGroups.length > 0
-          ? resolveAutoMatchMapping(globals.autoMatchMappingTable, { ...query, releaseGroups: [] })
-          : null;
-        return [
-          exact ? { rule: exact, stage: '本机标题+季集映射' } : null,
-          generic ? { rule: generic, stage: '本机季集映射（通用回退）' } : null
-        ].filter(Boolean);
-      };
-
-      if (localTitleMapping?.matched) {
-        for (const candidate of resolveLocalRuleCandidates({
-          title: normalizeMatchTitle(localTitleMapping.title), season: originalSeason, episode: originalEpisode
-        })) {
-          addLocalRule(candidate.rule, candidate.stage);
-        }
-      }
-
-      for (const candidate of resolveLocalRuleCandidates({
-        title: originalTitle, season: originalSeason, episode: originalEpisode,
-      })) {
-        addLocalRule(candidate.rule, candidate.stage);
-      }
-
-      for (const candidate of localRuleCandidates) {
-        attempt = await tryAutoMappingPath(candidate.stage, candidate.rule) || attempt;
-        if (succeeded(attempt)) break;
-      }
-    }
-
-    // 4. 远程表只读取本机缓存（缓存缺失时不在请求中联网）。
-    // 显式远程规则要先于普通模糊匹配，这样文件名命中的季集/发布组
-    // 修正不会被一个“看起来能匹配”的普通候选提前截断。
+    // 3. 远程表只读本机缓存，不在请求中下载规则。明确季集规则先于标题别名。
     if (!succeeded(attempt)) {
       await ensureCachedRemoteTitleMapping();
+      await ensureRemoteAutoMatchMapping();
       remoteTitleMapping = resolveCachedRemoteTitleMapping(parsed.title, originalSeason, originalYear);
-      if (remoteTitleMapping.matched) {
+      const remoteCandidates = collectAutoMatchCandidates(getCachedRemoteAutoMatchMappingRules(), {
+        title: originalTitle,
+        aliasTitle: remoteTitleMapping.matched ? normalizeMatchTitle(remoteTitleMapping.title) : '',
+        season: originalSeason, episode: originalEpisode,
+        releaseGroups: originalReleaseGroups, preferredPlatform
+      });
+      for (const rule of remoteCandidates) {
+        attempt = await tryAutoMappingPath('远程标题+季集缓存', rule) || attempt;
+        if (succeeded(attempt)) break;
+      }
+      if (!succeeded(attempt) && remoteTitleMapping.matched) {
         const title = normalizeMatchTitle(remoteTitleMapping.title);
         const [preferAnimeId, preferSource, offsets] = globals.rememberLastSelect
           ? getPreferAnimeId(title, originalSeason) : [null, null, null];
         attempt = await tryTitlePath({ stage: '远程标题缓存', title, preferAnimeId, preferSource, offsets, strictTargetTitle: true }) || attempt;
-      }
-    }
-
-    // 5. 远程标题实际失败后，尝试远程季集缓存。
-    // 若标题表和季集表都命中，先尝试“标题+季集”组合；组合规则必须
-    // 明确以标题映射后的标题为源标题，避免把无关规则强行叠加。
-    if (!succeeded(attempt)) {
-      await ensureRemoteAutoMatchMapping();
-      const remoteRules = getCachedRemoteAutoMatchMappingRules();
-      const remoteRuleCandidates = [];
-      const seenRemoteRules = new Set();
-      const addRemoteRule = (rule, stage) => {
-        if (!rule) return;
-        const key = `${rule.raw || ''}\u0000${rule.targetTitle || ''}\u0000${rule.targetSeason}\u0000${rule.targetEpisode}`;
-        if (seenRemoteRules.has(key)) return;
-        seenRemoteRules.add(key);
-        remoteRuleCandidates.push({ rule, stage });
-      };
-      const resolveRemoteRuleCandidates = query => {
-        const exact = resolveAutoMatchMapping(remoteRules, {
-          ...query,
-          releaseGroups: originalReleaseGroups
-        });
-        const generic = originalReleaseGroups.length > 0
-          ? resolveAutoMatchMapping(remoteRules, { ...query, releaseGroups: [] })
-          : null;
-        return [
-          exact ? { rule: exact, stage: '远程标题+季集缓存' } : null,
-          generic ? { rule: generic, stage: '远程季集缓存（通用回退）' } : null
-        ].filter(Boolean);
-      };
-
-      if (remoteTitleMapping?.matched) {
-        for (const candidate of resolveRemoteRuleCandidates({
-          title: normalizeMatchTitle(remoteTitleMapping.title), season: originalSeason, episode: originalEpisode
-        })) {
-          addRemoteRule(candidate.rule, candidate.stage);
-        }
-      }
-
-      for (const candidate of resolveRemoteRuleCandidates({
-        title: originalTitle, season: originalSeason, episode: originalEpisode,
-      })) {
-        addRemoteRule(candidate.rule, candidate.stage);
-      }
-
-      for (const candidate of remoteRuleCandidates) {
-        attempt = await tryAutoMappingPath(candidate.stage, candidate.rule) || attempt;
-        if (succeeded(attempt)) break;
       }
     }
 
