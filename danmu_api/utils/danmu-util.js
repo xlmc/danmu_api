@@ -319,7 +319,7 @@ export function parseBlockedNameEntry(segment) {
 
 /**
  * 判断屏蔽词条是否为 地区: 条目（如 "地区:海南"、"地区:*"）：
- * 交由地区语境分析引擎匹配，仅命中"来自海南""海南网友""朝阳区"等明确地区语境。
+ * 按地区名称包含匹配，命中即屏蔽整条弹幕。
  */
 export function isBlockedRegionEntry(segment) {
   return /^地区[:：]/.test(String(segment || '').trim());
@@ -699,7 +699,7 @@ export function convertToDanmakuJson(contents, platform) {
   // =====================
   // 屏蔽词过滤（含生效诊断日志）
   // =====================
-  // 解析屏蔽词：支持 /regex/、/regex/flags、纯文本词、@人名（语境匹配）及 地区:地区名（地区语境匹配），
+  // 解析屏蔽词：支持 /regex/、/regex/flags、纯文本词、@人名（语境匹配）及 地区:地区名（名称包含匹配），
   // 兼容中英文逗号及空格分隔
   const blockedSegments = splitBlockedWords(globals.blockedWords);
   const blockedNameEntries = [];
@@ -743,7 +743,7 @@ export function convertToDanmakuJson(contents, platform) {
     const ruleSummary = regexArray.map(r => r.toString()).join(' , ');
     const extras = [];
     if (blockedNameEntries.length) extras.push(`人名(语境匹配): ${blockedNameEntries.join(' , ')}`);
-    if (blockedRegionEntries.length) extras.push(`地区(语境匹配): ${usedRegionPreset ? `内置预设名单 ${blockedRegionEntries.length} 个` : blockedRegionEntries.join(' , ')}`);
+    if (blockedRegionEntries.length) extras.push(`地区(包含匹配): ${usedRegionPreset ? `内置预设名单 ${blockedRegionEntries.length} 个` : blockedRegionEntries.join(' , ')}`);
     const extraSummary = extras.length ? `${ruleSummary ? ' , ' : ''}${extras.join(' , ')}` : '';
     log("info", `[system] [danmu] [blocked-words] 规则解析成功: 共 ${regexArray.length} 条规则 + ${blockedNameEntries.length} 个人名 + ${blockedRegionEntries.length} 个地区 [ ${ruleSummary}${extraSummary} ]`);
   }
@@ -765,7 +765,7 @@ export function convertToDanmakuJson(contents, platform) {
   });
 
   // @人名 条目走语境分析引擎：三字及以上按完整名称匹配，二字仅在明确人物语境（称谓/指代）中命中；
-  // 地区: 条目仅在明确地区语境（"来自海南""海南网友"）中命中；
+  // 地区: 条目按名称包含匹配；
   // 姓氏指代为严格版（仅“姓氏+称谓”或“@/# 姓氏”），裸姓氏不命中
   let entityHits = [];
   if (blockedNameEntries.length > 0 || blockedRegionEntries.length > 0) {
