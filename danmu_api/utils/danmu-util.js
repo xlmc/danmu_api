@@ -475,21 +475,47 @@ export function buildBlockedSurnameMatchers(names, options = {}) {
   return matchers;
 }
 
-/** 昵称仅从当前作品的角色姓名派生，不使用演员表或弹幕内容推断。 */
-export function buildCharacterNicknameMatchers(names) {
+const PERSON_NICKNAME_PREFIXES = ['小', '老', '阿', '大'];
+const PERSON_NICKNAME_SUFFIXES = [
+  '子', '儿', '哥', '姐', '弟', '妹', '叔', '姨', '爷', '奶',
+  '哥哥', '姐姐', '弟弟', '妹妹', '叔叔', '阿姨', '爷爷', '奶奶',
+  '老师', '先生', '小姐', '女士', '同学', '总', '导', '老板',
+  '师傅', '师父', '公子', '姑娘', '少爷', '宝宝', '宝', '宝贝',
+  '崽', '崽崽', '仔', '妞', '兄', '兄弟', '弟子', '妹子', '嫂', '嫂子',
+  '爸', '妈', '爸爸', '妈妈', '伯', '伯伯', '舅', '舅舅', '婶', '婶婶',
+  '姑', '姑姑', '姨姨', '爹', '娘', '姥姥', '姥爷', '桑', '酱',
+  '大人', '殿下', '陛下', '夫人', '太太', '女神', '男神', '女王', '王子',
+  '总裁', '队', '队长', '医生', '大夫', '警官', '院长', '教授'
+];
+
+/** 称呼仅从当前作品演员/角色姓名派生，按包含匹配，不限制人物语境。 */
+export function buildPersonNicknameMatchers(names, kind = '角色') {
   const aliases = new Set();
   for (const raw of Array.isArray(names) ? names : []) {
     const name = simplized(String(raw || '').normalize('NFKC')).trim();
-    if (!/^\p{Script=Han}{2,4}$/u.test(name)) continue;
-    const surnameLength = COMMON_COMPOUND_SURNAMES.has(name.slice(0, 2)) ? 2 : 1;
-    const given = name.slice(surnameLength);
-    if (given.length >= 2) aliases.add(given);
-    if (given.length === 1) {
-      aliases.add(`阿${given}`);
-      for (const suffix of ['子', '儿', '哥', '姐']) aliases.add(`${given}${suffix}`);
+    if (!/^\p{Script=Han}{2,}$/u.test(name)) continue;
+    const chars = Array.from(name);
+    const surnameLength = COMMON_COMPOUND_SURNAMES.has(chars.slice(0, 2).join('')) ? 2 : 1;
+    const givenChars = chars.slice(surnameLength);
+    const given = givenChars.join('');
+    if (givenChars.length >= 2) aliases.add(given);
+    // 相邻二字覆盖多字名简称（迪丽热巴→热巴、易烊千玺→千玺）；
+    // 更长的名字片段已包含这些二字，因此无需枚举所有子串。
+    for (let i = 0; i + 1 < givenChars.length; i++) aliases.add(givenChars.slice(i, i + 2).join(''));
+    const surname = chars.slice(0, surnameLength).join('');
+    const stems = new Set([name, surname, given, ...givenChars]);
+    for (const stem of stems) {
+      if (!stem) continue;
+      for (const prefix of PERSON_NICKNAME_PREFIXES) aliases.add(`${prefix}${stem}`);
+      for (const suffix of PERSON_NICKNAME_SUFFIXES) aliases.add(`${stem}${suffix}`);
+      if (Array.from(stem).length === 1) aliases.add(`${stem}${stem}`);
     }
   }
-  return [...aliases].map(needle => ({ label: `角色昵称:${needle}`, needle, regex: null }));
+  return [...aliases].map(needle => ({ label: `${kind}昵称:${needle}`, needle, regex: null }));
+}
+
+export function buildCharacterNicknameMatchers(names) {
+  return buildPersonNicknameMatchers(names);
 }
 
 export function filterDanmusByBlockedNames(danmus, names, options = {}) {
@@ -499,7 +525,9 @@ export function filterDanmusByBlockedNames(danmus, names, options = {}) {
   // 当前作品演员及角色表中的完整名字直接匹配；手动 @人名 仍使用原有语境规则。
   const characterMatchers = buildBlockedNameMatchers(options.characterNames).map(matcher => ({ ...matcher, regex: null }));
   const actorMatchers = buildBlockedNameMatchers(options.actorNames).map(matcher => ({ ...matcher, regex: null }));
-  const matchers = [...characterMatchers, ...actorMatchers, ...buildCharacterNicknameMatchers(options.characterNames), ...buildBlockedNameMatchers(names)];
+  const matchers = [...characterMatchers, ...actorMatchers,
+    ...buildCharacterNicknameMatchers(options.characterNames),
+    ...buildPersonNicknameMatchers(options.actorNames, '演员'), ...buildBlockedNameMatchers(names)];
   const surnameMatchers = buildBlockedSurnameMatchers(options.surnameNames, options.surnameMatcherOptions);
   const regionMatchers = buildBlockedRegionMatchers(options.regionNames);
   if (matchers.length === 0 && surnameMatchers.length === 0 && regionMatchers.length === 0) {

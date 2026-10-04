@@ -6,12 +6,34 @@ import { shouldBlockDomesticCelebrities, splitPersonFilterExcludedTitles } from 
 import { applyRemoteTitleMappingText, resolveLocalTitleMapping } from './utils/title-mapping-url-util.js';
 import { getComment, getCommentByUrl, getSegmentComment } from './apis/dandan-api.js';
 import { getSourceByKey } from './sources/registry.js';
-import { convertToDanmakuJson } from './utils/danmu-util.js';
+import { convertToDanmakuJson, filterDanmusByBlockedNames } from './utils/danmu-util.js';
 import { setCommentCache } from './utils/cache-util.js';
 import { previewJsContent } from './ui/js/preview.js';
 import { cachedPersonSource, personCacheIdentity } from './utils/person-source-cache.js';
 
 const enabled = { BLOCK_DOMESTIC_CELEBRITIES: 'true', PERSON_FILTER_EXCLUDED_TITLES: '诛仙4' };
+
+test('当前演员和角色的去姓、前后缀、叠字称呼直接包含屏蔽', () => {
+  const samples = [
+    '景瑜来了', '小景好帅', '阿瑜', '瑜瑜', '景瑜宝', '黄老板', '老黄',
+    '小于', '小于等于', '阿川', '川儿', '川子', '川哥哥', '阿川子',
+    '川叔', '川教授', '川崽崽', '川酱', '娜娜', '欧阳老师', '小欧阳',
+    '热巴好美', '千玺来了', '小千', '千千',
+    '小凡出场', '小宇宙爆发', '阿羨', '羨兒', '羡妹妹', '羡女神'
+  ];
+  const comments = [...samples, '于', '川', '景', '瑜', '欧阳', '剧情很好看']
+    .map(m => ({ m }));
+  const options = { actorNames: ['黄景瑜', '于和伟', '陆川', '欧阳娜娜', '迪丽热巴', '易烊千玺'],
+    characterNames: ['张小凡', '张小宇', '魏无羡'] };
+  const result = filterDanmusByBlockedNames(comments, [], options);
+  assert.deepEqual(result.danmus.map(item => item.m), ['于', '川', '景', '瑜', '欧阳', '剧情很好看']);
+  assert.equal(result.removedCount, samples.length);
+  assert.ok(result.hits.some(hit => hit.name === '演员昵称:景瑜'));
+  assert.ok(result.hits.some(hit => hit.name === '角色昵称:小宇'));
+  assert.deepEqual(filterDanmusByBlockedNames(comments, [], {}).danmus, comments);
+  // 手动 @人名维持已有语义，派生仅用于当前作品的两张人物表。
+  assert.deepEqual(filterDanmusByBlockedNames([{ m: '景瑜来了' }], ['黄景瑜']).danmus, [{ m: '景瑜来了' }]);
+});
 
 test('人物免屏蔽名单支持别名、季度、映射优先级及配置更新', async t => {
   await t.test('默认行为与名单分隔符', async () => {
@@ -95,19 +117,24 @@ test('同一弹幕缓存随人物名单热更新，其他作品仍屏蔽角色',
   const key = await personCacheIdentity([title, '', '', '', Boolean(Globals.envs.useBangumiData)]);
   await cachedPersonSource(`${key}:identity`, async () => ({ id: 990099, media_type: 'tv', name: title,
     original_language: 'zh', origin_country: ['CN'], genre_ids: [] }), () => true);
-  await cachedPersonSource(`${key}:tv/990099:credits`, async () => ({ actorNames: [], characterNames: ['张小凡'] }), () => true);
+  await cachedPersonSource(`${key}:tv/990099:credits`, async () => ({ actorNames: ['黄景瑜', '于和伟', '陆川'], characterNames: ['张小凡'] }), () => true);
   await cachedPersonSource(`${key}:wiki`, async () => ({ actorNames: [], characterNames: [] }), () => true);
   Globals.animes = [{ animeTitle: title, links: [{ id: 990099, url }] }];
   Globals.commentCache = new Map();
-  setCommentCache(url, [{ p: '1,1,16777215,[test]', m: '张小凡出场了' }, { p: '2,1,16777215,[test]', m: '剧情很好看' }]);
+  const texts = ['张小凡出场了', '景瑜来了', '小于', '阿川', '川儿', '川子', '川崽', '剧情很好看'];
+  setCommentCache(url, texts.map((m, i) => ({ p: `${i + 1},1,16777215,[test]`, m })));
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => { throw new Error('测试资料已预置，不应联网'); };
   try {
     const filtered = await (await getCommentByUrl(url, 'json', false)).json();
     assert.deepEqual(filtered.comments.map(item => item.m), ['剧情很好看']);
+    const segment = { type: 'tencent', url: 'nickname-cache-segment', animeTitle: title, sourceUrl: url };
+    setCommentCache(segment.url, texts.map((m, i) => ({ p: `${i + 1},1,16777215,[test]`, m })));
+    assert.deepEqual((await (await getComment('/api/v2/comment/990099', 'json', false)).json()).comments.map(item => item.m), ['剧情很好看']);
+    assert.deepEqual((await (await getSegmentComment(segment, 'json')).json()).comments.map(item => item.m), ['剧情很好看']);
     Globals.init({ ...enabled, PERSON_FILTER_EXCLUDED_TITLES: title, COMMENT_CACHE_MIN_COUNT: '0' });
     const excluded = await (await getCommentByUrl(url, 'json', false)).json();
-    assert.deepEqual(excluded.comments.map(item => item.m), ['张小凡出场了', '剧情很好看']);
+    assert.deepEqual(excluded.comments.map(item => item.m), texts);
   } finally {
     globalThis.fetch = originalFetch;
     Globals.init({});
