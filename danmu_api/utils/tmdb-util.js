@@ -470,6 +470,12 @@ export async function getTmdbMatchDetails(mediaType, tmdbId) {
   })}`));
 }
 
+export async function getTmdbMatchEpisode(tmdbId, season, episode) {
+  if (!/^[1-9]\d*$/.test(String(tmdbId)) || !Number.isInteger(season) || season < 0 ||
+      !Number.isInteger(episode) || episode < 1) return null;
+  return readTmdbData(await tmdbApiGet(`tv/${tmdbId}/season/${season}/episode/${episode}?${tmdbQuery({ language: 'zh-CN' })}`));
+}
+
 export async function getTmdbJpDetail(mediaType, tmdbId, options = {}) {
   const url = `${mediaType}/${tmdbId}?api_key=${globals.tmdbApiKey}&language=ja-JP`;
   return await tmdbApiGet(url, options);

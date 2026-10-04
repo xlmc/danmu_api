@@ -1,4 +1,4 @@
-import { resolveTmdbMatchIdentity, filterTmdbMatchCandidates, findSavedTmdbIdentity } from '../utils/tmdb-match-util.js';
+import { resolveTmdbMatchIdentity, filterTmdbMatchCandidates, findSavedTmdbIdentity, resolveTmdbSpecialEpisode, selectTmdbSpecialEpisode } from '../utils/tmdb-match-util.js';
 import { isSupportedSource, isSupportedLocation, sourceForUrl } from '../sources/policy.js';
 import { canonicalPlatformName } from '../utils/platform-util.js';
 import { runWithMatchTrace, traceMatchStep, getMatchTracePrefix } from '../utils/match-trace-util.js';
@@ -1708,7 +1708,7 @@ function needsGroupMerge(sources) {
     rule.secondary.source.split('&').some(source => active.has(source)));
 }
 
-async function executeMatchAttemptBody({ req, title, season, episode, year, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false, tmdbIdentity = null, sourceSearches = null, searchSources = null, stagePlatform }) {
+async function executeMatchAttemptBody({ req, title, season, episode, year, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false, tmdbIdentity = null, tmdbEpisode = null, sourceSearches = null, searchSources = null, stagePlatform }) {
   const startedAt = Date.now();
   // A platform-qualified rule describes that platform's numbering. Never
   // apply its offset to another source if the platform has no matching episode.
@@ -1721,7 +1721,7 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, pref
   const budget = globals.matchSearchBudgetMs;
   const catalogKey = `${title}_S${season}`;
   const mustCompleteMerge = needsGroupMerge(searchSources ?? globals.sourceOrderArr);
-  const canUseReady = !mustCompleteMerge && budget > 0 && season && episode && targetPlatform && !preferAnimeId && !offsets &&
+  const canUseReady = !tmdbEpisode && !mustCompleteMerge && budget > 0 && season && episode && targetPlatform && !preferAnimeId && !offsets &&
     !(mapping?.targetYear || mapping?.targetType || (mapping?.targetTmdbId && !tmdbIdentity));
   const fastDisabledReasons = [];
   if (mustCompleteMerge) fastDisabledReasons.push('先完成当前平台组的源合并');
@@ -1802,6 +1802,16 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, pref
 
   if (!searchData?.success || !Array.isArray(searchData.animes) || searchData.animes.length === 0) {
     return { resAnime: null, resEpisode: null, spilloverMatched: false, title, season, episode, cacheWarning };
+  }
+
+  if (tmdbEpisode) {
+    const catalog = searchData.animes.map(anime => ({ ...anime, links:
+      resolveAnimeByIdFromDetailStore(anime.bangumiId || anime.animeId, detailStore, anime.source)?.links || anime.links }));
+    const selected = selectTmdbSpecialEpisode(catalog, tmdbEpisode, tmdbIdentity,
+      anime => getBangumiDataForMatch(anime, detailStore)?.bangumi?.episodes);
+    if (selected) log('info', `[system] [match] TMDB 特别篇精确对应: ${tmdbEpisode.name} -> ${selected.resAnime.animeTitle} / ${selected.resEpisode.episodeTitle}`);
+    else log('info', '[system] [match-reject] TMDB 特别篇没有唯一且符合季号、年份、标题及上下篇的分集');
+    return { resAnime: null, resEpisode: null, spilloverMatched: false, ...selected, title, season, episode, cacheWarning };
   }
 
   const titleGuard = mapping || (strictTargetTitle ? { targetTitle: title } : null);
@@ -2098,6 +2108,23 @@ async function matchAnimeWithTrace(url, req, clientIp) {
           attemptedTitlePaths.clear();
           attempt = await tryTitlePath({ stage: 'TMDB 辅助作品匹配', title: tmdbIdentity.title }) || attempt;
         }
+      }
+    }
+
+    if (!succeeded(attempt) && tmdbIdentity && originalSeason === 0) {
+      let metadata = null;
+      try {
+        metadata = await traceMatchStep(log, 'TMDB 特别篇分集查询', () =>
+          resolveTmdbSpecialEpisode(tmdbIdentity, originalSeason, originalEpisode));
+      } catch (error) { log('warn', '[system] [match] TMDB 特别篇查询失败: ' + error.message); }
+      if (metadata) {
+        log('info', '[system] [match-trace] TMDB 分集身份 ' + JSON.stringify(metadata));
+        attempt = await traceMatchStep(log, 'TMDB 特别篇对应平台分集', () => executeMatchAttempt({
+          req, title: tmdbIdentity.title, season: metadata.targetSeason, episode: null,
+          year: metadata.year, preferredPlatform, tmdbIdentity, tmdbEpisode: metadata,
+          sourceSearches, preferAnimeId: null, preferSource: null, offsets: null, mapping: null
+        }));
+        if (succeeded(attempt)) matchStage = 'TMDB 特别篇对应平台分集';
       }
     }
 
