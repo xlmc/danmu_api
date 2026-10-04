@@ -93,10 +93,8 @@ TMDB 身份为 tv:ID 或 movie:ID，随匹配成功的目录保存；失败候�
 | CONVERT_TOP_BOTTOM_TO_SCROLL | boolean | 顶部/底部弹幕转换为浮动弹幕 |
 | CONVERT_COLOR | select | 弹幕转换颜色配置 |
 | COLOR_POOL | text | 自定义颜色池（CONVERT_COLOR为color时生效），不配置使用默认颜色池，格式：十进制颜色值逗号分隔 |
-| GRADIENT_CHANCE | number | 渐变色弹幕概率（CONVERT_COLOR为color时生效），单位百分比 0-100，默认 0，弹幕按此概率从渐变色带取色（随出现时间平滑流转），0 表示关闭 |
-| GRADIENT_COLORS | text | 渐变色带（CONVERT_COLOR为color时生效），默认使用default；可选皮肤：bilibili/sweet/cyber/sunset/ocean/mint/rainbow，或十进制颜色值逗号分隔（至少2个） |
-| DANMUX_GRADIENT_STOPS | text | DanmuX 标准渐变 stops JSON；留空时使用 GRADIENT_COLORS 皮肤 |
-| DANMUX_GRADIENT_ANGLE | number | DanmuX 标准线性渐变角度，默认0 |
+| GRADIENT_ENABLED | boolean | 启用渐变弹幕，默认 false；独立于 CONVERT_COLOR，仅普通白色弹幕按概率生成固定 B站粉蓝渐变（#FB7299→#33B8FF），角度固定 0 |
+| GRADIENT_CHANCE | number | 渐变弹幕概率，0-100%，默认 0；仅 GRADIENT_ENABLED 开启时生效，0 表示不生成 |
 | DANMU_OUTPUT_FORMAT | select | 弹幕输出格式，默认json |
 | LIKE_SWITCH | boolean | 弹幕点赞数显示开关，默认开启 |
 | HONGGUO_MERGE_ALL_EPISODES | boolean | 红果短剧合并全集弹幕，默认关闭 |
@@ -117,3 +115,5 @@ TMDB 身份为 tv:ID 或 movie:ID，随匹配成功的目录保存；失败候�
 | LOG_LEVEL | select | 日志级别配置 |
 
 云部署凭据、Upstash、AI、IP 黑名单和关闭 TLS 证书校验的管理项已移除。HTTPS 使用 Node 默认的证书校验。
+
+渐变配置仅保留以上开关与概率。旧 `GRADIENT_COLORS`、`DANMUX_GRADIENT_STOPS`、`DANMUX_GRADIENT_ANGLE` 不再读取；原生渐变保持原样。DanmuX 输出携带标准渐变，普通 JSON/XML 保留按出现时间从粉蓝色带采样的兼容颜色，实际文字渐变需播放器支持。
