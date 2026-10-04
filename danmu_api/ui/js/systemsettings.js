@@ -1,4 +1,3 @@
-import { BLOCKED_WORD_PRESETS } from '../../utils/blocked-word-presets.js';
 import { PLATFORM_ALIASES } from '../../utils/platform-util.js';
 // language=JavaScript
 export const systemSettingsJsContent = `
@@ -6,7 +5,6 @@ export const systemSettingsJsContent = `
 let isMergeMode = false;
 let stagingTags = [];
 const platformNameAliases = ${JSON.stringify(PLATFORM_ALIASES)};
-const blockedWordPresets = ${JSON.stringify(BLOCKED_WORD_PRESETS)};
 
 const UI_THEMES = {
     lavender: '经典默认',
@@ -1022,13 +1020,9 @@ function renderValueInput(item) {
             \`;
         } else if (currentKey === 'BLOCKED_WORDS') {
             container.innerHTML = \`
-                <label>屏蔽词与正则</label>
+                <label>屏蔽词</label>
                 <textarea id="text-value" rows="8" class="text-monospace" placeholder="用逗号分隔普通词与 /正则/flags">\${escapeHtml(value || '')}</textarea>
-                <div class="offset-actions">
-                    <button type="button" class="btn btn-secondary" onclick="appendBlockedWordPreset('regions')">添加地区正则</button>
-                    <button type="button" class="btn btn-secondary" onclick="appendBlockedWordPreset('dates')">添加日期时间正则</button>
-                </div>
-                <div class="form-help">命中任意规则即屏蔽整条弹幕。删除对应正则即可停用；地区规则包含简繁体名称，普通表达包含地区名也会被屏蔽。</div>
+                <div class="form-help">支持普通词和 /正则/flags，用逗号分隔；命中任意规则即屏蔽整条弹幕。</div>
             \`;
         } else if (value && value.length > 50) {
             const rows = Math.min(Math.max(Math.ceil(value.length / 50), 3), 10);
@@ -1045,16 +1039,6 @@ function renderValueInput(item) {
             \`;
         }
     }
-}
-
-function appendBlockedWordPreset(kind) {
-    const field = document.getElementById('text-value');
-    if (!field || !blockedWordPresets[kind]) return;
-    let value = field.value.trim();
-    for (const rule of blockedWordPresets[kind]) {
-        if (!value.includes(rule)) value = value ? value + ',' + rule : rule;
-    }
-    field.value = value;
 }
 
 // ===== 颜色池操作函数 =====
