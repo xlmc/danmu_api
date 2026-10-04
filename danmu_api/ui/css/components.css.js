@@ -1232,7 +1232,17 @@ body[data-theme] input[type="checkbox"].app-checkbox:focus-visible {
 .margin-bottom-15 { margin-bottom: 15px; }
 .text-monospace { font-family: ui-monospace, monospace; }
 
-/* 屏蔽词逐条编辑：默认折叠，长正则只显示短预览。 */
+/* 分类摘要始终单行，展开分类后逐条编辑。 */
+.blocked-word-group { border-bottom: 1px solid var(--theme-border); }
+.blocked-word-group-summary { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 0; color: var(--theme-text); }
+summary.blocked-word-group-summary { cursor: pointer; }
+summary.blocked-word-group-summary::before { content: '▸'; flex-shrink: 0; }
+.blocked-word-group[open] > summary::before { content: '▾'; }
+.env-item .env-info .blocked-word-kind { white-space: nowrap; }
+.env-item .env-info .blocked-word-group-preview { white-space: nowrap; }
+.blocked-word-group-preview { display: block; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.blocked-word-heading > span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 .blocked-word-summary, .blocked-word-empty { color: var(--theme-muted); font-size: 12px; padding: 8px 0; }
 .blocked-word-row { border-bottom: 1px solid var(--theme-border); padding: 12px 0; }
 .blocked-word-line { display: flex; align-items: center; gap: 10px; }

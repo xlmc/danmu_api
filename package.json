@@ -6,7 +6,7 @@
   "main": "danmu_api/server.js",
   "scripts": {
     "start": "node danmu_api/server.js",
-    "test": "node --test danmu_api/gradient.test.js danmu_api/supplementary-episodes.test.js danmu_api/dandan-search.test.js danmu_api/guoman-scenarios.test.js danmu_api/log-visibility.test.js danmu_api/mapping-waterfall.test.js danmu_api/match-latency.test.js danmu_api/match-trace.test.js danmu_api/nas-core.test.js danmu_api/tmdb-identity.test.js danmu_api/person-filter-exclusion.test.js danmu_api/platform-names.test.js danmu_api/remote-mapping-refresh.test.js .github/scripts/build-release.test.mjs .github/scripts/merge-images.test.mjs .github/scripts/nas-deployment.test.mjs .github/scripts/sync-upstream.test.mjs"
+    "test": "node --test danmu_api/blocked-word-ui.test.js danmu_api/gradient.test.js danmu_api/supplementary-episodes.test.js danmu_api/dandan-search.test.js danmu_api/guoman-scenarios.test.js danmu_api/log-visibility.test.js danmu_api/mapping-waterfall.test.js danmu_api/match-latency.test.js danmu_api/match-trace.test.js danmu_api/nas-core.test.js danmu_api/tmdb-identity.test.js danmu_api/person-filter-exclusion.test.js danmu_api/platform-names.test.js danmu_api/remote-mapping-refresh.test.js .github/scripts/build-release.test.mjs .github/scripts/merge-images.test.mjs .github/scripts/nas-deployment.test.mjs .github/scripts/sync-upstream.test.mjs"
   },
   "author": "",
   "license": "ISC",

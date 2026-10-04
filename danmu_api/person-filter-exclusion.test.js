@@ -6,7 +6,7 @@ import { shouldBlockDomesticCelebrities, splitPersonFilterExcludedTitles } from 
 import { applyRemoteTitleMappingText, resolveLocalTitleMapping } from './utils/title-mapping-url-util.js';
 import { getComment, getCommentByUrl, getSegmentComment } from './apis/dandan-api.js';
 import { getSourceByKey } from './sources/registry.js';
-import { convertToDanmakuJson, filterDanmusByBlockedNames } from './utils/danmu-util.js';
+import { convertToDanmakuJson, filterDanmusByBlockedNames, filterDanmusByBlockedWords } from './utils/danmu-util.js';
 import { setCommentCache } from './utils/cache-util.js';
 import { previewJsContent } from './ui/js/preview.js';
 import { cachedPersonSource, personCacheIdentity } from './utils/person-source-cache.js';
@@ -15,15 +15,24 @@ import { splitBlockedWords, serializeBlockedWords } from './utils/blocked-word-p
 const enabled = { BLOCK_DOMESTIC_CELEBRITIES: 'true', PERSON_FILTER_EXCLUDED_TITLES: '诛仙4' };
 
 test('逐条编辑的共享分隔逻辑保留长正则、量词逗号与转义斜杠，重新保存仍为同一组规则', () => {
-  const rules = ['打卡', '/a{1,3}/u', '/a\\/b,c/i', '/[a,/]/u', '@白鹿', '地区:海南',
+  const rules = ['打卡', '/a{1,3}/u', '/a\\/b,c/i', '/[a,/]/u', '前排', '来了',
     ...BLOCKED_WORD_PRESETS.regions, ...BLOCKED_WORD_PRESETS.dates];
   const parsed = splitBlockedWords(rules.join(','));
   assert.deepEqual(parsed, rules);
   assert.deepEqual(splitBlockedWords(serializeBlockedWords(parsed)), rules);
   assert.equal(serializeBlockedWords([]), '');
   assert.throws(() => serializeBlockedWords(['/bad', '/good/u']), /无法准确分隔/);
-  assert.deepEqual(splitBlockedWords('打卡， /签到|报到/u, @白鹿'), ['打卡', '/签到|报到/u', '@白鹿']);
+  assert.deepEqual(splitBlockedWords('打卡， /签到|报到/u, 前排'), ['打卡', '/签到|报到/u', '前排']);
   assert.deepEqual(splitBlockedWords(''), []);
+});
+
+test('屏蔽词支持普通词和正则过滤', () => {
+  try {
+    Globals.init({ BLOCKED_WORDS: '打卡,/签到|报到/u', LOG_LEVEL: 'error' });
+    assert.deepEqual(filterDanmusByBlockedWords(['打卡了', '深圳报到', '剧情很好看'].map(m => ({ m }))).map(item => item.m), ['剧情很好看']);
+  } finally {
+    Globals.init({});
+  }
 });
 
 test('当前演员和角色的去姓、前后缀、叠字称呼直接包含屏蔽', () => {
@@ -44,7 +53,7 @@ test('当前演员和角色的去姓、前后缀、叠字称呼直接包含屏�
   assert.ok(result.hits.some(hit => hit.name === '演员昵称:景瑜'));
   assert.ok(result.hits.some(hit => hit.name === '角色昵称:小宇'));
   assert.deepEqual(filterDanmusByBlockedNames(comments, [], {}).danmus, comments);
-  // 手动 @人名维持已有语义，派生仅用于当前作品的两张人物表。
+  // 昵称派生仅用于当前作品的两张人物表，不扩大未分类名单的匹配。
   assert.deepEqual(filterDanmusByBlockedNames([{ m: '景瑜来了' }], ['黄景瑜']).danmus, [{ m: '景瑜来了' }]);
 });
 

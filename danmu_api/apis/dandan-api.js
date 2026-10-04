@@ -108,7 +108,7 @@ async function applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata 
     surnameMatcherOptions: { bareSurname: false }
   });
   if (blockCelebrities) {
-    const personHits = result.hits.filter(hit => !hit.name.startsWith('地区:') && !hit.name.startsWith('日期:'));
+    const personHits = result.hits;
     log('info', `[system] [danmu] [person-filter] 已拦截 ${personHits.reduce((sum, hit) => sum + hit.count, 0)} 条，命中 ${personHits.map(hit => `${hit.name} ×${hit.count}`).join('、') || '无'}`);
   }
   if (result.removedCount > 0) {

@@ -1,5 +1,6 @@
 import { PLATFORM_ALIASES } from '../../utils/platform-util.js';
 import { splitBlockedWords, serializeBlockedWords } from '../../utils/blocked-word-parser.js';
+import { BLOCKED_WORD_PRESETS } from '../../utils/blocked-word-presets.js';
 // language=JavaScript
 export const systemSettingsJsContent = `
 // 全局变量定义
@@ -8,6 +9,8 @@ let stagingTags = [];
 const platformNameAliases = ${JSON.stringify(PLATFORM_ALIASES)};
 ${splitBlockedWords.toString()}
 ${serializeBlockedWords.toString()}
+const blockedWordPresets = ${JSON.stringify(BLOCKED_WORD_PRESETS)};
+let blockedWordExpandedKinds = new Set();
 let blockedWordRows = [];
 let blockedWordEditing = null;
 
@@ -1033,10 +1036,11 @@ function renderValueInput(item) {
                     <button type="button" class="btn btn-secondary" onclick="addBlockedWordRows()">添加</button>
                 </div>
                 <textarea id="text-value" style="display:none;">\${escapeHtml(value || '')}</textarea>
-                <div class="form-help">支持普通词和 /正则/flags；命中任意一条即屏蔽整条弹幕。逐条编辑后，点击保存生效。</div>
+                <div class="form-help">支持普通词和 /正则/flags；各分类默认单行折叠，点击分类展开，点击编辑修改完整内容。命中任意规则即屏蔽整条弹幕，点击保存后生效。</div>
             \`;
             blockedWordRows = splitBlockedWords(String(value || ''));
             blockedWordEditing = null;
+            blockedWordExpandedKinds = new Set();
             renderBlockedWordRows();
             document.getElementById('blocked-word-new').addEventListener('keydown', function(event) {
                 if (event.key === 'Enter') { event.preventDefault(); addBlockedWordRows(); }
@@ -1058,6 +1062,31 @@ function renderValueInput(item) {
     }
 }
 
+function blockedWordKind(value) {
+    if (blockedWordPresets.regions.includes(value)) return '地区正则';
+    if (blockedWordPresets.dates.includes(value)) return '日期时间正则';
+    if (/^\\/[\\s\\S]+\\/[a-z]*$/.test(value)) return '其他正则';
+    return '普通词';
+}
+
+function groupBlockedWords(rows) {
+    const kinds = ['普通词', '日期时间正则', '地区正则', '其他正则'];
+    return kinds.map(function(kind) {
+        return { kind: kind, entries: rows.map(function(value, index) {
+            return { value: value, index: index };
+        }).filter(function(entry) { return blockedWordKind(entry.value) === kind; }) };
+    }).filter(function(group) { return group.entries.length; });
+}
+
+function renderBlockedWordSummary(value) {
+    const groups = groupBlockedWords(splitBlockedWords(String(value || '')));
+    if (!groups.length) return '<div class="text-dark-gray">暂无屏蔽词</div>';
+    return groups.map(function(group) {
+        const preview = group.entries.map(function(entry) { return entry.value; }).join('，');
+        return '<div class="blocked-word-group-summary"><span class="blocked-word-kind">' + group.kind + ' · ' + group.entries.length + '</span><span class="blocked-word-group-preview">' + escapeHtml(preview) + '</span></div>';
+    }).join('');
+}
+
 function renderBlockedWordRows() {
     const list = document.getElementById('blocked-word-list');
     if (!list) return;
@@ -1070,7 +1099,28 @@ function renderBlockedWordRows() {
         empty.textContent = '暂无屏蔽词';
         list.append(empty);
     }
-    blockedWordRows.forEach(function(value, index) {
+    groupBlockedWords(blockedWordRows).forEach(function(group) {
+        const section = document.createElement('details');
+        section.className = 'blocked-word-group';
+        section.open = blockedWordExpandedKinds.has(group.kind);
+        const summary = document.createElement('summary');
+        summary.className = 'blocked-word-group-summary';
+        const badge = document.createElement('span');
+        badge.className = 'blocked-word-kind';
+        badge.textContent = group.kind + ' · ' + group.entries.length;
+        const preview = document.createElement('span');
+        preview.className = 'blocked-word-group-preview';
+        preview.textContent = group.entries.map(function(entry) { return entry.value; }).join('，');
+        summary.append(badge, preview);
+        section.append(summary);
+        section.addEventListener('toggle', function() {
+            if (section.open) blockedWordExpandedKinds.add(group.kind);
+            else blockedWordExpandedKinds.delete(group.kind);
+        });
+        list.append(section);
+        group.entries.forEach(function(entry) {
+        const value = entry.value;
+        const index = entry.index;
         const row = document.createElement('div');
         row.className = 'blocked-word-row';
         row.dataset.index = index;
@@ -1079,7 +1129,7 @@ function renderBlockedWordRows() {
         const content = document.createElement('div');
         content.className = 'blocked-word-content';
         const isRegex = /^\\/[\\s\\S]+\\/[a-z]*$/.test(value);
-        const kind = isRegex ? '正则' : /^[＠@]/.test(value) ? '人名' : /^地区[:：]/.test(value) ? '地区' : '普通词';
+        const kind = group.kind;
         const heading = document.createElement('div');
         heading.className = 'blocked-word-heading';
         const badge = document.createElement('span');
@@ -1158,7 +1208,8 @@ function renderBlockedWordRows() {
             editor.append(field, buttons);
             row.append(editor);
         }
-        list.append(row);
+        section.append(row);
+        });
     });
 }
 
@@ -2438,7 +2489,7 @@ function renderEnvItem(item, category, originalIndex) {
         <div class="env-item">
             <div class="env-info">
                 <strong>\${escapeHtml(item.key)}<span class="value-type-badge \${badgeClass}">\${typeLabel}</span></strong>
-                <div class="text-dark-gray">\${escapeHtml(item.value)}</div>
+                \${item.key === 'BLOCKED_WORDS' ? renderBlockedWordSummary(item.value) : '<div class="text-dark-gray">' + escapeHtml(item.value) + '</div>'}
                 <div class="text-gray font-size-12 margin-top-3">\${escapeHtml(item.description || '无描述')}</div>
             </div>
             <div class="env-actions">
