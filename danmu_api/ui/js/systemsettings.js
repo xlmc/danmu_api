@@ -1,10 +1,15 @@
 import { PLATFORM_ALIASES } from '../../utils/platform-util.js';
+import { splitBlockedWords, serializeBlockedWords } from '../../utils/blocked-word-parser.js';
 // language=JavaScript
 export const systemSettingsJsContent = `
 // 全局变量定义
 let isMergeMode = false;
 let stagingTags = [];
 const platformNameAliases = ${JSON.stringify(PLATFORM_ALIASES)};
+${splitBlockedWords.toString()}
+${serializeBlockedWords.toString()}
+let blockedWordRows = [];
+let blockedWordEditing = null;
 
 const UI_THEMES = {
     lavender: '经典默认',
@@ -1021,9 +1026,21 @@ function renderValueInput(item) {
         } else if (currentKey === 'BLOCKED_WORDS') {
             container.innerHTML = \`
                 <label>屏蔽词</label>
-                <textarea id="text-value" rows="8" class="text-monospace" placeholder="用逗号分隔普通词与 /正则/flags">\${escapeHtml(value || '')}</textarea>
-                <div class="form-help">支持普通词和 /正则/flags，用逗号分隔；命中任意规则即屏蔽整条弹幕。</div>
+                <div class="blocked-word-summary" id="blocked-word-count"></div>
+                <div id="blocked-word-list"></div>
+                <div class="blocked-word-add">
+                    <input id="blocked-word-new" aria-label="新增屏蔽词" placeholder="输入普通词或 /正则/flags">
+                    <button type="button" class="btn btn-secondary" onclick="addBlockedWordRows()">添加</button>
+                </div>
+                <textarea id="text-value" style="display:none;">\${escapeHtml(value || '')}</textarea>
+                <div class="form-help">支持普通词和 /正则/flags；命中任意一条即屏蔽整条弹幕。逐条编辑后，点击保存生效。</div>
             \`;
+            blockedWordRows = splitBlockedWords(String(value || ''));
+            blockedWordEditing = null;
+            renderBlockedWordRows();
+            document.getElementById('blocked-word-new').addEventListener('keydown', function(event) {
+                if (event.key === 'Enter') { event.preventDefault(); addBlockedWordRows(); }
+            });
         } else if (value && value.length > 50) {
             const rows = Math.min(Math.max(Math.ceil(value.length / 50), 3), 10);
             container.innerHTML = \`
@@ -1039,6 +1056,127 @@ function renderValueInput(item) {
             \`;
         }
     }
+}
+
+function renderBlockedWordRows() {
+    const list = document.getElementById('blocked-word-list');
+    if (!list) return;
+    document.getElementById('text-value').value = blockedWordRows.join(',');
+    document.getElementById('blocked-word-count').textContent = blockedWordRows.length + ' 条屏蔽词';
+    list.replaceChildren();
+    if (!blockedWordRows.length) {
+        const empty = document.createElement('div');
+        empty.className = 'blocked-word-empty';
+        empty.textContent = '暂无屏蔽词';
+        list.append(empty);
+    }
+    blockedWordRows.forEach(function(value, index) {
+        const row = document.createElement('div');
+        row.className = 'blocked-word-row';
+        row.dataset.index = index;
+        const line = document.createElement('div');
+        line.className = 'blocked-word-line';
+        const content = document.createElement('div');
+        content.className = 'blocked-word-content';
+        const isRegex = /^\\/[\\s\\S]+\\/[a-z]*$/.test(value);
+        const kind = isRegex ? '正则' : /^[＠@]/.test(value) ? '人名' : /^地区[:：]/.test(value) ? '地区' : '普通词';
+        const heading = document.createElement('div');
+        heading.className = 'blocked-word-heading';
+        const badge = document.createElement('span');
+        badge.className = 'blocked-word-kind';
+        badge.textContent = kind;
+        const label = document.createElement('span');
+        label.textContent = isRegex ? value.length + ' 字符' : value;
+        heading.append(badge, label);
+        content.append(heading);
+        if (isRegex) {
+            const preview = document.createElement('div');
+            preview.className = 'blocked-word-preview text-monospace';
+            preview.textContent = value.length > 70 ? value.slice(0, 70) + '…' : value;
+            content.append(preview);
+        }
+        const actions = document.createElement('div');
+        actions.className = 'blocked-word-actions';
+        const edit = document.createElement('button');
+        edit.type = 'button';
+        edit.className = 'btn btn-secondary btn-sm';
+        edit.textContent = blockedWordEditing === index ? '收起' : '编辑';
+        edit.setAttribute('aria-expanded', String(blockedWordEditing === index));
+        edit.setAttribute('aria-controls', 'blocked-word-editor-' + index);
+        edit.onclick = function() {
+            if (blockedWordEditing === index) { blockedWordEditing = null; renderBlockedWordRows(); return; }
+            if (!blockedWordEditorReady()) return;
+            blockedWordEditing = index;
+            renderBlockedWordRows();
+        };
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'btn btn-danger btn-sm';
+        remove.textContent = '删除';
+        remove.onclick = function() {
+            if (blockedWordEditing !== index && !blockedWordEditorReady()) return;
+            blockedWordRows.splice(index, 1);
+            blockedWordEditing = null;
+            renderBlockedWordRows();
+        };
+        actions.append(edit, remove);
+        line.append(content, actions);
+        row.append(line);
+        if (blockedWordEditing === index) {
+            const editor = document.createElement('div');
+            editor.className = 'blocked-word-editor';
+            editor.id = 'blocked-word-editor-' + index;
+            const field = document.createElement('textarea');
+            field.id = 'blocked-word-draft';
+            field.className = 'text-monospace';
+            field.rows = 6;
+            field.spellcheck = false;
+            field.setAttribute('aria-label', '完整屏蔽词内容');
+            field.value = value;
+            const buttons = document.createElement('div');
+            buttons.className = 'blocked-word-editor-actions';
+            const cancel = document.createElement('button');
+            cancel.type = 'button';
+            cancel.className = 'btn btn-secondary btn-sm';
+            cancel.textContent = '取消';
+            cancel.onclick = function() { blockedWordEditing = null; renderBlockedWordRows(); };
+            const confirm = document.createElement('button');
+            confirm.type = 'button';
+            confirm.className = 'btn btn-primary btn-sm';
+            confirm.textContent = '确认修改';
+            confirm.onclick = function() {
+                const parts = splitBlockedWords(field.value);
+                if (parts.length !== 1) { customAlert('每条只填写一个屏蔽词或完整正则；多个词请分别添加。'); return; }
+                const nextRows = blockedWordRows.slice();
+                nextRows[index] = parts[0];
+                try { serializeBlockedWords(nextRows); } catch (error) { customAlert(error.message); return; }
+                blockedWordRows = nextRows;
+                blockedWordEditing = null;
+                renderBlockedWordRows();
+            };
+            buttons.append(cancel, confirm);
+            editor.append(field, buttons);
+            row.append(editor);
+        }
+        list.append(row);
+    });
+}
+
+function blockedWordEditorReady() {
+    if (blockedWordEditing !== null) { customAlert('请先确认或取消当前条目的修改。'); return false; }
+    return true;
+}
+
+function addBlockedWordRows() {
+    if (!blockedWordEditorReady()) return;
+    const field = document.getElementById('blocked-word-new');
+    const parts = splitBlockedWords(field.value);
+    if (!parts.length) return;
+    const nextRows = blockedWordRows.concat(parts);
+    try { serializeBlockedWords(nextRows); } catch (error) { customAlert(error.message); return; }
+    blockedWordRows = nextRows;
+    field.value = '';
+    renderBlockedWordRows();
 }
 
 // ===== 颜色池操作函数 =====
@@ -2512,6 +2650,13 @@ document.getElementById('env-form').addEventListener('submit', async function(e)
 
     const category = editingCategory || 'api';
     const key = editingKeyName;
+    if (key === 'BLOCKED_WORDS') {
+        if (!blockedWordEditorReady()) return;
+        if (document.getElementById('blocked-word-new').value.trim()) {
+            customAlert('请先添加新屏蔽词，或清空新增输入框，再保存。');
+            return;
+        }
+    }
     const description = (document.getElementById('env-description-display').textContent || '').trim();
     const type = editingType;
     const targetCategory = editingCategory || category;
