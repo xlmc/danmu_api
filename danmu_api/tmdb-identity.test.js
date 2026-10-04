@@ -106,12 +106,12 @@ test('match endpoint binds TMDB query ID to remote season rules and reuses the v
     assert.equal(urls.length,count,'confirmed alias must not query TMDB again');assert.equal(searches,searchCount,'saved directory must skip platform search');
   }finally{globalThis.fetch=fetch;source.search=savedSearch;source.handleAnimes=savedHandle;}
 });
-async function adaptiveFixture(fileName, catalog, {tmdb=null,env={},probeDirectory=false}={}) {
+async function adaptiveFixture(fileName, catalog, {tmdb=null,env={},probeDirectory=false,events=[]}={}) {
   Globals.init({RATE_LIMIT_MAX_REQUESTS:'0',TOKEN:'87654321',SOURCE_ORDER:'tencent',PLATFORM_ORDER:'tencent',MATCH_SEARCH_BUDGET_MS:'0',MERGE_SOURCE_PAIRS:'',LOCAL_CACHE_ENABLED:'false',LOCAL_REDIS_URL:'',USE_BANGUMI_DATA:'false',TITLE_MAPPING_TABLE:'',TITLE_MAPPING_TABLE_URL:'',AUTO_MATCH_MAPPING_TABLE:'',AUTO_MATCH_MAPPING_TABLE_URL:'',TMDB_API_KEY:'test-key',LOG_LEVEL:'error',...env});
   Globals.animes=[];Globals.episodeIds=[];Globals.episodeNum=10001;Globals.searchCache=new Map();Globals.lastSelectMap=new Map();Globals.queryCacheInitialized=false;
   const source=getSourceByKey('tencent');const saved={search:source.search,handle:source.handleAnimes,comments:source.getComments,fetch:globalThis.fetch};
   const searches=[],requests=[];
-  source.search=async title=>{searches.push(title);return [{title}];};
+  source.search=async title=>{events.push('source:tencent');searches.push(title);return [{title}];};
   source.handleAnimes=async(raw,_title,results,details)=>{
     if(probeDirectory)await httpGet('https://v.qq.com/adaptive-directory');
     for(const item of catalog(raw[0].title)){
@@ -119,7 +119,7 @@ async function adaptiveFixture(fileName, catalog, {tmdb=null,env={},probeDirecto
     }
   };
   source.getComments=async()=>[{p:'1,1,16777215,test',m:'试用弹幕'}];
-  globalThis.fetch=async input=>{const url=new URL(input);requests.push(url.href);
+  globalThis.fetch=async input=>{const url=new URL(input);requests.push(url.href);events.push(url.pathname);
     if(url.hostname==='v.qq.com')return Response.json({episodes:[]});
     if(!tmdb)throw Error('明确命中不应请求TMDB');
     if(url.pathname.endsWith('/search/tv'))return Response.json({results:tmdb.results});
@@ -235,4 +235,33 @@ test('missing TMDB special detail and ambiguous real catalog leave POST match un
   assert.equal((await adaptiveFixture('现在就出发 S00E131',()=>[specialCatalog()],{tmdb})).data.isMatched,false);
   const catalog=specialCatalog();catalog.links.push({...catalog.links[0],url:'https://v.qq.com/x/cover/pilot/duplicate.html'});
   assert.equal((await adaptiveFixture('现在就出发 S00E131',()=>[catalog],{tmdb:{...tmdb,episode:specialDetail}})).data.isMatched,false);
+});
+
+
+test('special fallback resolves TMDB first and obeys platform groups without a Tencent shortcut',async()=>{
+  const iqiyi=getSourceByKey('iqiyi'),dandan=getSourceByKey('dandan');
+  const saved=[iqiyi,dandan].map(source=>({source,search:source.search,handle:source.handleAnimes,comments:source.getComments}));
+  const tmdb={results:[{id:231620,name:'现在就出发',first_air_date:'2023-01-01'}],
+    details:{id:231620,name:'现在就出发',first_air_date:'2023-01-01',seasons:[{season_number:4,air_date:'2026-01-01'}]},episode:specialDetail};
+  try {
+    for(const iqiyiHits of [true,false]) {
+      const events=[];
+      iqiyi.search=async()=>{events.push('source:iqiyi');return [];};
+      iqiyi.handleAnimes=async(_raw,_title,results,details)=>{
+        if(!iqiyiHits)return;
+        const anime=specialCatalog();anime.source='iqiyi';anime.animeId=932;anime.bangumiId='iq-pilot';
+        anime.animeTitle=anime.animeTitle.replace('from tencent','from iqiyi');
+        anime.links=anime.links.map((link,i)=>({...link,title:link.title.replace('tencent','iqiyi'),url:`https://www.iqiyi.com/v_pilot${i}.html`}));
+        addAnime(anime,details);const {links,...dto}=anime;results.push(dto);
+      };
+      iqiyi.getComments=async()=>[{p:'1,1,16777215,test',m:'试用弹幕'}];
+      dandan.search=async()=>{events.push('source:dandan');return [];};dandan.handleAnimes=async()=>{};
+      const result=await adaptiveFixture('现在就出发 S00E131',()=>[specialCatalog()],{tmdb,events,
+        env:{SOURCE_ORDER:'tencent,iqiyi,dandan',PLATFORM_ORDER:'iqiyi,tencent,dandan'}});
+      assert.equal(result.data.isMatched,true,JSON.stringify(result.data));
+      assert.deepEqual(events.filter(event=>event.startsWith('source:')),iqiyiHits?['source:iqiyi']:['source:iqiyi','source:tencent']);
+      assert.ok(events.indexOf('/3/tv/231620/season/0/episode/131')<events.indexOf('source:iqiyi'));
+      assert.match(result.data.matches[0].url,iqiyiHits?/iqiyi/:/qq\.com/);
+    }
+  } finally {for(const {source,search,handle,comments} of saved){source.search=search;source.handleAnimes=handle;source.getComments=comments;}}
 });
