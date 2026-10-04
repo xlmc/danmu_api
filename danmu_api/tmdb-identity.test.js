@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveTmdbMatchIdentity, filterTmdbMatchCandidates, findSavedTmdbIdentity, resolveTmdbSpecialEpisode, selectTmdbSpecialEpisode } from './utils/tmdb-match-util.js';
+import { resolveTmdbMatchIdentity, filterTmdbMatchCandidates, findSavedTmdbIdentity, resolveTmdbEpisodeMetadata, selectTmdbEpisode } from './utils/tmdb-match-util.js';
 import { parseAutoMatchMappingRules, collectAutoMatchCandidates } from './utils/auto-match-mapping-util.js';
 import { Globals } from './configs/globals.js';
 import { handleRequest } from './worker.js';
@@ -152,7 +152,8 @@ test('foreign first match uses one direct TMDB identity lookup then one new plat
 });
 test('TMDB revalidation of the same title reuses the source search, including misses',async()=>{
   const result=await adaptiveFixture('示例 S01E02',()=>[],{tmdb:{results:[{id:12,name:'示例',first_air_date:'2024-01-01'}],details:{id:12,name:'示例',first_air_date:'2024-01-01'}}});
-  assert.equal(result.data.isMatched,false);assert.deepEqual(result.searches,['示例']);assert.equal(result.requests.length,2);
+  assert.equal(result.data.isMatched,false);assert.deepEqual(result.searches,['示例']);assert.equal(result.requests.length,3);
+  assert.equal(result.requests.filter(url=>url.includes('/season/1/episode/2')).length,1);
 });
 test('TV request cannot select movie or use position for a different episode number',async()=>{
   const movie=fixtureAnime('示例',2024,1,'movie');
@@ -206,7 +207,7 @@ test('TMDB S00E131 reaches the fourth-season pilot upper and its comments throug
 });
 
 test('TMDB special lookup validates episode coordinates and season year',async()=>{
-  const resolve=detail=>resolveTmdbSpecialEpisode(specialIdentity,0,131,async()=>detail);
+  const resolve=detail=>resolveTmdbEpisodeMetadata(specialIdentity,0,131,async()=>detail);
   assert.equal((await resolve(specialDetail)).targetSeason,4);
   assert.equal(await resolve({...specialDetail,episode_number:130}),null);
   assert.equal(await resolve({...specialDetail,season_number:1}),null);
@@ -216,16 +217,16 @@ test('TMDB special lookup validates episode coordinates and season year',async()
 });
 
 test('special selector rejects wrong part, season, year, date and ambiguous titles',async()=>{
-  const metadata=await resolveTmdbSpecialEpisode(specialIdentity,0,131,async()=>specialDetail);
+  const metadata=await resolveTmdbEpisodeMetadata(specialIdentity,0,131,async()=>specialDetail);
   const episodes=anime=>anime.links.map((link,i)=>({episodeId:i+1,episodeTitle:link.title,url:link.url}));
-  const choose=catalog=>selectTmdbSpecialEpisode(catalog,metadata,specialIdentity,episodes);
+  const choose=catalog=>selectTmdbEpisode(catalog,metadata,specialIdentity,episodes);
   assert.match(choose([specialCatalog()]).resEpisode.url,/upper/);
   const wrongPart=specialCatalog();wrongPart.links=wrongPart.links.slice(1);assert.equal(choose([wrongPart]),null);
   const wrongSeason=specialCatalog();wrongSeason.animeTitle=wrongSeason.animeTitle.replace('第4季','第3季');assert.equal(choose([wrongSeason]),null);
   const wrongYear=specialCatalog();wrongYear.animeTitle=wrongYear.animeTitle.replace('2026','2025');assert.equal(choose([wrongYear]),null);
   const wrongDate=specialCatalog();wrongDate.links[0].publishDate='2026-10-02';assert.equal(choose([wrongDate]),null);
   const ambiguous=specialCatalog();ambiguous.links.push({...ambiguous.links[0],url:'https://v.qq.com/another-pilot'});assert.equal(choose([ambiguous]),null);
-  assert.equal(selectTmdbSpecialEpisode([specialCatalog()],{...metadata,title:'第131集'},specialIdentity,episodes),null);
+  assert.equal(selectTmdbEpisode([specialCatalog()],{...metadata,title:'第131集'},specialIdentity,episodes),null);
 });
 
 
@@ -264,4 +265,93 @@ test('special fallback resolves TMDB first and obeys platform groups without a T
       assert.match(result.data.matches[0].url,iqiyiHits?/iqiyi/:/qq\.com/);
     }
   } finally {for(const {source,search,handle,comments} of saved){source.search=search;source.handleAnimes=handle;source.getComments=comments;}}
+});
+
+
+const ordinaryTmdb = (episode, seasons=[{season_number:1,air_date:'2024-01-01'}]) => ({
+  results:[{id:12,name:'示例',first_air_date:'2024-01-01'}],
+  details:{id:12,name:'示例',first_air_date:'2024-01-01',seasons},episode
+});
+
+test('unmatched ordinary episode uses TMDB title after default paths fail and reaches comments',async()=>{
+  const catalog=fixtureAnime('示例');catalog.links[0].title='【tencent】 初次交锋';catalog.links[1].title='【tencent】 迟来的信';
+  const events=[];
+  const result=await adaptiveFixture('示例 S01E02',()=>[catalog],{events,
+    tmdb:ordinaryTmdb({season_number:1,episode_number:2,name:'迟来的信',air_date:'2024-01-02'})});
+  assert.equal(result.data.isMatched,true,JSON.stringify(result.data));assert.match(result.data.matches[0].episodeTitle,/迟来的信/);
+  assert.equal(result.comments.comments[0].m,'试用弹幕');
+  assert.ok(events.indexOf('source:tencent')<events.indexOf('/3/tv/12/season/1/episode/2'));
+  assert.deepEqual(result.searches,['示例']);
+});
+
+test('unmatched ordinary variety episode resolves issue and part without using its array index',async()=>{
+  const catalog=specialCatalog();catalog.animeTitle=catalog.animeTitle.replace('现在就出发','示例');
+  const result=await adaptiveFixture('示例 S04E01',()=>[catalog],{tmdb:ordinaryTmdb(
+    {season_number:4,episode_number:1,name:'第1期上',air_date:'2026-10-04'},[{season_number:4,air_date:'2026-01-01'}])});
+  assert.equal(result.data.isMatched,true,JSON.stringify(result.data));assert.match(result.data.matches[0].episodeTitle,/第1期上/);
+  assert.ok(!result.data.matches[0].url.includes('upper'));
+});
+
+test('episode airing after New Year still resolves in the original season catalog',async()=>{
+  const catalog=fixtureAnime('示例');catalog.links[0].title='【tencent】 初次交锋';catalog.links[1].title='【tencent】 迟来的信';
+  const result=await adaptiveFixture('示例 S01E02',()=>[catalog],{tmdb:ordinaryTmdb({season_number:1,episode_number:2,name:'迟来的信',air_date:'2025-01-01'})});
+  assert.equal(result.data.isMatched,true,JSON.stringify(result.data));
+});
+
+test('unmatched ordinary episode rejects generic numbering, wrong coordinates and duplicate subtitles',async()=>{
+  const catalog=fixtureAnime('示例');catalog.links[0].title='【tencent】 第11集 初次交锋';catalog.links[1].title='【tencent】 第12集：迟来的信';
+  const detail={season_number:1,episode_number:2,name:'迟来的信',air_date:'2024-01-02'};
+  const match=episode=>adaptiveFixture('示例 S01E02',()=>[catalog],{tmdb:ordinaryTmdb(episode)});
+  assert.equal((await match(detail)).data.isMatched,true);
+  assert.equal((await match({...detail,name:'第2集'})).data.isMatched,false);
+  assert.equal((await match({...detail,season_number:2})).data.isMatched,false);
+  assert.equal((await match({...detail,episode_number:3})).data.isMatched,false);
+  catalog.links.push({...catalog.links[1],url:'https://v.qq.com/x/cover/duplicate/late-letter.html'});
+  assert.equal((await match(detail)).data.isMatched,false);
+});
+
+test('real per-video date can resolve a generic TMDB episode only when unique',async()=>{
+  const identity={key:'tv:12',tmdbId:'12',mediaType:'tv',title:'示例',aliases:['示例'],year:2024,seasons:[{season:1,year:2024}]};
+  const metadata=await resolveTmdbEpisodeMetadata(identity,1,2,async()=>({season_number:1,episode_number:2,name:'第2集',air_date:'2024-02-03'}));
+  const catalog=fixtureAnime('示例');catalog.links[1].publishDate='2024-02-03';
+  const episodes=anime=>anime.links.map((link,i)=>({episodeId:i+1,episodeTitle:link.title,url:link.url,airDate:'2024-02-03'}));
+  assert.equal(selectTmdbEpisode([catalog],metadata,identity,episodes).resEpisode.episodeId,2);
+  delete catalog.links[1].publishDate;
+  assert.equal(selectTmdbEpisode([catalog],metadata,identity,episodes),null,'DTO dates do not identify platform episodes');
+  catalog.links.forEach(link=>link.publishDate='2024-02-03');
+  assert.equal(selectTmdbEpisode([catalog],metadata,identity,episodes),null);
+});
+
+
+test('ordinary TMDB fallback processes all group members and returns their configured merge before skipping later groups',async()=>{
+  const iqiyi=getSourceByKey('iqiyi'),dandan=getSourceByKey('dandan');
+  const saved=[iqiyi,dandan].map(source=>({source,search:source.search,handle:source.handleAnimes,comments:source.getComments}));
+  let iqiyiHandles=0,dandanHandles=0;
+  const catalog=fixtureAnime('示例');catalog.links[0].title='【tencent】 初次交锋';catalog.links[1].title='【tencent】 迟来的信';
+  try {
+    iqiyi.search=async()=>[];
+    iqiyi.handleAnimes=async(_raw,_title,results,details)=>{
+      iqiyiHandles++;const item=structuredClone(catalog);item.source='iqiyi';item.animeId=934;item.bangumiId='iq-normal';
+      item.animeTitle=item.animeTitle.replace('from tencent','from iqiyi');
+      item.links=item.links.map((link,i)=>({...link,title:link.title.replace('tencent','iqiyi'),url:`https://www.iqiyi.com/v_normal${i}.html`}));
+      addAnime(item,details);const {links,...dto}=item;results.push(dto);
+    };
+    iqiyi.getComments=async()=>[{p:'1,1,16777215,test',m:'试用弹幕'}];
+    dandan.search=async()=>[];dandan.handleAnimes=async()=>{dandanHandles++;};
+    const result=await adaptiveFixture('示例 S01E02',()=>[catalog],{tmdb:ordinaryTmdb({season_number:1,episode_number:2,name:'迟来的信',air_date:'2024-01-02'}),
+      env:{SOURCE_ORDER:'tencent,iqiyi,dandan',PLATFORM_ORDER:'tencent&iqiyi,dandan',MERGE_SOURCE_PAIRS:'tencent&iqiyi'}});
+    assert.equal(result.data.isMatched,true,JSON.stringify(result.data));
+    assert.ok(result.data.matches[0].url.includes('$$$'),'matching response must carry all configured sources');
+    assert.equal(iqiyiHandles,1,'the completed group directory is reused by subsequent stages');
+    assert.equal(dandanHandles,2,'later group belongs to the two failed normal stages and is skipped by the successful metadata stage');
+    assert.equal(result.requests.filter(url=>url.includes('/season/1/episode/2')).length,1);
+  } finally {for(const {source,search,handle,comments} of saved){source.search=search;source.handleAnimes=handle;source.getComments=comments;}}
+});
+
+
+test('S00 without usable TMDB episode metadata never falls back to ordinary catalog numbering',async()=>{
+  const tmdb={results:[{id:231620,name:'现在就出发',first_air_date:'2023-01-01'}],
+    details:{id:231620,name:'现在就出发',first_air_date:'2023-01-01'}};
+  const result=await adaptiveFixture('现在就出发 S00E131',()=>[specialCatalog()],{tmdb});
+  assert.equal(result.data.isMatched,false);assert.deepEqual(result.searches,[]);
 });

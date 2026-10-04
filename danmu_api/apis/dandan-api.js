@@ -1,4 +1,4 @@
-import { resolveTmdbMatchIdentity, filterTmdbMatchCandidates, findSavedTmdbIdentity, resolveTmdbSpecialEpisode, selectTmdbSpecialEpisode } from '../utils/tmdb-match-util.js';
+import { resolveTmdbMatchIdentity, filterTmdbMatchCandidates, findSavedTmdbIdentity, resolveTmdbEpisodeMetadata, selectTmdbEpisode } from '../utils/tmdb-match-util.js';
 import { isSupportedSource, isSupportedLocation, sourceForUrl } from '../sources/policy.js';
 import { canonicalPlatformName } from '../utils/platform-util.js';
 import { runWithMatchTrace, traceMatchStep, getMatchTracePrefix } from '../utils/match-trace-util.js';
@@ -1807,10 +1807,10 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, pref
   if (tmdbEpisode) {
     const catalog = searchData.animes.map(anime => ({ ...anime, links:
       resolveAnimeByIdFromDetailStore(anime.bangumiId || anime.animeId, detailStore, anime.source)?.links || anime.links }));
-    const selected = selectTmdbSpecialEpisode(catalog, tmdbEpisode, tmdbIdentity,
+    const selected = selectTmdbEpisode(catalog, tmdbEpisode, tmdbIdentity,
       anime => getBangumiDataForMatch(anime, detailStore)?.bangumi?.episodes);
-    if (selected) log('info', `[system] [match] TMDB 特别篇精确对应: ${tmdbEpisode.name} -> ${selected.resAnime.animeTitle} / ${selected.resEpisode.episodeTitle}`);
-    else log('info', '[system] [match-reject] TMDB 特别篇没有唯一且符合季号、年份、标题及上下篇的分集');
+    if (selected) log('info', `[system] [match] TMDB 分集精确对应: ${tmdbEpisode.name} -> ${selected.resAnime.animeTitle} / ${selected.resEpisode.episodeTitle}`);
+    else log('info', '[system] [match-reject] TMDB 分集没有唯一且符合季号、年份、标题或真实日期及上下篇的分集');
     return { resAnime: null, resEpisode: null, spilloverMatched: false, ...selected, title, season, episode, cacheWarning };
   }
 
@@ -2082,6 +2082,25 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       }
     }
 
+    const tryTmdbEpisodePath = async () => {
+      if (!tmdbIdentity || !Number.isInteger(originalSeason) || !Number.isInteger(originalEpisode)) return;
+      const label = originalSeason === 0 ? 'TMDB 特别篇' : 'TMDB 普通分集';
+      let metadata = null;
+      try {
+        metadata = await traceMatchStep(log, `${label}分集查询`, () =>
+          resolveTmdbEpisodeMetadata(tmdbIdentity, originalSeason, originalEpisode));
+      } catch (error) { log('warn', `[system] [match] ${label}查询失败: ` + error.message); }
+      if (metadata) {
+        log('info', '[system] [match-trace] TMDB 分集身份 ' + JSON.stringify(metadata));
+        attempt = await traceMatchStep(log, `${label}对应平台分集`, () => executeMatchAttempt({
+          req, title: tmdbIdentity.title, season: metadata.targetSeason, episode: null,
+          year: metadata.year, preferredPlatform, tmdbIdentity, tmdbEpisode: metadata,
+          sourceSearches, preferAnimeId: null, preferSource: null, offsets: null, mapping: null
+        }));
+        if (succeeded(attempt)) matchStage = `${label}对应平台分集`;
+      }
+    };
+
     // S00 uses TMDB's special numbering. Resolve the episode before starting
     // ordinary platform groups; explicit preferences and mappings stay first.
     if (!succeeded(attempt) && originalSeason === 0 && !tmdbIdentity && (globals.tmdbApiKey || globals.proxyUrl)) {
@@ -2102,26 +2121,10 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       }
     }
 
-    if (!succeeded(attempt) && tmdbIdentity && originalSeason === 0) {
-      let metadata = null;
-      try {
-        metadata = await traceMatchStep(log, 'TMDB 特别篇分集查询', () =>
-          resolveTmdbSpecialEpisode(tmdbIdentity, originalSeason, originalEpisode));
-      } catch (error) { log('warn', '[system] [match] TMDB 特别篇查询失败: ' + error.message); }
-      if (metadata) {
-        log('info', '[system] [match-trace] TMDB 分集身份 ' + JSON.stringify(metadata));
-        attempt = await traceMatchStep(log, 'TMDB 特别篇对应平台分集', () => executeMatchAttempt({
-          req, title: tmdbIdentity.title, season: metadata.targetSeason, episode: null,
-          year: metadata.year, preferredPlatform, tmdbIdentity, tmdbEpisode: metadata,
-          sourceSearches, preferAnimeId: null, preferSource: null, offsets: null, mapping: null
-        }));
-        if (succeeded(attempt)) matchStage = 'TMDB 特别篇对应平台分集';
-      }
-    }
+    if (!succeeded(attempt) && tmdbIdentity && originalSeason === 0) await tryTmdbEpisodePath();
 
-
-    // 6. 所有显式映射都未实际得到作品和剧集，才走原项目普通匹配。
-    if (!succeeded(attempt)) {
+    // 6. 非 S00 请求先走默认匹配；S00 不使用平台目录位置解释特别篇编号。
+    if (!succeeded(attempt) && originalSeason !== 0) {
       const [preferAnimeId, preferSource, offsets] = globals.rememberLastSelect
         ? getPreferAnimeId(originalTitle, originalSeason) : [null, null, null];
       attempt = await tryTitlePath({ stage: tmdbIdentity ? 'TMDB 作品直接搜索' : '本机普通匹配', title: tmdbIdentity?.title || originalTitle, preferAnimeId, preferSource, offsets }) || attempt;
@@ -2151,6 +2154,9 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       }
     }
 
+
+    // Ordinary episodes enter this fallback only after default matching fails.
+    if (!succeeded(attempt) && tmdbIdentity && originalSeason !== 0) await tryTmdbEpisodePath();
 
     attempt ||= { resAnime: null, resEpisode: null, spilloverMatched: false, title: originalTitle, season: originalSeason, episode: originalEpisode };
 
