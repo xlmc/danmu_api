@@ -10,11 +10,17 @@ import { SegmentListResponse } from '../models/dandan-model.js';
 import { simplized } from "../utils/zh-util.js";
 import { getTmdbJaOriginalTitle, smartTitleReplace } from "../utils/tmdb-util.js";
 import { searchBangumiData } from '../utils/bangumi-data-util.js';
+import { isSupplementaryCategory } from '../utils/episode-category-util.js';
 
 // =====================
 // 获取b站弹幕
 // =====================
 export default class BilibiliSource extends BaseSource {
+  findPgcEpisode(result, episodeId) {
+    return [...(result?.episodes || result?.main_section?.episodes || []),
+      ...(result?.section || result?.sections || []).flatMap(section => section.episodes || [])]
+      .find(ep => String(ep.id) === String(episodeId));
+  }
   // WBI 签名相关常量
   static WBI_MIXIN_KEY_CACHE = { key: null, timestamp: 0 };
   static WBI_MIXIN_KEY_CACHE_TTL = 3600; // 缓存1小时
@@ -472,10 +478,19 @@ export default class BilibiliSource extends BaseSource {
 
             if (data.code === 0 && data.result) {
                 // 优先从 main_section 获取分集，兼容 view 和 section 接口
-                rawEpisodes = data.result.main_section?.episodes || data.result.episodes || [];
+                if (rawEpisodes.length === 0) rawEpisodes = [...(data.result.main_section?.episodes || data.result.episodes || [])];
+                const seen = new Set(rawEpisodes.map(ep => ep.id));
+                for (const section of data.result.section || data.result.sections || []) {
+                  if (!isSupplementaryCategory(section.title)) continue;
+                  for (const ep of section.episodes || []) {
+                    if (seen.has(ep.id)) continue;
+                    seen.add(ep.id);
+                    rawEpisodes.push({ ...ep, supplementary: true });
+                  }
+                }
                 // 从详情接口提取番剧主封面，供搜索结果未提供 imageUrl 时使用
                 if (data.result.cover) rawEpisodes._cover = data.result.cover;
-                if (rawEpisodes.length > 0) break;
+                if (rawEpisodes.length > 0 && (data.result.section || data.result.sections || url.includes('/season/section'))) break;
             }
         } catch(e) {
             // 忽略错误，尝试下一个接口
@@ -504,6 +519,7 @@ export default class BilibiliSource extends BaseSource {
         return {
             vid: `${ep.aid},${ep.cid}`,
             id: ep.id,
+            supplementary: Boolean(ep.supplementary),
             title: displayTitle.trim(),
             link: `https://www.bilibili.com/bangumi/play/ep${ep.id}`
         };
@@ -648,9 +664,13 @@ export default class BilibiliSource extends BaseSource {
 
           // 如果 content 包含"查看全部"，说明搜索结果给的 eps 是残缺预览调用 getEpisodes 获取完整列表
           const isIncomplete = anime.checkMore?.content?.includes("查看全部");
+          // Search previews omit extra sections. Preserve them as a fallback if
+          // the full mainland catalog is unavailable.
+          const completeEpisodes = !anime.isOversea && anime._eps?.length && !isIncomplete
+            ? await this.getEpisodes(anime.mediaId) : null;
 
           // 优先使用搜索结果中自带的分集信息 (港澳台/WBI结果)
-          if (anime._eps && anime._eps.length > 0 && !isIncomplete) {
+          if (anime._eps && anime._eps.length > 0 && !isIncomplete && (anime.isOversea || !completeEpisodes?.length)) {
              links = anime._eps.map((ep, index) => {
                let realVal;
                if (anime.isOversea && ep.position) {
@@ -690,7 +710,7 @@ export default class BilibiliSource extends BaseSource {
 
              log("info", `[bilibili] 直接使用搜索结果中的 ${links.length} 集分集`);
           } else {
-             const eps = await this.getEpisodes(anime.mediaId);
+             const eps = completeEpisodes || await this.getEpisodes(anime.mediaId);
              if (eps.length === 0) {
                log("info", `[bilibili] ${anime.title} 无分集，跳过`);
                return;
@@ -705,12 +725,13 @@ export default class BilibiliSource extends BaseSource {
                     name: `${index + 1}`,
                     url: linkUrl,
                     title: `【bilibili】 ${ep.title}`,
+                    _supplementary: Boolean(ep.supplementary),
                     _id: parseInt(ep.id, 10) || 0
                 };
              });
 
              // 依据底层数据主键 ep_id 进行时间序列升序排列
-             links.sort((a, b) => a._id - b._id);
+             links.sort((a, b) => Number(Boolean(a._supplementary)) - Number(Boolean(b._supplementary)) || a._id - b._id);
           }
 
           if (links.length === 0) return;
@@ -845,7 +866,7 @@ export default class BilibiliSource extends BaseSource {
             });
             const data = typeof res.data === "string" ? JSON.parse(res.data) : res.data;
             if (data.code === 0 && data.result) {
-               const ep = data.result.episodes.find(e => e.id == epid);
+               const ep = this.findPgcEpisode(data.result, epid);
                if (ep) { cid = ep.cid; duration = ep.duration / 1000; title = ep.share_copy; success = true; }
             }
         }
@@ -858,7 +879,7 @@ export default class BilibiliSource extends BaseSource {
                 const res = await httpGet(proxyUrl, { headers: { "Cookie": globals.bilibliCookie || "", "User-Agent": "Mozilla/5.0" } });
                 const data = typeof res.data === "string" ? JSON.parse(res.data) : res.data;
                 if (data.code === 0 && data.result) {
-                    const ep = (data.result.episodes || data.result.main_section?.episodes || []).find(e => e.id == epid);
+                    const ep = this.findPgcEpisode(data.result, epid);
                     if (ep) { cid = ep.cid; aid = ep.aid; duration = ep.duration / 1000; title = ep.long_title; success = true; }
                 }
             } catch(e) {}
@@ -869,8 +890,8 @@ export default class BilibiliSource extends BaseSource {
             try {
                 const res = await httpGet(`https://api.bilibili.com/pgc/web/season/section?season_id=${seasonId}`, { headers: { "User-Agent": "Mozilla/5.0", "Cookie": globals.bilibliCookie||"" } });
                 const data = typeof res.data === "string" ? JSON.parse(res.data) : res.data;
-                if (data.code === 0 && data.result?.main_section?.episodes) {
-                    const ep = data.result.main_section.episodes.find(e => e.id == epid);
+                if (data.code === 0 && data.result) {
+                    const ep = this.findPgcEpisode(data.result, epid);
                     if (ep) { cid = ep.cid; aid = ep.aid; duration = ep.duration ? ep.duration / 1000 : 0; title = ep.long_title; success = true; }
                 }
             } catch(e) {}

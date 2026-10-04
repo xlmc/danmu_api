@@ -65,16 +65,6 @@ export default class SohuSource extends BaseSource {
       return null;
     }
 
-    // 过滤仅预告片结果 通过 is_trailer 字段判断 (1 为预告片)
-    if (item.is_trailer === 1) {
-      return null;
-    }
-
-    // 过滤仅预告片结果 通过角标文字判断 (corner_mark.text 为 "预告")
-    if (item.corner_mark && item.corner_mark.text === '预告') {
-      return null;
-    }
-
     // 清理标题中的高亮标记
     let title = String(albumName).replace(/<<<|>>>/g, '');
 

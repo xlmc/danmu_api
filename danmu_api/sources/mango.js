@@ -8,6 +8,7 @@ import { rgbToInt } from "../utils/danmu-util.js";
 import { md5, convertToAsciiSum } from "../utils/codec-util.js";
 import { addAnime, removeEarliestAnime } from "../utils/cache-util.js";
 import { SegmentListResponse } from '../models/dandan-model.js';
+import { isSupplementaryEpisode } from '../utils/episode-category-util.js';
 
 // =====================
 // 获取芒果TV弹幕
@@ -216,31 +217,8 @@ export default class MangoSource extends BaseSource {
         }
       }
 
-      // 芒果TV专属黑名单正则
-      const mangoBlacklist = /^(.*?)(抢先(看|版)|加更(版)?|花絮|预告|特辑|(特别|惊喜|纳凉)?企划|彩蛋|专访|幕后(花絮)?|直播|纯享|未播|衍生|番外|合伙人手记|会员(专享|加长)|片花|精华|看点|速看|解读|reaction|超前营业|超前(vlog)?|陪看(记)?|.{3,}篇|影评)(.*?)$/i;
-
-      // 过滤掉预告片等非正片内容
-      const episodes = allEpisodes.filter(ep => {
-        const fullTitle = `${ep.t2 || ''} ${ep.t1 || ''}`.trim();
-
-        // 过滤掉预告片 (isnew === "2")
-        if (ep.isnew === "2") {
-          log("info", `[mango] 过滤预告片: ${fullTitle}`);
-          return false;
-        }
-
-        // 使用专属黑名单过滤
-        if (mangoBlacklist.test(fullTitle)) {
-          log("info", `[mango] 黑名单过滤: ${fullTitle}`);
-          return false;
-        }
-
-        // 优先保留正片 (isIntact === "1")，或者没有标记的内容
-        return true;
-      });
-
-      // 综艺节目智能处理
-      const processedEpisodes = this._processVarietyEpisodes(episodes);
+      // 源只提供完整目录，标题排除交由 EPISODE_TITLE_FILTER。
+      const processedEpisodes = this._processVarietyEpisodes(allEpisodes);
 
       log("info", `[mango] 共获取 ${processedEpisodes.length} 集`);
       return processedEpisodes;
@@ -305,7 +283,7 @@ export default class MangoSource extends BaseSource {
   }
 
   /**
-   * 处理综艺分集，智能过滤和排序
+   * 处理综艺分集排序，保留源返回的全部内容
    * @param {Array} rawEpisodes - 原始分集数据
    * @returns {Array} 处理后的分集列表
    */
@@ -325,49 +303,38 @@ export default class MangoSource extends BaseSource {
     log("info", `[mango] 综艺格式分析: 有期数格式=${hasQiFormat}`);
 
     const episodeInfos = [];
+    const supplementaryEpisodes = [];
     const qiInfoMap = new Map(); // 存储期数信息的映射
 
     for (const ep of rawEpisodes) {
       const fullTitle = `${ep.t2 || ''} ${ep.t1 || ''}`.trim();
 
+      if (isSupplementaryEpisode(fullTitle)) {
+        supplementaryEpisodes.push(ep);
+        continue;
+      }
+
       if (hasQiFormat) {
-        // 有"第N期"格式时：只保留纯粹的"第N期"和"第N期上/中/下"
+        // 有"第N期"格式时：识别"第N期"和"第N期上/中/下"供排序
         const qiUpMidDownMatch = fullTitle.match(/第(\d+)期([上中下])/);
         const qiPureMatch = fullTitle.match(/第(\d+)期/);
 
         if (qiUpMidDownMatch) {
-          // 检查是否包含无效后缀
-          const qiNum = qiUpMidDownMatch[1];
-          const upMidDown = qiUpMidDownMatch[2];
-          const qiUpMidDownText = `第${qiNum}期${upMidDown}`;
-          const afterUpMidDown = fullTitle.substring(fullTitle.indexOf(qiUpMidDownText) + qiUpMidDownText.length);
-          const hasInvalidSuffix = /^(加更|会员版|纯享版|特别版|独家版|Plus|\+|花絮|预告|彩蛋|抢先|精选|未播|回顾|特辑|幕后)/.test(afterUpMidDown);
-
-          if (!hasInvalidSuffix) {
-            qiInfoMap.set(ep, [parseInt(qiNum), upMidDown]);
-            episodeInfos.push(ep);
-            log("info", `[mango] 综艺保留上中下格式: ${fullTitle}`);
-          } else {
-            log("info", `[mango] 综艺过滤上中下格式+后缀: ${fullTitle}`);
-          }
+          qiInfoMap.set(ep, [parseInt(qiUpMidDownMatch[1]), qiUpMidDownMatch[2]]);
+          episodeInfos.push(ep);
         } else if (qiPureMatch) {
-          // 无上/中/下后缀的纯"第N期"为正片, 直接收录; 主黑名单已在综艺处理前过滤了加更版/合伙人手记等特殊条目
+          // 无上/中/下后缀的纯"第N期"为正片, 直接收录; 其它内容继续保留，由配置规则决定是否过滤
           const qiNum = qiPureMatch[1];
           // "第N期：标题（上/中/下）"的分部标记在末尾括号中（全/半角可混用），提取仅用于同期内排序
           const trailingPartMatch = fullTitle.match(/[（(]([上中下])[）)]\s*$/);
           qiInfoMap.set(ep, [parseInt(qiNum), trailingPartMatch ? trailingPartMatch[1] : '']);
           episodeInfos.push(ep);
           log("info", `[mango] 综艺保留标准期数: ${fullTitle}`);
+        } else {
+          supplementaryEpisodes.push(ep);
         }
       } else {
-        // 没有任何"第N期"格式时：全部保留（除了明显的广告）
-        if (fullTitle.includes('广告') || fullTitle.includes('推广')) {
-          log("info", `[mango] 跳过广告内容: ${fullTitle}`);
-          continue;
-        }
-
         episodeInfos.push(ep);
-        log("info", `[mango] 综艺保留原始标题: ${fullTitle}`);
       }
     }
 
@@ -410,8 +377,8 @@ export default class MangoSource extends BaseSource {
       });
     }
 
-    log("info", `[mango] 综艺处理完成，过滤后分集数: ${episodeInfos.length}`);
-    return episodeInfos;
+    log("info", `[mango] 综艺处理完成，正片排序数: ${episodeInfos.length}`);
+    return [...episodeInfos, ...supplementaryEpisodes];
   }
 
   /**

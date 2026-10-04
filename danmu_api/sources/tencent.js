@@ -7,6 +7,7 @@ import { generateValidStartDate } from "../utils/time-util.js";
 import { addAnime, removeEarliestAnime } from "../utils/cache-util.js";
 import { printFirst200Chars, titleMatches, getExplicitSeasonNumber, extractSeasonNumberFromAnimeTitle } from "../utils/common-util.js";
 import { SegmentListResponse } from '../models/dandan-model.js';
+import { isSupplementaryCategory } from '../utils/episode-category-util.js';
 
 // =====================
 // 获取腾讯视频弹幕
@@ -109,14 +110,6 @@ export default class TencentSource extends BaseSource {
     const allSites = (videoInfo.playSites || []).concat(videoInfo.episodeSites || []);
     if (allSites.length > 0 && !allSites.some(site => site.enName === 'qq')) {
       return null;
-    }
-
-    // 电影非正片内容过滤
-    if (contentType === "电影") {
-      const nonFormalKeywords = ["花絮", "彩蛋", "幕后", "独家", "解说", "特辑", "探班", "拍摄", "制作", "导演", "记录", "回顾", "盘点", "混剪", "解析", "抢先"];
-      if (nonFormalKeywords.some(kw => title.includes(kw))) {
-        return null;
-      }
     }
 
     const episodeCount = contentType === '电影' ? 1 : (videoInfo.subjectDoc ? videoInfo.subjectDoc.videoNum : 0);
@@ -372,6 +365,15 @@ export default class TencentSource extends BaseSource {
       // 获取所有分页的分集
       const allEpisodes = [];
       const seenVids = new Set();
+      const extraChapters = new Set(chapterContexts.filter(ch => isSupplementaryCategory(ch.title)).map(ch => ch.title));
+      for (const moduleList of data.data?.module_list_datas || []) {
+        for (const module of moduleList.module_datas || []) {
+          for (const item of module.item_data_lists?.item_datas || []) {
+            const params = item.item_params;
+            if (params?.page_context && isSupplementaryCategory(params.title)) extraChapters.add(params.title);
+          }
+        }
+      }
 
       if (tabs.length === 0) {
         log("info", "[tencent] 未找到分页信息,尝试从初始响应中提取分集");
@@ -382,7 +384,7 @@ export default class TencentSource extends BaseSource {
             for (const moduleData of moduleListData.module_datas) {
               if (moduleData.item_data_lists && moduleData.item_data_lists.item_datas) {
                 for (const item of moduleData.item_data_lists.item_datas) {
-                  if (item.item_params && item.item_params.vid && item.item_params.is_trailer !== "1") {
+                  if (item.item_params && item.item_params.vid) {
                     if (!seenVids.has(item.item_params.vid)) {
                       seenVids.add(item.item_params.vid);
                       allEpisodes.push({
@@ -402,7 +404,7 @@ export default class TencentSource extends BaseSource {
         if (chapterContexts.length > 0) {
           // 章节本身为子分类(正片/花絮)时仅取正片子分类；否则按季遍历
           const zhengpianChapters = chapterContexts.filter((ch) => this.isZhengpianChapter(ch));
-          const targetChapters = zhengpianChapters.length > 0 ? zhengpianChapters : chapterContexts;
+          const targetChapters = zhengpianChapters.length > 0 ? zhengpianChapters : chapterContexts.filter(ch => !isSupplementaryCategory(ch.title));
           // 按季遍历时按时间先后排序；仅取正片子分类时保持原顺序
           const orderedChapters = zhengpianChapters.length > 0
             ? targetChapters
@@ -442,7 +444,7 @@ export default class TencentSource extends BaseSource {
                       if (hasNextFlag === true || hasNextFlag === "true") hasNext = true;
                       if (moduleData.item_data_lists && moduleData.item_data_lists.item_datas) {
                         for (const item of moduleData.item_data_lists.item_datas) {
-                          if (item.item_params && item.item_params.vid && item.item_params.is_trailer !== "1") {
+                          if (item.item_params && item.item_params.vid) {
                             pageItemCount++;
                             seasonEpisodes.push({
                               vid: item.item_params.vid,
@@ -476,7 +478,7 @@ export default class TencentSource extends BaseSource {
           }
         }
 
-        if (allEpisodes.length === 0) {
+        if (allEpisodes.length === 0 && extraChapters.size === 0) {
           log("info", "[tencent] 初始响应中也未找到分集信息");
           return [];
         }
@@ -520,7 +522,7 @@ export default class TencentSource extends BaseSource {
               for (const moduleData of moduleListData.module_datas) {
                 if (moduleData.item_data_lists && moduleData.item_data_lists.item_datas) {
                   for (const item of moduleData.item_data_lists.item_datas) {
-                    if (item.item_params && item.item_params.vid && item.item_params.is_trailer !== "1") {
+                    if (item.item_params && item.item_params.vid) {
                       allEpisodes.push({
                         vid: item.item_params.vid,
                         title: item.item_params.title,
@@ -532,6 +534,45 @@ export default class TencentSource extends BaseSource {
               }
             }
           }
+        }
+      }
+
+      // Category selectors are also returned in the initial response when the
+      // search result has no chapterInfo. Fetch only advertised pure/pilot tabs.
+      for (const chapterName of extraChapters) {
+        let pageNum = 0;
+        const pageFingerprints = new Set();
+        try {
+          while (true) {
+            const extraPayload = { ...payload, page_params: { ...payload.page_params,
+              page_context: this.buildChapterPageContext(id, chapterName, pageNum) } };
+            const response = await httpPost(episodesUrl, JSON.stringify(extraPayload), { headers });
+            const extra = typeof response?.data === 'string' ? JSON.parse(response.data) : response?.data;
+            if (extra?.ret !== 0) break;
+            const pageEpisodes = [];
+            let hasNext = false;
+            for (const moduleList of extra.data?.module_list_datas || []) {
+              for (const module of moduleList.module_datas || []) {
+                const next = module.module_params?.has_next;
+                hasNext ||= next === true || next === 'true';
+                for (const item of module.item_data_lists?.item_datas || []) {
+                  const ep = item.item_params;
+                  if (ep?.vid) pageEpisodes.push(ep);
+                }
+              }
+            }
+            const fingerprint = pageEpisodes.map(ep => ep.vid).join(',');
+            if (!fingerprint || pageFingerprints.has(fingerprint)) break;
+            pageFingerprints.add(fingerprint);
+            for (const ep of pageEpisodes) {
+              if (allEpisodes.some(existing => existing.vid === ep.vid)) continue;
+              allEpisodes.push({ vid: ep.vid, title: ep.title, unionTitle: ep.union_title || ep.title });
+            }
+            if (!hasNext) break;
+            pageNum++;
+          }
+        } catch (error) {
+          log('error', `[tencent] ${chapterName}分集请求失败: ${error.message}`);
         }
       }
 

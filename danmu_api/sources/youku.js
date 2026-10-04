@@ -87,12 +87,6 @@ export default class YoukuSource extends BaseSource {
 
     const title = commonData.titleDTO.displayName;
 
-    // 过滤不相关内容
-    const skipKeywords = ["中配版", "抢先看", "非正片", "解读", "揭秘", "赏析", "《"];
-    if (skipKeywords.some(kw => title.includes(kw))) {
-      return null;
-    }
-
     // 提取年份
     const yearMatch = commonData.feature.match(/[12][890][0-9][0-9]/);
     const year = yearMatch ? parseInt(yearMatch[0]) : null;

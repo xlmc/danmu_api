@@ -7,6 +7,7 @@ import { generateValidStartDate } from "../utils/time-util.js";
 import { addAnime, removeEarliestAnime } from "../utils/cache-util.js";
 import { globals } from '../configs/globals.js';
 import { SegmentListResponse } from '../models/dandan-model.js';
+import { isSupplementaryEpisode, isSupplementaryCategory } from '../utils/episode-category-util.js';
 
 // =====================
 // 获取爱奇艺弹幕
@@ -330,7 +331,10 @@ export default class IqiyiSource extends BaseSource {
         return [];
       }
 
-      const blocks = tabs[0].blocks || [];
+      const selectedTabs = tabs.filter((tab, index) => index === 0 ||
+        isSupplementaryCategory(tab.title || tab.name || tab.tab_name));
+      const blocks = selectedTabs.flatMap(tab => (tab.blocks || []).map(block => ({ ...block,
+        supplementaryCategory: isSupplementaryCategory(tab.title || tab.name || tab.tab_name) })));
       let foundEpisodes = false;
       const fetchedSeasons = seasonAlbumCache || new Map();
 
@@ -340,7 +344,8 @@ export default class IqiyiSource extends BaseSource {
           log("info", `[iqiyi] 找到 video_list 类型的分集数据块, bk_id: ${block.bk_id}`);
 
           // 检查是否是分集选择器块
-          if (!block.tag || !block.tag.includes("episodes")) {
+          if ((!block.tag || !block.tag.includes("episodes")) && !block.supplementaryCategory &&
+              !isSupplementaryCategory(block.title || block.name)) {
             log("info", `[iqiyi] 跳过非分集块: ${block.bk_id}`);
             continue;
           }
@@ -362,8 +367,9 @@ export default class IqiyiSource extends BaseSource {
 
               // 处理每个分集
               for (const epData of videoGroup.data) {
-                // 只处理正片内容 (content_type === 1)
-                if (epData.content_type !== 1) continue;
+                const supplementary = block.supplementaryCategory ||
+                  isSupplementaryCategory(group.tab_name || videoGroup.tab_name) ||
+                  isSupplementaryEpisode([epData.short_display_name, epData.title, epData.subtitle].join(' '));
 
                 const playUrl = epData.play_url || "";
                 const tvidMatch = playUrl.match(/tvid=(\d+)/);
@@ -384,7 +390,8 @@ export default class IqiyiSource extends BaseSource {
                     id: tvid,
                     title: title,
                     order: order !== undefined ? order : allEpisodes.length,
-                    link: pageUrl
+                    link: pageUrl,
+                    supplementary
                   });
                 }
               }
@@ -441,7 +448,8 @@ export default class IqiyiSource extends BaseSource {
               for (const pageKey in videosData.feature_paged) {
                 const pagedList = videosData.feature_paged[pageKey];
                 for (const epData of pagedList) {
-                  if (epData.content_type !== 1) continue;
+                  const supplementary = block.supplementaryCategory || isSupplementaryCategory(group.tab_name) ||
+                    isSupplementaryEpisode([epData.short_display_name, epData.title, epData.subtitle].join(' '));
 
                   const playUrl = epData.play_url || "";
                   const tvidMatch = playUrl.match(/tvid=(\d+)/);
@@ -457,12 +465,13 @@ export default class IqiyiSource extends BaseSource {
                   const order = epData.album_order;
                   const pageUrl = epData.page_url;
 
-                  if (tvid && title && order && pageUrl) {
+                  if (tvid && title && pageUrl) {
                     allEpisodes.push({
                       id: tvid,
                       title: title,
-                      order: order,
-                      link: pageUrl
+                      order: order ?? allEpisodes.length,
+                      link: pageUrl,
+                      supplementary
                     });
                   }
                 }
@@ -481,7 +490,7 @@ export default class IqiyiSource extends BaseSource {
       const uniqueEpisodes = Array.from(
         new Map(allEpisodes.map(ep => [ep.id, ep])).values()
       );
-      uniqueEpisodes.sort((a, b) => a.order - b.order);
+      uniqueEpisodes.sort((a, b) => Number(Boolean(a.supplementary)) - Number(Boolean(b.supplementary)) || a.order - b.order);
 
       log("info", `[iqiyi] 成功获取 ${uniqueEpisodes.length} 个分集`);
       return uniqueEpisodes;
