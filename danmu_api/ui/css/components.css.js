@@ -1231,6 +1231,27 @@ body[data-theme] input[type="checkbox"].app-checkbox:focus-visible {
 .font-size-12 { font-size: 12px; }
 .margin-bottom-15 { margin-bottom: 15px; }
 .text-monospace { font-family: ui-monospace, monospace; }
+
+/* 屏蔽词逐条编辑：默认折叠，长正则只显示短预览。 */
+.blocked-word-summary, .blocked-word-empty { color: var(--theme-muted); font-size: 12px; padding: 8px 0; }
+.blocked-word-row { border-bottom: 1px solid var(--theme-border); padding: 12px 0; }
+.blocked-word-line { display: flex; align-items: center; gap: 10px; }
+.blocked-word-content { flex: 1; min-width: 0; }
+.blocked-word-heading { display: flex; align-items: baseline; gap: 8px; overflow-wrap: anywhere; color: var(--theme-text); }
+.blocked-word-kind { flex-shrink: 0; font-size: 11px; border-radius: 4px; padding: 2px 6px; background: var(--theme-panel-strong); color: var(--theme-muted); }
+.blocked-word-preview { color: var(--theme-muted); font-size: 12px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.blocked-word-actions, .blocked-word-editor-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.blocked-word-editor { margin-top: 12px; }
+.blocked-word-editor textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+.blocked-word-editor-actions { justify-content: flex-end; margin-top: 8px; }
+.blocked-word-add { display: flex; gap: 8px; align-items: center; margin-top: 16px; }
+.blocked-word-add input { flex: 1; min-width: 0; width: auto; }
+@media (max-width: 480px) {
+    .blocked-word-line { gap: 6px; }
+    .blocked-word-actions { gap: 4px; }
+    .blocked-word-actions .btn { padding: 8px; }
+    .blocked-word-add input, .blocked-word-editor textarea { font-size: 16px; }
+}
 .anime-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));

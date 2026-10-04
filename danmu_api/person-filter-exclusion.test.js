@@ -10,8 +10,21 @@ import { convertToDanmakuJson, filterDanmusByBlockedNames } from './utils/danmu-
 import { setCommentCache } from './utils/cache-util.js';
 import { previewJsContent } from './ui/js/preview.js';
 import { cachedPersonSource, personCacheIdentity } from './utils/person-source-cache.js';
+import { splitBlockedWords, serializeBlockedWords } from './utils/blocked-word-parser.js';
 
 const enabled = { BLOCK_DOMESTIC_CELEBRITIES: 'true', PERSON_FILTER_EXCLUDED_TITLES: '诛仙4' };
+
+test('逐条编辑的共享分隔逻辑保留长正则、量词逗号与转义斜杠，重新保存仍为同一组规则', () => {
+  const rules = ['打卡', '/a{1,3}/u', '/a\\/b,c/i', '/[a,/]/u', '@白鹿', '地区:海南',
+    ...BLOCKED_WORD_PRESETS.regions, ...BLOCKED_WORD_PRESETS.dates];
+  const parsed = splitBlockedWords(rules.join(','));
+  assert.deepEqual(parsed, rules);
+  assert.deepEqual(splitBlockedWords(serializeBlockedWords(parsed)), rules);
+  assert.equal(serializeBlockedWords([]), '');
+  assert.throws(() => serializeBlockedWords(['/bad', '/good/u']), /无法准确分隔/);
+  assert.deepEqual(splitBlockedWords('打卡， /签到|报到/u, @白鹿'), ['打卡', '/签到|报到/u', '@白鹿']);
+  assert.deepEqual(splitBlockedWords(''), []);
+});
 
 test('当前演员和角色的去姓、前后缀、叠字称呼直接包含屏蔽', () => {
   const samples = [
