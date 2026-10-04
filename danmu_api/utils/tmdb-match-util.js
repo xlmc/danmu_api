@@ -1,4 +1,5 @@
 import { searchTmdbTitles, getTmdbMatchDetails, getTmdbMatchEpisode } from './tmdb-util.js';
+import { extractSeasonNumberFromAnimeTitle } from './common-util.js';
 import { filterMappingTargetCandidates } from './auto-match-mapping-util.js';
 
 const normalize = value => String(value || '').normalize('NFKC').toLowerCase().replace(/[\s._:：·-]+/g, '');
@@ -67,21 +68,25 @@ export function findSavedTmdbIdentity(animes, { title, season = null, episode = 
   return found.size === 1 ? [...found.values()][0] : null;
 }
 
-// Special numbering belongs to TMDB, not the platform's catalog position.
-export async function resolveTmdbSpecialEpisode(identity, season, episode, lookup = getTmdbMatchEpisode) {
-  if (identity?.mediaType !== 'tv' || season !== 0 || !Number.isInteger(episode) || episode < 1) return null;
+// TMDB episode metadata identifies content, not a platform catalog position.
+export async function resolveTmdbEpisodeMetadata(identity, season, episode, lookup = getTmdbMatchEpisode) {
+  if (identity?.mediaType !== 'tv' || !Number.isInteger(season) || season < 0 || !Number.isInteger(episode) || episode < 1) return null;
   const detail = await lookup(identity.tmdbId, season, episode);
   if (!detail || detail.season_number !== season || detail.episode_number !== episode || !detail.name) return null;
   const name = String(detail.name).normalize('NFKC').trim();
   const explicitSeason = name.match(/第\s*(\d+)\s*季|\bS(?:eason)?\s*(\d+)\b/i);
   const airDate = /^\d{4}-\d{2}-\d{2}$/.test(detail.air_date || '') ? detail.air_date : null;
-  const year = airDate ? Number(airDate.slice(0, 4)) : null;
-  const seasonCandidates = (identity.seasons || []).filter(s => s.season > 0 && s.year === year);
-  const targetSeason = explicitSeason ? Number(explicitSeason[1] || explicitSeason[2]) :
-    seasonCandidates.length === 1 ? seasonCandidates[0].season : null;
+  const airYear = airDate ? Number(airDate.slice(0, 4)) : null;
+  const seasonCandidates = (identity.seasons || []).filter(s => s.season > 0 && s.year === airYear);
+  const namedSeason = explicitSeason ? Number(explicitSeason[1] || explicitSeason[2]) : null;
+  if (season > 0 && namedSeason && namedSeason !== season) return null;
+  const targetSeason = season > 0 ? season : namedSeason ||
+    (seasonCandidates.length === 1 ? seasonCandidates[0].season : null);
   if (!targetSeason) return null;
   const knownYear = identity.seasons?.find(s => s.season === targetSeason)?.year;
-  if (year && knownYear && year !== knownYear) return null;
+  if (season === 0 && airYear && knownYear && airYear !== knownYear) return null;
+  // A regular season may air across New Year; its catalog uses the season year.
+  const year = season > 0 ? knownYear || (season === 1 ? identity.year : null) : airYear;
   return { name, title: name.replace(explicitSeason?.[0] || /$^/, '').trim(), airDate, year, targetSeason };
 }
 
@@ -90,6 +95,7 @@ const episodeText = value => String(value || '').normalize('NFKC').replace(/^【
 
 function varietyKey(title) {
   const text = episodeText(title);
+  if (/纯享|純享|精编|精編|预告|預告/.test(text)) return null;
   const issue = text.match(/第(\d+)期/);
   const kind = /加更/.test(text) ? (/超前/.test(text) ? 'ahead-extra' : /还有/.test(text) ? 'more-extra' :
     /特别/.test(text) ? 'special-extra' : /先导片|先導片/.test(text) ? 'pilot-extra' : 'extra') :
@@ -99,27 +105,39 @@ function varietyKey(title) {
   return `${kind}:${issue?.[1] || ''}:${part}`;
 }
 
-export function selectTmdbSpecialEpisode(animes, metadata, identity, episodesForAnime) {
+const normalizedEpisodeTitle = value => String(value || '').normalize('NFKC').toLowerCase()
+  .replace(/[\s\p{P}\p{S}]/gu, '');
+const genericEpisodeTitle = value => /^(?:第?[0-9一二三四五六七八九十百]+[集话回期]?|e(?:p)?\d+|episode\d+|specials?\d*)$/i.test(value);
+
+function episodeTitleVariants(title) {
+  const text = String(title || '').normalize('NFKC').replace(/^【[^】]*】\s*/, '');
+  const subtitle = text.replace(/^(?:第\s*[0-9一二三四五六七八九十百]+\s*[集话回]|(?:S\d+)?E(?:P)?\d+|episode\s*\d+)\s*[:：._-]?\s*/i, '');
+  return [text, subtitle].map(normalizedEpisodeTitle).filter(value => value && !genericEpisodeTitle(value));
+}
+
+export function selectTmdbEpisode(animes, metadata, identity, episodesForAnime) {
   const matches = [];
-  const expected = episodeText(metadata.title);
+  const expectedTitles = episodeTitleVariants(metadata.title);
+  const generic = genericEpisodeTitle(normalizedEpisodeTitle(metadata.title));
   const key = varietyKey(metadata.title);
-  if (!expected || /^(?:第?\d+[集话回期]?|episode\d+|specials?\d*)$/i.test(expected)) return null;
+  if (!expectedTitles.length && !(generic && metadata.airDate)) return null;
   for (const anime of filterTmdbMatchCandidates(animes, identity)) {
-    const season = String(anime.animeTitle).match(/第\s*(\d+)\s*季|\bS(?:eason)?\s*(\d+)\b/i);
-    const number = season ? Number(season[1] || season[2]) : 1;
+    const number = extractSeasonNumberFromAnimeTitle(anime.animeTitle).season ?? 1;
     if (number !== metadata.targetSeason) continue;
     const year = Number(String(anime.animeTitle).match(/[（(]((?:19|20)\d{2})[）)]/)?.[1]) ||
       Number(String(anime.startDate || '').slice(0, 4)) || null;
     if (metadata.year && year && metadata.year !== year) continue;
     for (const ep of episodesForAnime(anime) || []) {
-      const actual = episodeText(ep.episodeTitle);
-      if (actual !== expected && !(key && varietyKey(ep.episodeTitle) === key)) continue;
-      // Catalog airDate may be copied from the show's startDate. Only use a
-      // real per-video date or a date explicitly present in its title.
+      const titleMatch = episodeTitleVariants(ep.episodeTitle).some(actual => expectedTitles.includes(actual)) ||
+        Boolean(key && varietyKey(ep.episodeTitle) === key);
+      // Episode DTO dates are often copied from the show's startDate. Use only
+      // per-video dates from the raw link or an explicit date in its title.
       const raw = anime.links?.find(link => link.url === ep.url);
-      const date = raw?.airDate || raw?.publishDate ||
-        String(ep.episodeTitle).match(/(?:19|20)\d{2}-\d{2}-\d{2}/)?.[0];
-      if (date && metadata.airDate && String(date).slice(0, 10) !== metadata.airDate) continue;
+      const date = String(raw?.airDate || raw?.publishDate ||
+        String(ep.episodeTitle).match(/(?:19|20)\d{2}-\d{2}-\d{2}/)?.[0] || '').slice(0, 10);
+      const dateMatch = date && metadata.airDate && date === metadata.airDate;
+      if (date && metadata.airDate && !dateMatch) continue;
+      if (!titleMatch && !(generic && dateMatch)) continue;
       if (!matches.some(m => m.resAnime.source === anime.source && m.resEpisode.url === ep.url))
         matches.push({ resAnime: anime, resEpisode: ep, spilloverMatched: false });
     }
