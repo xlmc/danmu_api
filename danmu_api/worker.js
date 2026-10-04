@@ -1,3 +1,4 @@
+import { handleMappingShare } from './utils/mapping-share-util.js';
 import { initializePersistentCaches } from './utils/persistent-cache-util.js';
 import { Globals } from './configs/globals.js';
 import { jsonResponse } from './utils/http-util.js';
@@ -146,7 +147,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     return handleConfig(true); // 有权限
   }
 
-  if (method === 'POST' && (path.startsWith('/api/env/') || path === '/api/cache/clear' || path === '/api/cookie/save')) {
+  if (method === 'POST' && (path.startsWith('/api/env/') || path === '/api/cache/clear' || path === '/api/cookie/save' || path === '/api/title-mapping/share')) {
     const configAdmin = tokenAuthDisabled || (globals.adminToken
       ? explicitToken === globals.adminToken
       : (explicitToken === globals.token || isDefaultToken));
@@ -395,6 +396,11 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   // GET /api/logs/remote-mapping - 远程映射表专用日志（独立缓冲区，不被源站日志冲掉）
   if (path === "/api/logs/remote-mapping" && method === "GET") {
     return handleRemoteMappingLogs();
+  }
+
+  // POST /api/title-mapping/share: protected by the same admin gate as config writes.
+  if (path === '/api/title-mapping/share' && method === 'POST') {
+    return handleMappingShare(req);
   }
 
   // POST /api/title-mapping/refresh - 管理员手动刷新远程映射表

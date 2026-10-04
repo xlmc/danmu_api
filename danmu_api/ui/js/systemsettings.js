@@ -2481,6 +2481,51 @@ function renderRemoteMappingRefreshItem(kind = 'title') {
         '<span class="remote-refresh-status text-gray font-size-12" style="display:block;margin-top:4px;" aria-live="polite"></span></div></div>';
 }
 
+function renderMappingShareItem(item) {
+    if (!['TITLE_MAPPING_TABLE', 'AUTO_MATCH_MAPPING_TABLE'].includes(item.key)) return '';
+    const kind = item.key === 'TITLE_MAPPING_TABLE' ? 'title' : 'season';
+    const lines = mappingShareLines(item.value || '');
+    return '<div class="env-item mapping-share-item" data-share-kind="' + kind + '"><div class="env-info"><strong>共享本地' + (kind === 'title' ? '标题' : '季集') + '规则</strong>' +
+        '<div class="text-gray font-size-12">只公开勾选的已保存规则，不上传其他配置。上传成功不代表已发布；冲突和无效规则不会自动生效。</div>' +
+        '<details><summary>选择规则（' + lines.length + ' 条）</summary>' + lines.map((line, index) =>
+            '<label style="display:flex;gap:8px;margin:6px 0;overflow-wrap:anywhere;"><input type="checkbox" class="mapping-share-choice" value="' + index + '" data-line="' + escapeHtml(line) + '"><span>' + escapeHtml(line) + '</span></label>').join('') + '</details>' +
+        '</div><div class="env-actions"><button class="btn btn-secondary" onclick="shareLocalMappings(this)"' + (lines.length ? '' : ' disabled') + '>上传共享</button>' +
+        '<div class="mapping-share-status text-gray font-size-12" aria-live="polite" style="margin-top:6px;white-space:pre-wrap;"></div></div></div>';
+}
+function mappingShareLines(raw) {
+    const lines = []; let current = '', depth = 0;
+    for (let i = 0; i < raw.length; i++) {
+        const c = raw[i]; if (raw.slice(i, i + 2) === '{[') depth++;
+        if (raw.slice(i, i + 2) === ']}') depth = Math.max(0, depth - 1);
+        if ((c === ';' || c === '\\n' || c === '\\r') && !depth) { if (current.trim()) lines.push(current.trim()); current = ''; }
+        else current += c;
+    }
+    if (current.trim()) lines.push(current.trim());
+    return lines;
+}
+async function shareLocalMappings(button) {
+    if (!button || button.disabled) return;
+    const panel = button.closest('.mapping-share-item');
+    const status = panel.querySelector('.mapping-share-status');
+    const selected = Array.from(panel.querySelectorAll('.mapping-share-choice:checked'));
+    if (!selected.length || selected.length > 100) { status.textContent = '请先勾选 1~100 条要公开分享的规则'; return; }
+    const kind = panel.dataset.shareKind;
+    const original = button.textContent;
+    button.disabled = true; button.textContent = '上传中…'; status.textContent = '';
+    try {
+        const response = await fetch(buildApiUrl('/api/title-mapping/share', true), {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, signal: AbortSignal.timeout(35000),
+            body: JSON.stringify({kind, indices: selected.map(el => Number(el.value)), lines: selected.map(el => el.dataset.line)})
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error || '上传失败');
+        status.textContent = '已上传 ' + result.stored + ' 条，重复 ' + (result.duplicate || 0) + ' 条，冲突 ' + (result.conflict || []).length + ' 条，无效 ' + (result.invalid || []).length + ' 条。' +
+            (result.status === 'pending_review' ? '新规则等待核验，尚未发布。' : result.status === 'already_received' ? '此前已收到，无需重复上传。' : '没有可新增的规则。') +
+            [...(result.conflict || []), ...(result.invalid || [])].map(entry => '\\n第 ' + (entry.index + 1) + ' 条：' + entry.reason).join('');
+    } catch (error) { status.textContent = error.message || '上传失败，本地规则未改变'; }
+    finally { button.disabled = false; button.textContent = original; }
+}
+
 function renderEnvItem(item, category, originalIndex) {
     const typeLabel = getEnvTypeLabel(item.type);
     const badgeClass = item.type === 'multi-select' ? 'multi' : '';
@@ -2537,7 +2582,7 @@ function renderEnvList() {
         if (themeSettings) themeSettings.hidden = currentCategory !== 'system';
         if (status) status.textContent = previewCategoryMeta[currentCategory].label + ' · ' + categoryItems.length + ' 项';
         list.innerHTML = items.length
-            ? items.map(({ item, originalIndex }) => renderEnvItem(item, currentCategory, originalIndex) + (item.key === 'TITLE_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('title') : item.key === 'AUTO_MATCH_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('auto-match') : '')).join('')
+            ? items.map(({ item, originalIndex }) => renderEnvItem(item, currentCategory, originalIndex) + renderMappingShareItem(item) + (item.key === 'TITLE_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('title') : item.key === 'AUTO_MATCH_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('auto-match') : '')).join('')
             : '<p class="text-gray padding-20 text-center">暂无配置项</p>';
         return;
     }
@@ -2564,7 +2609,7 @@ function renderEnvList() {
                     <span>\${regularMatches.length} 项</span>
                 </div>
                 <div>
-                    \${regularMatches.map(({ item, originalIndex }) => renderEnvItem(item, category, originalIndex) + (item.key === 'TITLE_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('title') : item.key === 'AUTO_MATCH_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('auto-match') : '')).join('')}
+                    \${regularMatches.map(({ item, originalIndex }) => renderEnvItem(item, category, originalIndex) + renderMappingShareItem(item) + (item.key === 'TITLE_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('title') : item.key === 'AUTO_MATCH_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('auto-match') : '')).join('')}
                 </div>
             </section>
         \`;
