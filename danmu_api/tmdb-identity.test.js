@@ -355,3 +355,40 @@ test('S00 without usable TMDB episode metadata never falls back to ordinary cata
   const result=await adaptiveFixture('现在就出发 S00E131',()=>[specialCatalog()],{tmdb});
   assert.equal(result.data.isMatched,false);assert.deepEqual(result.searches,[]);
 });
+
+const pureCatalog = () => {
+  const anime = fixtureAnime('现在就出发 第4季', 2026, 941, 'variety');
+  anime.links = [{ url: 'https://v.qq.com/x/cover/mzc002001bk7moh/d410224wohg.html',
+    title: '【tencent】 先导片·沙滩小黑脚纯享：四旬老人沈腾四脚朝天', publishDate: '2026-10-01' }];
+  anime.episodeCount = 1;
+  return anime;
+};
+const pureDetail = { id: 103, season_number: 0, episode_number: 133,
+  name: '先导片·沙滩小黑脚纯享', air_date: '2026-10-01' };
+
+test('S00E133 matches official main title with added description through POST and comments', async () => {
+  const result = await adaptiveFixture('现在就出发 S00E133', () => [pureCatalog()], {
+    tmdb: { results: [{ id: 231620, name: '现在就出发', first_air_date: '2023-01-01' }],
+      details: { id: 231620, name: '现在就出发', first_air_date: '2023-01-01',
+        seasons: [{ season_number: 4, air_date: '2026-01-01' }] }, episode: pureDetail } });
+  assert.equal(result.data.isMatched, true, JSON.stringify(result.data));
+  assert.equal(result.data.matches[0].url, pureCatalog().links[0].url);
+  assert.ok(result.comments);
+});
+
+test('main-title matching rejects short prefixes, other categories, dates and duplicate videos', async () => {
+  const metadata = await resolveTmdbEpisodeMetadata(specialIdentity, 0, 133, async () => pureDetail);
+  const episodes = anime => anime.links.map((link, i) => ({ episodeId: i + 1, episodeTitle: link.title, url: link.url }));
+  const choose = catalog => selectTmdbEpisode([catalog], metadata, specialIdentity, episodes);
+  assert.ok(choose(pureCatalog()));
+  for (const title of ['先导片·沙滩小黑脚：四旬老人沈腾四脚朝天',
+    '先导片·沙滩小黑脚精编：四旬老人沈腾四脚朝天', '先导片·沙滩小黑脚纯享加长：四旬老人沈腾四脚朝天',
+    '第133集：其他内容']) {
+    const anime = pureCatalog(); anime.links[0].title = title;
+    assert.equal(choose(anime), null, title);
+  }
+  const wrongDate = pureCatalog(); wrongDate.links[0].publishDate = '2026-10-02';
+  assert.equal(choose(wrongDate), null);
+  const duplicate = pureCatalog(); duplicate.links.push({ ...duplicate.links[0], url: 'https://v.qq.com/duplicate' });
+  assert.equal(choose(duplicate), null);
+});

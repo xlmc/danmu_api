@@ -112,7 +112,10 @@ const genericEpisodeTitle = value => /^(?:第?[0-9一二三四五六七八九十
 function episodeTitleVariants(title) {
   const text = String(title || '').normalize('NFKC').replace(/^【[^】]*】\s*/, '');
   const subtitle = text.replace(/^(?:第\s*[0-9一二三四五六七八九十百]+\s*[集话回]|(?:S\d+)?E(?:P)?\d+|episode\s*\d+)\s*[:：._-]?\s*/i, '');
-  return [text, subtitle].map(normalizedEpisodeTitle).filter(value => value && !genericEpisodeTitle(value));
+  // Official titles can append a description after a colon. Compare complete
+  // main titles while preserving part and category names, never arbitrary prefixes.
+  return [...new Set([text, subtitle].flatMap(value => [value, value.split(/[:：]/, 1)[0]])
+    .map(normalizedEpisodeTitle).filter(value => value && !genericEpisodeTitle(value)))];
 }
 
 export function selectTmdbEpisode(animes, metadata, identity, episodesForAnime) {

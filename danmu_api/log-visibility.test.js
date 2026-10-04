@@ -27,12 +27,12 @@ test('分类与来源是独立维度，旧标签不猜测未声明来源', () =>
 });
 
 test('真实日志接口兼容文本，JSON保留结构与脱敏，未授权请求被拒绝', async () => {
-  const env = { TOKEN: 'test-log-user', ADMIN_TOKEN: 'test-log-admin', USE_BANGUMI_DATA: 'false', LOG_LEVEL: 'info' };
+  const env = { TOKEN: 'test-log-user', ADMIN_TOKEN: 'test-log-admin', USE_BANGUMI_DATA: 'false', LOG_LEVEL: 'debug' };
   Globals.init(env); Globals.logBuffer = [];
   Globals.originalEnvVars = { API_KEY: 'sensitive-test-key' };
   Globals.accessedEnvVars = { API_KEY: '******************' };
   await runWithMatchTrace(async () => {
-    logEvent('info', 'match.identity', '[system] [match-trace] 解析身份', { title: 'sensitive-test-key', season: 4, episode: 9 });
+    logEvent('debug', 'match.identity', '[system] [match-trace] 解析身份', { title: 'sensitive-test-key', season: 4, episode: 9 });
     await traceMatchStep(log, '来源 tencent 搜索', async () => []);
     log('warn', '[iqiyi] client ip: 192.168.1.9');
   });
@@ -46,6 +46,8 @@ test('真实日志接口兼容文本，JSON保留结构与脱敏，未授权请�
   const event = payload.entries.find(e => e.event === 'match.identity');
   assert.equal(event.data.title, '******************');
   assert.equal(event.data.episode, 9);
+  assert.equal(event.level, 'debug');
+  assert.ok(payload.entries.some(entry => entry.level === 'info' && entry.event === 'step.end'));
   assert.ok(event.requestId);
   assert.equal(new Set(payload.entries.map(e => e.id)).size, payload.entries.length);
   const timing = payload.entries.find(e => e.event === 'step.end');
@@ -61,4 +63,29 @@ test('真实日志接口兼容文本，JSON保留结构与脱敏，未授权请�
   assert.ok((await admin.text()).includes('192.168.1.9'));
   const denied = await request('wrong-token/api/logs?format=json');
   assert.ok([401,403].includes(denied.status));
+});
+
+test('configured log levels filter buffer and console consistently', () => {
+  const levels = ['error', 'warn', 'info', 'debug'];
+  const original = Object.fromEntries(levels.map(level => [level, console[level]]));
+  try {
+    for (let threshold = 0; threshold < levels.length; threshold++) {
+      Globals.init({ LOG_LEVEL: levels[threshold] }); Globals.logBuffer = [];
+      const emitted = [];
+      for (const level of levels) console[level] = () => emitted.push(level);
+      for (const level of levels) log(level, '[system] matrix ' + level);
+      assert.deepEqual(Globals.logBuffer.map(entry => entry.level), levels.slice(0, threshold + 1));
+      assert.deepEqual(emitted, levels.slice(0, threshold + 1));
+    }
+  } finally {
+    for (const level of levels) console[level] = original[level];
+  }
+});
+
+test('log UI keeps debug entries and filters them independently', () => {
+  const context = vm.createContext({ window: {} });
+  vm.runInContext(logviewJsContent, context);
+  vm.runInContext("let logs = [normalizeLogEntry({level:'debug',message:'[system] detail'},0), normalizeLogEntry({level:'info',message:'[system] summary'},1)]; logViewState.level = 'debug';", context);
+  assert.equal(vm.runInContext('filterLogEntries().length', context), 1);
+  assert.equal(vm.runInContext('filterLogEntries()[0].type', context), 'debug');
 });
