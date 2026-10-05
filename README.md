@@ -11,7 +11,7 @@
 | 每个版本的功能、修复、风险 | [自用版本说明](SELF_USE_CHANGELOG.md) |
 | 映射、过滤、鉴权、渐变弹幕 | [自用功能说明](docs/self-use-features.md) |
 | 播放器渐变字段、绘制接入与降级 | [播放器渐变接入指南](docs/player-gradient-integration.md) |
-| 移动端模型传递、缓存与原文字绘制接入 | [移动端渐变接入](docs/mobile-gradient-integration.md) |
+| iOS / Android / PC 的通用模型、缓存与绘制接入 | [客户端通用渐变接入](docs/client-gradient-integration.md) |
 | API、环境变量、弹幕来源 | [配置参考](docs/configuration.md) |
 | 旧部署迁移、测试与回滚 | [部署说明](docs/deployment.md) |
 | 上游同步、分支与发布流程 | [维护说明](docs/maintenance.md) |
