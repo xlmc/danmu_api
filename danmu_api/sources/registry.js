@@ -21,7 +21,6 @@ import { globals } from '../configs/globals.js';
 
 
 import BahamutSource from './bahamut.js';
-import DandanSource from './dandan.js';
 
 import TencentSource from './tencent.js';
 import IqiyiSource from './iqiyi.js';
@@ -59,7 +58,6 @@ const SOURCE_REGISTRY = [
   { key: 'leshi', logName: 'leshi', factory: () => new LeshiSource(), deps: [] },
   { key: 'hongguo', logName: 'hongguo', factory: () => new HongguoSource(), deps: [] },
   { key: 'bahamut', logName: 'bahamut', factory: () => new BahamutSource(), deps: [] },
-  { key: 'dandan', logName: 'dandan', factory: () => new DandanSource(), deps: [] },
 ];
 
 // ---- 实例缓存（按 key 索引）----

@@ -59,7 +59,7 @@ export function convertCommentsToDanmux(danmuData, {
   for (let index = 0; index < comments.length; index++) {
     const comment = comments[index];
     const nativeGradient = hasNativeGradient(comment);
-    const commentSourceLabel = nativeGradient ? 'dandan' : sourceLabel;
+    const commentSourceLabel = sourceLabel;
     const parsed = parseComment(comment, String(commentSourceLabel).slice(0, 64) || 'danmu_api');
     diagnostics.push(...(parsed.diagnostics ?? []).map((entry) => ({ ...entry, index })));
     if (!parsed.value) continue;

@@ -115,7 +115,7 @@ jobs:
             import { getAllSourceMetas, isRegisteredSource } from './danmu_api/sources/registry.js';
             if (process.arch !== process.env.EXPECTED_ARCH) throw new Error('Unexpected CPU architecture');
             if (typeof handleRequest !== 'function') throw new Error('Missing API entry point');
-            if (getAllSourceMetas().length !== 11 || !isRegisteredSource('dandan') || isRegisteredSource('360') || isRegisteredSource('xigua') || isRegisteredSource('maiduidui')) throw new Error('Unexpected source registry');
+            if (getAllSourceMetas().length !== 10 || isRegisteredSource('dandan') || isRegisteredSource('360') || isRegisteredSource('xigua') || isRegisteredSource('maiduidui')) throw new Error('Unexpected source registry');
             console.log('Native Node.js and NAS API imports passed:', process.arch);
           "
           mkdir -p "$RUNNER_TEMP/digests"

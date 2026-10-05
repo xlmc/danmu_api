@@ -822,7 +822,6 @@ function renderValueInput(item) {
         const currentKey = editingKeyName;
         const isBilibiliCookie = currentKey === 'BILIBILI_COOKIE';
 
-        const isDandanplayPassword = currentKey === 'DANDANPLAY_PASSWORD';
         const isColorPool = currentKey === 'COLOR_POOL';
         const isDanmuOffset = currentKey === 'DANMU_OFFSET';
 		const isCustomMergeRules = currentKey === 'CUSTOM_MERGE_RULES';
@@ -924,20 +923,6 @@ function renderValueInput(item) {
                     </div>
                 </div>
             \`;
-        } else if (isDandanplayPassword) {
-            // 弹弹play密码专用编辑界面
-            container.innerHTML = \`
-                <div class="dandanplay-editor">
-                    <label>弹弹play密码</label>
-                    <textarea class="form-group" id="text-value" placeholder="请输入弹弹play密码" rows="3">\${value}</textarea>
-                    <div class="form-help">账号在 DANDANPLAY_ACCOUNT 中配置，两者同时填写后 dandan 源经 NipaPlay 中转弹弹play服务端获取弹幕</div>
-
-
-                    <div class="dandanplay-actions" style="margin-bottom: 15px;">
-
-                    </div>
-                </div>
-            \`;
         } else if (isBilibiliCookie) {
             // Bilibili Cookie 专用编辑界面
             const rows = value && value.length > 50 ? Math.min(Math.max(Math.ceil(value.length / 50), 3), 8) : 3;
@@ -1003,7 +988,7 @@ function renderValueInput(item) {
                         </div>
                         <div style="flex: 1; min-width: 120px;">
                             <label class="offset-label">主源实体（主源剧名@源）</label>
-                            <input type="text" id="merge-prim-entity" class="offset-input" placeholder="例: 我推的孩子/S03@dandan" onfocus="setMergeFocus('prim')">
+                            <input type="text" id="merge-prim-entity" class="offset-input" placeholder="例: 我推的孩子/S03@tencent" onfocus="setMergeFocus('prim')">
                         </div>
                     </div>
                     <div class="offset-form-row" id="merge-route-row">
@@ -1703,7 +1688,7 @@ function updateTagStates() {
 
     // 2. 获取已确认的 Selected Tags (仅在非合并模式下需要检查)
     const selectedTagElements = getSelectedTagElements();
-    // PLATFORM_ORDER 的已选项可能是 dandan&tencent，需要将组合拆开后再判断源是否已添加。
+    // PLATFORM_ORDER 的已选项可能是 youku&tencent，需要将组合拆开后再判断源是否已添加。
     const selectedSourceTokens = new Set(
         selectedTagElements.flatMap(element =>
             String(element.dataset.value || '').split('&').map(value => value.trim()).filter(Boolean)

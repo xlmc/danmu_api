@@ -240,8 +240,8 @@ test('missing TMDB special detail and ambiguous real catalog leave POST match un
 
 
 test('special fallback resolves TMDB first and obeys platform groups without a Tencent shortcut',async()=>{
-  const iqiyi=getSourceByKey('iqiyi'),dandan=getSourceByKey('dandan');
-  const saved=[iqiyi,dandan].map(source=>({source,search:source.search,handle:source.handleAnimes,comments:source.getComments}));
+  const iqiyi=getSourceByKey('iqiyi'),bilibili=getSourceByKey('bilibili');
+  const saved=[iqiyi,bilibili].map(source=>({source,search:source.search,handle:source.handleAnimes,comments:source.getComments}));
   const tmdb={results:[{id:231620,name:'现在就出发',first_air_date:'2023-01-01'}],
     details:{id:231620,name:'现在就出发',first_air_date:'2023-01-01',seasons:[{season_number:4,air_date:'2026-01-01'}]},episode:specialDetail};
   try {
@@ -256,9 +256,9 @@ test('special fallback resolves TMDB first and obeys platform groups without a T
         addAnime(anime,details);const {links,...dto}=anime;results.push(dto);
       };
       iqiyi.getComments=async()=>[{p:'1,1,16777215,test',m:'试用弹幕'}];
-      dandan.search=async()=>{events.push('source:dandan');return [];};dandan.handleAnimes=async()=>{};
+      bilibili.search=async()=>{events.push('source:bilibili');return [];};bilibili.handleAnimes=async()=>{};
       const result=await adaptiveFixture('现在就出发 S00E131',()=>[specialCatalog()],{tmdb,events,
-        env:{SOURCE_ORDER:'tencent,iqiyi,dandan',PLATFORM_ORDER:'iqiyi,tencent,dandan'}});
+        env:{SOURCE_ORDER:'tencent,iqiyi,bilibili',PLATFORM_ORDER:'iqiyi,tencent,bilibili'}});
       assert.equal(result.data.isMatched,true,JSON.stringify(result.data));
       assert.deepEqual(events.filter(event=>event.startsWith('source:')),iqiyiHits?['source:iqiyi']:['source:iqiyi','source:tencent']);
       assert.ok(events.indexOf('/3/tv/231620/season/0/episode/131')<events.indexOf('source:iqiyi'));
@@ -324,9 +324,9 @@ test('real per-video date can resolve a generic TMDB episode only when unique',a
 
 
 test('ordinary TMDB fallback processes all group members and returns their configured merge before skipping later groups',async()=>{
-  const iqiyi=getSourceByKey('iqiyi'),dandan=getSourceByKey('dandan');
-  const saved=[iqiyi,dandan].map(source=>({source,search:source.search,handle:source.handleAnimes,comments:source.getComments}));
-  let iqiyiHandles=0,dandanHandles=0;
+  const iqiyi=getSourceByKey('iqiyi'),bilibili=getSourceByKey('bilibili');
+  const saved=[iqiyi,bilibili].map(source=>({source,search:source.search,handle:source.handleAnimes,comments:source.getComments}));
+  let iqiyiHandles=0,bilibiliHandles=0;
   const catalog=fixtureAnime('示例');catalog.links[0].title='【tencent】 初次交锋';catalog.links[1].title='【tencent】 迟来的信';
   try {
     iqiyi.search=async()=>[];
@@ -337,13 +337,13 @@ test('ordinary TMDB fallback processes all group members and returns their confi
       addAnime(item,details);const {links,...dto}=item;results.push(dto);
     };
     iqiyi.getComments=async()=>[{p:'1,1,16777215,test',m:'试用弹幕'}];
-    dandan.search=async()=>[];dandan.handleAnimes=async()=>{dandanHandles++;};
+    bilibili.search=async()=>[];bilibili.handleAnimes=async()=>{bilibiliHandles++;};
     const result=await adaptiveFixture('示例 S01E02',()=>[catalog],{tmdb:ordinaryTmdb({season_number:1,episode_number:2,name:'迟来的信',air_date:'2024-01-02'}),
-      env:{SOURCE_ORDER:'tencent,iqiyi,dandan',PLATFORM_ORDER:'tencent&iqiyi,dandan',MERGE_SOURCE_PAIRS:'tencent&iqiyi'}});
+      env:{SOURCE_ORDER:'tencent,iqiyi,bilibili',PLATFORM_ORDER:'tencent&iqiyi,bilibili',MERGE_SOURCE_PAIRS:'tencent&iqiyi'}});
     assert.equal(result.data.isMatched,true,JSON.stringify(result.data));
     assert.ok(result.data.matches[0].url.includes('$$$'),'matching response must carry all configured sources');
     assert.equal(iqiyiHandles,1,'the completed group directory is reused by subsequent stages');
-    assert.equal(dandanHandles,2,'later group belongs to the two failed normal stages and is skipped by the successful metadata stage');
+    assert.equal(bilibiliHandles,2,'later group belongs to the two failed normal stages and is skipped by the successful metadata stage');
     assert.equal(result.requests.filter(url=>url.includes('/season/1/episode/2')).length,1);
   } finally {for(const {source,search,handle,comments} of saved){source.search=search;source.handleAnimes=handle;source.getComments=comments;}}
 });

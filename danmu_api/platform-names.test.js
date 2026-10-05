@@ -13,16 +13,16 @@ import { convertToDanmakuJson } from './utils/danmu-util.js';
 
 
 
-Globals.init({PLATFORM_ORDER: 'tencent&iqiyi&bilibili,dandan', DANMU_OUTPUT_FORMAT: 'json' });
+Globals.init({PLATFORM_ORDER: 'tencent&iqiyi&bilibili,youku', DANMU_OUTPUT_FORMAT: 'json' });
 
 test('canonical configuration and old aliases resolve to the same platform groups', () => {
  assert.equal(canonicalPlatformName('qq'), 'tencent');
  assert.equal(canonicalPlatformGroup('qq＆tencent& qiyi &bilibili1'), 'tencent&iqiyi&bilibili');
  const original = Envs.env;
  try {
-  for (const value of ['tencent&iqiyi&bilibili,dandan','qq&qiyi&bilibili1,dandan']) {
+  for (const value of ['tencent&iqiyi&bilibili,youku','qq&qiyi&bilibili1,youku']) {
    Envs.env = { PLATFORM_ORDER: value, MERGE_SOURCE_PAIRS: value };
-   assert.deepEqual(Envs.resolvePlatformOrder(), ['tencent&iqiyi&bilibili','dandan',null]);
+   assert.deepEqual(Envs.resolvePlatformOrder(), ['tencent&iqiyi&bilibili','youku',null]);
    assert.deepEqual(Envs.resolveMergeSourcePairs()[0], {primary:'tencent',secondaries:['iqiyi','bilibili']});
   }
  } finally {Envs.env=original;}
@@ -45,8 +45,8 @@ test('file preferences, mapping rules and offset rules accept canonical names an
 test('removed members do not discard the priority of surviving platforms in a legacy group', () => {
  const original = Envs.env;
  try {
-  Envs.env = { PLATFORM_ORDER: 'tencent&youku,renren&hanjutv&dandan,leshi&xigua&sohu,hongguo,migu' };
-  assert.deepEqual(Envs.resolvePlatformOrder(), ['tencent&youku','dandan','leshi&sohu','hongguo','migu',null]);
+  Envs.env = { PLATFORM_ORDER: 'tencent&youku,renren&hanjutv&bilibili,leshi&xigua&sohu,hongguo,migu' };
+  assert.deepEqual(Envs.resolvePlatformOrder(), ['tencent&youku','bilibili','leshi&sohu','hongguo','migu',null]);
  } finally {Envs.env=original;}
 });
 
@@ -77,7 +77,7 @@ test('segment endpoint routes both canonical and legacy types to the same source
 });
 
 test('danmu tags normalize old source labels and avoid duplicate real-time aliases', () => {
- const result=convertToDanmakuJson([{p:'1,1,16777215,0',m:'测试',_sourceLabel:'dandan&qq',realTimeSource:'tencent'}],'qq');
- assert.match(result[0].p,/\[dandan[&＆]tencent\]/);
+ const result=convertToDanmakuJson([{p:'1,1,16777215,0',m:'测试',_sourceLabel:'bilibili&qq',realTimeSource:'tencent'}],'qq');
+ assert.match(result[0].p,/\[bilibili[&＆]tencent\]/);
  assert.doesNotMatch(result[0].p,/qq|tencent.*tencent/);
 });

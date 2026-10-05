@@ -560,8 +560,6 @@ export function convertToDanmakuJson(contents, platform) {
 
     // 优先使用弹幕自带的 _sourceLabel（应对合并工具），其次是外部传入的宏观 platform
     let currentPlatform = canonicalPlatformGroup(item._sourceLabel || platform);
-    // 原生 color_v2 由 dandan 兼容链路接管：不参与本项目渐变规则。
-    if (nativeGradient.present) currentPlatform = 'dandan';
 
     // 如果存在实时拉取的副源标签，安全追加
     const realTimeSource = canonicalPlatformName(item.realTimeSource);

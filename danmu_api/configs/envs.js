@@ -23,11 +23,11 @@ export class Envs {
   static sensitiveKeys = new Set();
 
   // 允许在值中写入 # 等 dotenv 视为注释字符的变量；读取时绕过 dotenv 截断以保留完整内容。加密变量按掩码写入预览集合，原始值仅供运行期使用与日志脱敏。
-  static RAW_ENV_KEYS = new Set(['ADMIN_TOKEN', 'ANIME_TITLE_FILTER', 'AUTO_MATCH_MAPPING_TABLE', 'BLOCKED_WORDS', 'BILIBILI_COOKIE', 'COLOR_POOL', 'CUSTOM_MERGE_RULES', 'DANDANPLAY_ACCOUNT', 'DANDANPLAY_PASSWORD', 'DANMU_OFFSET', 'EPISODE_TITLE_FILTER', 'LOCAL_REDIS_URL', 'PROXY_URL', 'TITLE_MAPPING_TABLE', 'TITLE_NOISE_FILTER', 'TMDB_API_KEY', 'TOKEN', ]);
+  static RAW_ENV_KEYS = new Set(['ADMIN_TOKEN', 'ANIME_TITLE_FILTER', 'AUTO_MATCH_MAPPING_TABLE', 'BLOCKED_WORDS', 'BILIBILI_COOKIE', 'COLOR_POOL', 'CUSTOM_MERGE_RULES', 'DANMU_OFFSET', 'EPISODE_TITLE_FILTER', 'LOCAL_REDIS_URL', 'PROXY_URL', 'TITLE_MAPPING_TABLE', 'TITLE_NOISE_FILTER', 'TMDB_API_KEY', 'TOKEN', ]);
 
-  static ALLOWED_PLATFORMS = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","bahamut","dandan"];
-  static ALLOWED_SOURCES = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","bahamut","dandan"];
-  static MERGE_ALLOWED_SOURCES = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","bahamut","dandan"];
+  static ALLOWED_PLATFORMS = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","bahamut"];
+  static ALLOWED_SOURCES = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","bahamut"];
+  static MERGE_ALLOWED_SOURCES = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","bahamut"];
 
 
   /**
@@ -170,7 +170,7 @@ export class Envs {
    * @returns {Array} 源排序数组
    */
   static resolveSourceOrder() {
-    let sourceOrder = this.get('SOURCE_ORDER', 'tencent,iqiyi,youku,imgo,bilibili,dandan', 'string');
+    let sourceOrder = this.get('SOURCE_ORDER', 'tencent,iqiyi,youku,imgo,bilibili', 'string');
 
     const orderArr = sourceOrder
       .split(',')
@@ -179,12 +179,12 @@ export class Envs {
 
     this.accessedEnvVars.set('SOURCE_ORDER', orderArr);
 
-    return orderArr.length > 0 ? orderArr : ['tencent', 'iqiyi', 'youku', 'imgo', 'bilibili', 'dandan'];
+    return orderArr.length > 0 ? orderArr : ['tencent', 'iqiyi', 'youku', 'imgo', 'bilibili'];
   }
 
   /**
    * 解析平台排序
-   * 支持单个平台或通过&连接的组合平台（如 bilibili&dandan）
+   * 支持单个平台或通过&连接的组合平台（如 bilibili&youku）
    * @returns {Array} 平台排序数组
    */
   static resolvePlatformOrder() {
@@ -208,8 +208,8 @@ export class Envs {
    * 支持使用分号或逗号分隔多组配置
    * 支持一主多从配置，第一个为主源，后续为副源
    * 允许单源配置（用于保留特定源的原始结果，不被合并消耗）
-   * 格式示例: tencent&iqiyi,youku&bilibili,dandan
-   * @returns {Array} 合并配置数组 [{primary: 'tencent', secondaries: ['iqiyi']}, {primary: 'dandan', secondaries: []}]
+   * 格式示例: tencent&iqiyi,youku&bilibili
+   * @returns {Array} 合并配置数组 [{primary: 'tencent', secondaries: ['iqiyi']}, {primary: 'bilibili', secondaries: []}]
    */
   static resolveMergeSourcePairs() {
     const config = this.get('MERGE_SOURCE_PAIRS', '', 'string');
@@ -555,15 +555,13 @@ export class Envs {
 
       // 源配置
       'SOURCE_ORDER': { category: 'source', type: 'multi-select', options: this.ALLOWED_SOURCES, description: '启用的弹幕来源及搜索结果排列顺序。手动搜索并发查询这些来源；自动匹配按 PLATFORM_ORDER 分组搜索，本配置决定组内结果顺序，不决定自动匹配的组间优先级。' },
-      'MERGE_SOURCE_PAIRS': { category: 'source', type: 'multi-select', options: this.MERGE_ALLOWED_SOURCES, description: '配置实际合并返回的弹幕来源，允许多组、多源、单源保留原结果。组内第一个为主源，其余为副源；主源无结果时轮替下一源。\n自动匹配只合并当前 PLATFORM_ORDER 组内已搜索的来源；需要一起合并的源应放在同一平台组。\n格式：源1&源2&源3，多组用逗号分隔。\n示例：tencent&iqiyi,youku&bilibili,dandan' },
-      'CUSTOM_MERGE_RULES': { category: 'source', type: 'text', sources: this.MERGE_ALLOWED_SOURCES, description: '合并映射表，用于自定义源合并行为。\n格式1(合并)：副源剧名/S季数@来源 -> 主源剧名/S季数@来源 | E副源集数>E主源集数\n格式2(阻断)：副源剧名/S季数@来源 × 主源剧名/S季数@来源\n说明：[/S季数] 与 [|路由规则] 为可选项，留空则交由程序判断。多个规则用分号隔开，多段路由用逗号分隔。\n示例：\n1. 常规合并：天气之子@bilibili -> 天气之子@dandan\n2. 多集路由：我推的孩子/S01@bahamut -> 我推的孩子/S03@dandan | E25~E35>E25~E35\n3. 阻断合并：辉夜大小姐想让我告白？～天才们的恋爱头脑战～(2020)@bilibili × 辉夜大小姐想让我告白～天才们的恋爱头脑战～ OVA(2021)【OVA】@dandan' },
+      'MERGE_SOURCE_PAIRS': { category: 'source', type: 'multi-select', options: this.MERGE_ALLOWED_SOURCES, description: '配置实际合并返回的弹幕来源，允许多组、多源、单源保留原结果。组内第一个为主源，其余为副源；主源无结果时轮替下一源。\n自动匹配只合并当前 PLATFORM_ORDER 组内已搜索的来源；需要一起合并的源应放在同一平台组。\n格式：源1&源2&源3，多组用逗号分隔。\n示例：tencent&iqiyi,youku&bilibili' },
+      'CUSTOM_MERGE_RULES': { category: 'source', type: 'text', sources: this.MERGE_ALLOWED_SOURCES, description: '合并映射表，用于自定义源合并行为。\n格式1(合并)：副源剧名/S季数@来源 -> 主源剧名/S季数@来源 | E副源集数>E主源集数\n格式2(阻断)：副源剧名/S季数@来源 × 主源剧名/S季数@来源\n说明：[/S季数] 与 [|路由规则] 为可选项，留空则交由程序判断。多个规则用分号隔开，多段路由用逗号分隔。\n示例：\n1. 常规合并：天气之子@bilibili -> 天气之子@tencent\n2. 多集路由：我推的孩子/S01@bahamut -> 我推的孩子/S03@tencent | E25~E35>E25~E35\n3. 阻断合并：辉夜大小姐想让我告白？～天才们的恋爱头脑战～(2020)@bilibili × 辉夜大小姐想让我告白～天才们的恋爱头脑战～ OVA(2021)【OVA】@tencent' },
       'BILIBILI_COOKIE': { category: 'source', type: 'text', description: 'B站Cookie' },
       'YOUKU_CONCURRENCY': { category: 'source', type: 'number', description: '优酷并发配置，默认8', min: 1, max: 16 },
-      'DANDANPLAY_ACCOUNT': { category: 'source', type: 'text', description: '弹弹play账号（dandan 源获取弹幕使用）。\n与密码同时填写后自动开启，无需额外开关。\n开启后 dandan 源改由 NipaPlay 中转弹弹play服务端获取弹幕，并把同一请求下发的弹弹关联链接分发给对应平台源实时拉取（需开启对应源）：\n最终弹幕为 NipaPlay 中转弹弹play服务端弹幕与自有链路弹幕合并去重后的结果。\n注意：关联链接指向的平台视频若已下架将无法通过自有链路补取；关联含巴哈姆特平台时需确保能够连通巴哈' },
-      'DANDANPLAY_PASSWORD': { category: 'source', type: 'text', description: '弹弹play密码（dandan 源获取弹幕使用），与账号同时填写后启用。' },
 
       // 匹配配置
-      'PLATFORM_ORDER': { category: 'match', type: 'multi-select', options: this.ALLOWED_PLATFORMS, description: '自动匹配的平台组搜索与选择顺序：逗号分组，按组依次执行；& 连接同组并发来源。有有效季集匹配就停止，不启动后续组；全部未命中才搜索其余启用源。\n示例：tencent&youku,dandan,hongguo。只搜索 SOURCE_ORDER 已启用的来源。\n& 本身不启用弹幕合并，实际合并由 MERGE_SOURCE_PAIRS / CUSTOM_MERGE_RULES 控制。指定平台或手动选择优先。' },
+      'PLATFORM_ORDER': { category: 'match', type: 'multi-select', options: this.ALLOWED_PLATFORMS, description: '自动匹配的平台组搜索与选择顺序：逗号分组，按组依次执行；& 连接同组并发来源。有有效季集匹配就停止，不启动后续组；全部未命中才搜索其余启用源。\n示例：tencent&youku,hongguo。只搜索 SOURCE_ORDER 已启用的来源。\n& 本身不启用弹幕合并，实际合并由 MERGE_SOURCE_PAIRS / CUSTOM_MERGE_RULES 控制。指定平台或手动选择优先。' },
       'ANIME_TITLE_FILTER': { category: 'match', type: 'text', description: '剧名过滤规则' },
       'EPISODE_TITLE_FILTER': { category: 'match', type: 'text', description: '剧集标题过滤规则' },
       'ENABLE_ANIME_EPISODE_FILTER': { category: 'match', type: 'boolean', description: '控制手动搜索的时候是否根据ANIME_TITLE_FILTER进行剧名过滤以及根据EPISODE_TITLE_FILTER进行集标题过滤' },
@@ -591,7 +589,7 @@ export class Envs {
       'DANMU_OUTPUT_FORMAT': { category: 'danmu', type: 'select', options: ['json', 'xml', 'danmux', ...danAnyFormats], description: '弹幕输出格式，默认json' },
       'LIKE_SWITCH': { category: 'danmu', type: 'boolean', description: '弹幕点赞数显示开关，默认开启' },
       'HONGGUO_MERGE_ALL_EPISODES': { category: 'danmu', type: 'boolean', description: '红果短剧合并全集弹幕，默认关闭' },
-      'DANMU_OFFSET': { category: 'danmu', type: 'text', sources: this.ALLOWED_SOURCES, description: '弹幕时间偏移配置，格式：剧名:秒 或 剧名/季:秒 或 剧名/季/集:秒，支持指定来源：剧名@来源:秒 或 剧名/季@来源1&来源2:秒，多条用逗号分隔，正数表示弹幕延后（向右），负数表示弹幕提前（向左）。支持百分比模式：在路径或来源末尾追加 %，如 东方/S03/E02@tencent%:11，按公式 原时间 * (视频时长 + 偏移秒数) / 视频时长 缩放全部弹幕时间。示例：overlord/S01:90,re-zero/S02@bilibili:120,re-zero/S02/E03@dandan&bilibili:10,东方/S03/E02@tencent%:11' },
+      'DANMU_OFFSET': { category: 'danmu', type: 'text', sources: this.ALLOWED_SOURCES, description: '弹幕时间偏移配置，格式：剧名:秒 或 剧名/季:秒 或 剧名/季/集:秒，支持指定来源：剧名@来源:秒 或 剧名/季@来源1&来源2:秒，多条用逗号分隔，正数表示弹幕延后（向右），负数表示弹幕提前（向左）。支持百分比模式：在路径或来源末尾追加 %，如 东方/S03/E02@tencent%:11，按公式 原时间 * (视频时长 + 偏移秒数) / 视频时长 缩放全部弹幕时间。示例：overlord/S01:90,re-zero/S02@bilibili:120,re-zero/S02/E03@tencent&bilibili:10,东方/S03/E02@tencent%:11' },
 
       // 缓存配置
       'LOCAL_CACHE_ENABLED': { category: 'cache', type: 'boolean', description: '通用文件缓存开关，默认开启且仍需已有 .cache 目录；关闭后不读取或写入通用文件缓存，包括收藏与定时计划；已配置 Upstash 时仍可持久化。不影响本地弹幕文件、Bangumi Data 或 Redis' },
@@ -622,8 +620,6 @@ export class Envs {
       customMergeRules: this.resolveCustomMergeRules(), // 合并映射表，用于自定义源合并行为。
       bilibliCookie: this.get('BILIBILI_COOKIE', '', 'string', true), // b站cookie
       youkuConcurrency: Math.min(this.get('YOUKU_CONCURRENCY', 8, 'number'), 16), // 优酷并发配置
-      dandanplayAccount: this.get('DANDANPLAY_ACCOUNT', '', 'string', true), // 弹弹play账号，dandan 源获取弹幕使用
-      dandanplayPassword: this.get('DANDANPLAY_PASSWORD', '', 'string', true), // 弹弹play密码，dandan 源获取弹幕使用
       platformOrderArr: this.resolvePlatformOrder(), // 自动匹配优选平台
       animeTitleFilter: this.resolveAnimeTitleFilter(), // 剧名正则过滤
       episodeTitleFilter: this.resolveEpisodeTitleFilter(), // 剧集标题正则过滤

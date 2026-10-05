@@ -487,7 +487,6 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
 
 
-  // POST /api/nipaplay/verify - 验证弹弹play账号连通性
 
 
   return jsonResponse({ message: "Not found" }, 404);

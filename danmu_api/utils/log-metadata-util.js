@@ -1,5 +1,5 @@
 // 分类与来源独立；不根据附近的日志猜测当前来源。
-const sources = new Set(['tencent','youku','iqiyi','mango','bilibili','migu','sohu','leshi','hongguo','bahamut','dandan','nipaplay']);
+const sources = new Set(['tencent','youku','iqiyi','mango','bilibili','migu','sohu','leshi','hongguo','bahamut']);
 export function normalizeLogSource(source) {
   return ({imgo:'mango',qq:'tencent','bilibili-proxy':'bilibili'}[source] || source);
 }

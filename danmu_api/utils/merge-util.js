@@ -36,7 +36,7 @@ export const MERGE_DELIMITER = '$$$';
 
 /**
  * 定义前端显示的源连接符
- * 出现在合并后条目的来源标签中，如 "bilibili&dandan"
+ * 出现在合并后条目的来源标签中，如 "bilibili&youku"
  * @constant {string}
  */
 export const DISPLAY_CONNECTOR = '&';
@@ -177,7 +177,6 @@ const RegexStore = {
         SEASON_PREFIX:       /(?:^|\s)(?:第\s*[0-9一二三四五六七八九十]+\s*季|S(?:eason)?\s*\d+)(?:\s+|_)/gi,
         CLEAN_SMART:         /(?:^|\s)(?:EP|E|Vol|Episode|No|Part|第)\s*\d+(?:\.\d+)?(?:\s*[话話集])?(?!\s*[季期部])/gi,
         PUNCTUATION:         /[!！?？,，.。、~～:：\-–—]/g,
-        DANDAN_TAG:          /^【(dandan)】/i,
         SPECIAL_START:       /^S\d+/i,
         MOVIE_CHECK:         /剧场版|劇場版|movie|film/i,
         PV_CHECK:            /(pv|trailer|预告)/i,
@@ -186,7 +185,6 @@ const RegexStore = {
         NUM_STRATEGY_A:      /(?:第|s)\s*(\d+)\s*[季s]\s*(?:第|ep|e)\s*(\d+)/i,
         NUM_STRATEGY_B:      /(?:ep|e|vol|episode|chapter|no|part|第)\s*(\d+(\.\d+)?)(?:\s*[话話集])?(?!\s*[季期部])/i,
         NUM_STRATEGY_C:      /(?:^|\s)(?:第)?(\d+(\.\d+)?)(?:话|集|\s|$)/,
-        DANDAN_IGNORE:       /^[SC]\d+/i,
         MAP_EXCLUDE_KEYWORDS:/(?:^|\s)(?:PV|OP|ED|SP|Special|Drama|OAD|OVA|Opening|Ending|特番|特典|Behind\s+the\s+Scenes|Making|Interview)(?:\s|$|[:：])/i,
         SINK_TITLE_STRICT:   /^(?:S\d+|C\d+|SP\d*|OP\d*|ED\d*|PV\d*|Trailers?|Interview|Making|特番|特典)(?:\s|$|[:：.\-]|\u3000)/i
     },
@@ -1013,7 +1011,6 @@ function checkDateMatch(dateA, dateB, isDub = false) {
 /**
  * 验证合并覆盖率
  * 防止剧场版误匹配 TV 版等低覆盖率情况（匹配上的集数占比过低则视为无效合并）
- * dandan 来源的集数元数据可信度高，直接放行
  * @param {number}  mergedCount    - 实际匹配上的集数
  * @param {number}  totalA         - 主源过滤后的集数
  * @param {number}  totalB         - 副源过滤后的集数
@@ -1023,8 +1020,6 @@ function checkDateMatch(dateA, dateB, isDub = false) {
  * @returns {boolean} true = 覆盖率合法，允许合并
  */
 function isMergeRatioValid(mergedCount, totalA, totalB, sourceA, sourceB, isAnyCollection = false) {
-    // 高可信度源直接放行
-    if (/^(dandan)$/i.test(sourceA) || /^(dandan)$/i.test(sourceB)) return true;
     if (isAnyCollection) {
         const minTotal = Math.min(totalA, totalB);
         if (minTotal > 0 && (mergedCount / minTotal) > 0.5) return true;
@@ -1062,37 +1057,17 @@ function getSpecialEpisodeType(title) {
 
 /**
  * 提取集数信息 (Episode Info Extraction)
- * 包含对 dandan 来源的特殊番外检测逻辑：
- * 这些来源的 S开头/C开头 标题在该源内就代表番外，不走通用正则
  * @param {string} title      - 集标题
  * @param {string} [sourceName=''] - 来源平台名称
  * @returns {{isMovie:boolean, num:number|null, isSpecial:boolean, isPV:boolean, season:number|null, isStrictSpecial:boolean}}
  */
 function extractEpisodeInfo(title, sourceName = '') {
-    let isStrictSpecial  = false;
-    let effectiveSource  = sourceName;
-    // 检测标题内嵌的来源标签（如 "【dandan】SP01"）
-    if (title) {
-        const tagMatch = title.match(RegexStore.Episode.DANDAN_TAG);
-        if (tagMatch) effectiveSource = tagMatch[1].toLowerCase();
-    }
-    const isDandanOrAnimeko = /^(dandan)$/i.test(effectiveSource);
-    if (isDandanOrAnimeko && title) {
-        let rawTemp = title
-            .replace(RegexStore.Clean.SOURCE_TAG,  '')
-            .replace(RegexStore.Clean.FROM_SUFFIX, '')
-            .trim();
-        // dandan 来源中，S开头或 dandan 专属格式直接标记为严格番外
-        if (RegexStore.Episode.SPECIAL_START.test(rawTemp) || RegexStore.Episode.DANDAN_IGNORE.test(rawTemp)) {
-            isStrictSpecial = true;
-        }
-    }
     const t           = cleanText(title || '');
     const isMovie     = RegexStore.Episode.MOVIE_CHECK.test(t);
     const isPV        = RegexStore.Episode.PV_CHECK.test(t);
     let num    = null, season = null;
     const specialTypeTag = getSpecialEpisodeType(title);
-    const isSpecial      = isPV || isStrictSpecial || !!specialTypeTag || RegexStore.Episode.SPECIAL_CHECK.test(t);
+    const isSpecial      = isPV || !!specialTypeTag || RegexStore.Episode.SPECIAL_CHECK.test(t);
     // 季度编号提取
     const seasonMatch = t.match(RegexStore.Episode.SEASON_MATCH);
     if (seasonMatch) season = parseInt(seasonMatch[1]);
@@ -1109,7 +1084,7 @@ function extractEpisodeInfo(title, sourceName = '') {
             if (weakPrefixMatch) num = parseFloat(weakPrefixMatch[1]);
         }
     }
-    return { isMovie, num, isSpecial, isPV, season, isStrictSpecial };
+    return { isMovie, num, isSpecial, isPV, season, isStrictSpecial: false };
 }
 
 /**
@@ -1123,7 +1098,7 @@ function extractEpisodeInfo(title, sourceName = '') {
 function filterEpisodes(links, filterRegex, sourceName = '') {
     if (!links) return [];
     // 白名单来源：集标题比较规范，免除正则拦截
-    const skipFilterSources = ['bilibili', 'bilibili1', 'bahamut', 'dandan'];
+    const skipFilterSources = ['bilibili', 'bilibili1', 'bahamut'];
     const shouldSkipFilter  = skipFilterSources.includes(sourceName);
     if (!filterRegex || shouldSkipFilter) {
         return links.map((link, index) => ({ link, originalIndex: index }));
@@ -1254,7 +1229,7 @@ function getDecimalEpisodes(links, source) {
  * @param {Array}      links      - 集数列表（将被原地修改）
  * @param {Set<number>}numsToSink - 需要沉底的集数编号集合
  * @param {string}     source     - 来源名
- * @param {string}     sideName   - 日志显示的侧边名（如"主源:dandan"）
+ * @param {string}     sideName   - 日志显示的侧边名（如"主源:tencent"）
  */
 function sinkDecimalEpisodes(links, numsToSink, source, sideName) {
     const normals = [], sinkers = [];
@@ -1318,8 +1293,7 @@ function findBestAlignmentOffset(
         const info        = extractEpisodeInfo(cleanTitle, source);
         const epLang      = getLanguageType(cleanTitle);
         const effLang     = epLang !== 'Unspecified' ? epLang : seriesLang;
-        // dandan 来源无语言标识时默认为日语
-        const finalLang   = (effLang === 'Unspecified' && /^(dandan)$/i.test(source)) ? 'JP' : effLang;
+        const finalLang = effLang;
         const cleanEpText = cleanEpisodeText(cleanTitle);
         // 中文严格匹配所需的核心词（去除所有数字和结构标记）
         const strictCnCore = (finalLang === 'CN') ? cleanTitle.replace(RegexStore.Similarity.CN_STRICT_CORE_REMOVE, '') : null;
@@ -1473,7 +1447,7 @@ function findBestAlignmentOffset(
  */
 function buildSeasonLengthMap(allGroupAnimes, epFilter, collectionAnimeIds) {
     // 结构: Map<seasonNum, Map<count, Array<sourceName>>>
-    // 含义: S1 → { 11集: ['dandan', 'bilibili'], 8集: ['tencent'] }
+    // 含义: S1 → { 11集: ['youku', 'bilibili'], 8集: ['tencent'] }
     const seasonStats = new Map();
     const debugLogs   = [];
 
@@ -1503,10 +1477,6 @@ function buildSeasonLengthMap(allGroupAnimes, epFilter, collectionAnimeIds) {
                 const title    = item.link.title || item.link.name || '';
                 const cleanT   = cleanText(title);
                 const rawTemp  = cleanT.replace(RegexStore.Clean.SOURCE_TAG, '').replace(RegexStore.Clean.FROM_SUFFIX, '').trim();
-                // dandan 来源的番外过滤
-                if (/^(dandan)$/i.test(realAnime.source)) {
-                    if (RegexStore.Episode.SPECIAL_CHECK.test(rawTemp) || RegexStore.Episode.DANDAN_IGNORE.test(rawTemp)) return false;
-                }
                 if (RegexStore.Episode.MAP_EXCLUDE_KEYWORDS.test(rawTemp) || RegexStore.Episode.MAP_EXCLUDE_KEYWORDS.test(title)) return false;
                 return true;
             });
@@ -1830,7 +1800,7 @@ function getMatchingCustomRule(pAnime, sAnime) {
         const rulePBaseSource = getBaseSource(rule.primary.source);
         const ruleSBaseSource = getBaseSource(rule.secondary.source);
 
-        // 支持主副源可能已经是拼接过的源（如 "bilibili&dandan"）
+        // 支持主副源可能已经是拼接过的源（如 "bilibili&youku"）
         const pSources = String(pAnime.source).split(DISPLAY_CONNECTOR);
         const sSources = String(sAnime.source).split(DISPLAY_CONNECTOR);
 
@@ -2211,23 +2181,8 @@ function detectCollectionCandidates(curAnimes) {
             }
             if (seasonNum > groupGlobalMaxSeason) groupGlobalMaxSeason = seasonNum;
 
-            // 计算有效集数（dandan 来源需严格过滤番外）
-            let validCount = 0;
-            if (realAnime.links) {
-                if (/^(dandan)$/i.test(realAnime.source)) {
-                    validCount = realAnime.links.filter((l) => {
-                        const rawTitle   = l.title || l.name || '';
-                        const rawContent = rawTitle.replace(RegexStore.Clean.SOURCE_TAG, '').replace(RegexStore.Clean.FROM_SUFFIX, '').trim();
-                        if (RegexStore.Episode.SPECIAL_CHECK.test(rawContent) || RegexStore.Episode.DANDAN_IGNORE.test(rawContent)) return false;
-                        const t = cleanText(rawTitle);
-                        if (RegexStore.Episode.SPECIAL_CHECK.test(t) || RegexStore.Episode.DANDAN_IGNORE.test(t)) return false;
-                        if (RegexStore.Episode.MAP_EXCLUDE_KEYWORDS.test(rawContent) || RegexStore.Episode.MAP_EXCLUDE_KEYWORDS.test(rawTitle)) return false;
-                        return true;
-                    }).length;
-                } else {
-                    validCount = realAnime.links.length;
-                }
-            }
+            // 计算有效集数
+            const validCount = realAnime.links?.length || 0;
 
             if (!sourceStats.has(realAnime.source)) sourceStats.set(realAnime.source, { seasonCounts: {}, maxSeason: 0, s1Candidates: [] });
             const stat = sourceStats.get(realAnime.source);
@@ -3276,51 +3231,6 @@ export async function applyMergeLogic(curAnimes, detailStore = null) {
 // ==============================================================================
 
 /**
- * 获取弹幕时间戳（秒）
- * 兼容三种格式：
- *   dandan  : p 字符串（"12.5,1,16777215,弹幕文本"）
- *   bilibili: t 字段（数值，单位秒）
- *   legacy  : progress 字段（毫秒）
- * @param {Object} danmu - 弹幕对象
- * @returns {number} 时间戳（秒），解析失败返回 0
- */
-function getDanmuTime(danmu) {
-    if (danmu.p && typeof danmu.p === 'string') {
-        const pTime = parseFloat(danmu.p.split(',')[0]);
-        if (!isNaN(pTime)) return pTime;
-    }
-    if (danmu.t !== undefined && danmu.t !== null) return Number(danmu.t);
-    if (typeof danmu.progress === 'number') return danmu.progress / 1000;
-    return 0;
-}
-
-/**
- * 获取弹幕文本内容
- * 兼容 dandan (m 字段) / bilibili (text 字段) / 其他 (content 字段) 格式
- * @param {Object} danmu - 弹幕对象
- * @returns {string} 文本内容，解析失败返回空字符串
- */
-function getDanmuText(danmu) {
-    if (danmu) {
-        if (typeof danmu.m       === 'string') return danmu.m;
-        if (typeof danmu.text    === 'string') return danmu.text;
-        if (typeof danmu.content === 'string') return danmu.content;
-    }
-    return '';
-}
-
-/**
- * 弹幕文本标准化
- * 移除所有标点、括号、空白字符并转小写，用于跨源弹幕匹配
- * @param {string} text - 原始文本
- * @returns {string} 标准化后的文本
- */
-function normalizeText(text) {
-    if (!text || typeof text !== 'string') return '';
-    return text.replace(/[\s.,!?"'(){}\[\]<>;:，。！？、""''（）【】《》；：~～]/g, '').toLowerCase();
-}
-
-/**
  * 弹幕列表合并工具
  * 合并两个弹幕列表并按时间戳升序排列，兼容所有已知弹幕格式
  * @param {Array} listA - 弹幕列表 A
@@ -3340,99 +3250,4 @@ export function mergeDanmakuList(listA, listB) {
     };
     final.sort((a, b) => getTime(a) - getTime(b));
     return final;
-}
-
-/**
- * 跨源时间轴对齐 (Timeline Alignment)
- * 以 dandan 来源为时间基准，对其他来源计算并应用全局偏移量，
- * 解决不同弹幕源时间戳不一致的问题
- *
- * 采用最大匹配率策略: maxCount / min(dandanCount, sourceCount)
- * 仅当匹配率和集中度都超过阈值时才执行对齐（防误对齐）
- *
- * @param {Array<Array<Object>>} results        - 各源弹幕数组（对应关系由 sourceNames 决定）
- * @param {Array<string>}        sourceNames    - 源名数组（与 results 一一对应）
- * @param {Array<string>}        realIds        - 对应的 ID 数组（仅用于日志）
- * @param {number}               [minMatchRatio=0.8]    - 最小匹配率阈值
- * @param {number}               [offsetThreshold=1]    - 最小触发偏移阈值（秒）
- * @returns {Array<Array<Object>>} 对齐后的各源弹幕数组（原地修改并返回）
- */
-export function alignSourceTimelines(results, sourceNames, realIds, minMatchRatio = 0.8, offsetThreshold = 1) {
-    const dandanIndex = sourceNames.indexOf('dandan');
-    if (dandanIndex === -1 || !results[dandanIndex]?.length) {
-        log("info", "[merge][aligntimeline] 无 dandan 源或无数据，跳过时间轴对齐");
-        return results;
-    }
-
-    const dandanList       = results[dandanIndex];
-    const dandanTotalCount = dandanList.length;
-    // 构建 dandan 弹幕文本→最早时间 的 Map（同文本取最早时间戳）
-    const dandanTextMap    = new Map();
-    dandanList.forEach(dd => {
-        const text = normalizeText(getDanmuText(dd));
-        const time = getDanmuTime(dd);
-        if (text && (!dandanTextMap.has(text) || time < dandanTextMap.get(text))) {
-            dandanTextMap.set(text, time);
-        }
-    });
-
-    results.forEach((list, idx) => {
-        const sourceName = sourceNames[idx];
-        if (sourceName === 'dandan' || !list?.length) return;
-
-        const offsetCounts = new Map();
-        const parsedCache  = [];
-        let matchCount     = 0;
-
-        // 遍历当前源，统计每个偏移量的投票数
-        list.forEach(danmu => {
-            const text = normalizeText(getDanmuText(danmu));
-            const time = getDanmuTime(danmu);
-            parsedCache.push({ danmu, time });
-            if (text && dandanTextMap.has(text)) {
-                matchCount++;
-                const offset = Math.round(time - dandanTextMap.get(text));
-                offsetCounts.set(offset, (offsetCounts.get(offset) || 0) + 1);
-            }
-        });
-
-        // 找出得票最多的偏移量
-        let bestOffset = 0, maxCount = 0;
-        offsetCounts.forEach((count, offset) => {
-            if (count > maxCount) { maxCount = count; bestOffset = offset; }
-        });
-
-        const minCount         = Math.min(dandanTotalCount, list.length);
-        const effectiveRatio   = maxCount / minCount;
-        const consensusRatio   = matchCount > 0 ? maxCount / matchCount : 0;
-
-        // 匹配率或集中度过低，跳过此次对齐
-        if ((matchCount / minCount) < minMatchRatio || effectiveRatio < 0.05 || consensusRatio < 0.15) {
-            log("info", `[merge][aligntimeline] ${sourceName}:${realIds[idx]} 匹配率或集中度过低 (有效:${(effectiveRatio * 100).toFixed(1)}%, 集中度:${(consensusRatio * 100).toFixed(1)}%)，跳过对齐`);
-            return;
-        }
-        // 偏移量低于触发阈值，无需对齐
-        if (Math.abs(bestOffset) < offsetThreshold) {
-            log("info", `[merge][aligntimeline] ${sourceName}:${realIds[idx]} 最佳偏移 ${bestOffset}s 低于阈值，无需对齐`);
-            return;
-        }
-
-        log("info", `[merge][aligntimeline] ${sourceName}:${realIds[idx]} 应用偏移 ${bestOffset}s (获 ${maxCount} 票)`);
-
-        // 将偏移量应用到该源所有弹幕（支持三种时间戳格式的原地修改）
-        parsedCache.forEach(({ danmu, time }) => {
-            const targetTime = Math.max(0, time - bestOffset);
-            if (typeof danmu.p === 'string') {
-                danmu.p = danmu.p.replace(/^[^,]+(?=,)/, targetTime.toFixed(2));
-            }
-            if (danmu.t != null) {
-                danmu.t = targetTime;
-            }
-            if (typeof danmu.progress === 'number') {
-                danmu.progress = Math.round(targetTime * 1000);
-            }
-        });
-    });
-
-    return results;
 }

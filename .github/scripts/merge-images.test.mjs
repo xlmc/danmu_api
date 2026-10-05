@@ -47,8 +47,8 @@ test('workflow builds both native architectures, merges only successful builds, 
   assert.match(workflow, /BUILD_OUTCOME: \$\{\{ needs\.build\.result == 'success' && steps\.merge\.outcome \|\| needs\.build\.result \}\}/);
   for (const smokeWorkflow of [workflow, fs.readFileSync(new URL('../workflows/tests.yml', import.meta.url), 'utf8')]) {
     assert.match(smokeWorkflow, /typeof handleRequest !== 'function'/);
-    assert.match(smokeWorkflow, /getAllSourceMetas\(\)\.length !== 11/);
-    assert.match(smokeWorkflow, /!isRegisteredSource\('dandan'\)/);
+    assert.match(smokeWorkflow, /getAllSourceMetas\(\)\.length !== 10/);
+    assert.match(smokeWorkflow, /isRegisteredSource\('dandan'\)/);
     assert.doesNotMatch(smokeWorkflow, /esbuild|transformSync/);
   }
 });

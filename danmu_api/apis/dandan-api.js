@@ -26,7 +26,7 @@ import {
 } from "../utils/common-util.js";
 import { getDomesticPersonMetadataForTitle, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
 import { shouldBlockDomesticCelebrities } from '../utils/person-filter-exclusion-util.js';
-import { applyMergeLogic, mergeDanmakuList, MERGE_DELIMITER, alignSourceTimelines, sanitizeUrl } from "../utils/merge-util.js";
+import { applyMergeLogic, mergeDanmakuList, MERGE_DELIMITER, sanitizeUrl } from "../utils/merge-util.js";
 
 
 import { getSourceByKey, getSourceMetaByKey, getLogNameByKey } from "../sources/registry.js";
@@ -43,7 +43,6 @@ import { Anime, AnimeMatch, Episodes, Bangumi } from "../models/dandan-model.js"
 // 下列局部变量保留与原变量名一致，供文件内既有的源实例引用直接使用（一次性从注册表取用）。
 
 const bahamutSource = getSourceByKey('bahamut');
-const dandanSource = getSourceByKey('dandan');
 
 const tencentSource = getSourceByKey('tencent');
 const youkuSource = getSourceByKey('youku');
@@ -1066,8 +1065,8 @@ export function filterSameEpisodeTitle(filteredTmpEpisodes) {
 
 /**
  * 计算平台匹配得分 (新增函数 - 用于支持合并源模糊匹配和杂质过滤)
- * @param {string} candidatePlatform 候选平台字符串 (e.g., "bilibili&dandan")
- * @param {string} targetPlatform 目标配置字符串 (e.g., "bilibili&dandan")
+ * @param {string} candidatePlatform 候选平台字符串 (e.g., "bilibili&youku")
+ * @param {string} targetPlatform 目标配置字符串 (e.g., "bilibili&youku")
  * @returns {number} 得分：越高越好，0表示不匹配
  */
 function getPlatformMatchScore(candidatePlatform, targetPlatform) {
@@ -1097,7 +1096,7 @@ function getPlatformMatchScore(candidatePlatform, targetPlatform) {
   // 评分公式：基于命中数计算权重，其次考虑候选长度（越短越好，即杂质越少分越高）
   // 示例: Target="bilibili"
   // Candidate="bilibili" -> Match=1, Len=1 -> 1000 - 1 = 999 (Best)
-  // Candidate="dandan&bilibili" -> Match=1, Len=2 -> 1000 - 2 = 998 (Valid but lower score)
+  // Candidate="youku&bilibili" -> Match=1, Len=2 -> 1000 - 2 = 998 (Valid but lower score)
   return (matchCount * 1000) - cParts.length;
 }
 
@@ -2584,8 +2583,6 @@ async function fetchMergedComments(url, animeTitle, commentId) {
   );
   const results = indexedResults.flat().sort((a, b) => a.index - b.index).map(x => x.data);
 
-  // 调用以dandan为基准的跨源时间轴对齐函数（仅当存在 dandan 源时执行）
-  alignSourceTimelines(results, sourceNames, realIds);
 
   // 按来源分别应用弹幕时间偏移（对齐后、合并前）
   if (globals.danmuOffsetRules?.length > 0 && animeTitle && commentId) {
@@ -3037,8 +3034,6 @@ export async function getSegmentComment(segment, queryFormat) {
       danmus = await sourceLogContext.run('hongguo', () => hongguoSource.getSegmentComments(segment));
     } else if (platform === "bahamut") {
       danmus = await sourceLogContext.run('bahamut', () => bahamutSource.getSegmentComments(segment));
-    } else if (platform === "dandan") {
-      danmus = await sourceLogContext.run('dandan', () => dandanSource.getSegmentComments(segment));
     } else
 
     log("info", `[system] [segmentcomment] Successfully fetched ${danmus.length} segment comments from URL`);

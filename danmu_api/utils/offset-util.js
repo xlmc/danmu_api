@@ -82,7 +82,7 @@ export function parseOffsetRules(env) {
  * @param {string} ctx.anime 剧名
  * @param {string} ctx.season 季（如 S01）
  * @param {string} ctx.episode 集（如 E03）
- * @param {string} ctx.source 来源（如 'bilibili' 或合并来源 'dandan&bilibili'）
+ * @param {string} ctx.source 来源（如 'bilibili' 或合并来源 'youku&bilibili'）
  * @returns {number} 偏移秒数，无匹配返回 0
  */
 export function resolveOffset(rules, { anime, season, episode, source }) {

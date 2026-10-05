@@ -2,7 +2,7 @@ import { canonicalPlatformName } from '../utils/platform-util.js';
 
 export const SUPPORTED_SOURCES = Object.freeze([
   'tencent', 'youku', 'iqiyi', 'imgo', 'bilibili', 'migu', 'sohu',
-  'leshi', 'hongguo', 'bahamut', 'dandan'
+  'leshi', 'hongguo', 'bahamut'
 ]);
 
 export function isSupportedSource(value) {

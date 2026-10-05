@@ -2640,9 +2640,8 @@ body[data-theme$="-dark"] .heatmap-bar {
     border-radius: 8px;
 }
 
-/* ============ 凭证编辑器（弹弹play密码 / B站 Cookie） ============ */
+/* ============ 凭证编辑器（B站 Cookie） ============ */
 .ai-apikey-editor,
-.dandanplay-editor,
 .bili-cookie-editor {
     display: flex;
     flex-direction: column;
@@ -2650,7 +2649,6 @@ body[data-theme$="-dark"] .heatmap-bar {
 }
 
 .ai-apikey-status,
-.dandanplay-status,
 .bili-cookie-status {
     background: var(--theme-panel-bg);
     padding: 12px;
@@ -2662,13 +2660,11 @@ body[data-theme$="-dark"] .heatmap-bar {
 }
 
 .ai-status-icon,
-.dandanplay-status-icon,
 .bili-status-icon {
     font-size: 18px;
 }
 
 .ai-status-text,
-.dandanplay-status-text,
 .bili-status-text {
     flex: 1;
     font-weight: 500;
@@ -2676,7 +2672,6 @@ body[data-theme$="-dark"] .heatmap-bar {
 }
 
 .ai-apikey-actions,
-.dandanplay-actions,
 .bili-cookie-actions {
     display: flex;
     gap: 8px;
