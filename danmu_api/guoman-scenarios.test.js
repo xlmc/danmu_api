@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { Globals } from './configs/globals.js';
-import { matchAnime } from './apis/dandan-api.js';
+import { matchAnime } from './apis/player-api.js';
 import { addAnime } from './utils/cache-util.js';
 import { getSourceByKey } from './sources/registry.js';
 import { collectAutoMatchCandidates, parseAutoMatchMappingRules } from './utils/auto-match-mapping-util.js';

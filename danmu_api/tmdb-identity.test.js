@@ -7,7 +7,7 @@ import { handleRequest } from './worker.js';
 import { getSourceByKey } from './sources/registry.js';
 import { addAnime } from './utils/cache-util.js';
 import { refreshRemoteAutoMatchMappingNow } from './utils/auto-match-mapping-url-util.js';
-import { Anime } from './models/dandan-model.js';
+import { Anime } from './models/player-model.js';
 import { httpGet } from './utils/http-util.js';
 
 test('TMDB query carries its typed ID and aliases forward without intermediary providers', async () => {

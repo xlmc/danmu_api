@@ -32,7 +32,7 @@ import { applyMergeLogic, mergeDanmakuList, MERGE_DELIMITER, sanitizeUrl } from 
 import { getSourceByKey, getSourceMetaByKey, getLogNameByKey } from "../sources/registry.js";
 import { isHongguoPlayerUrl } from "../sources/hongguo.js";
 import BilibiliSource from "../sources/bilibili.js"; // resolveB23Link 为 BilibiliSource 实例方法，单测中仍需直接 new
-import { Anime, AnimeMatch, Episodes, Bangumi } from "../models/dandan-model.js";
+import { Anime, AnimeMatch, Episodes, Bangumi } from "../models/player-model.js";
 
 // =====================
 // 兼容弹弹play接口

@@ -6,7 +6,7 @@ import TencentSource from './sources/tencent.js';
 import MangoSource from './sources/mango.js';
 import IqiyiSource from './sources/iqiyi.js';
 import BilibiliSource from './sources/bilibili.js';
-import { getBangumi } from './apis/dandan-api.js';
+import { getBangumi } from './apis/player-api.js';
 
 Globals.init({ LOG_LEVEL: 'error', PROXY_URL: '', LOCAL_CACHE_ENABLED: 'false' });
 const response = data => new Response(JSON.stringify(data), { status: 200 });

@@ -7,7 +7,7 @@ import { time_to_second, generateValidStartDate } from "../utils/time-util.js";
 import { rgbToInt } from "../utils/danmu-util.js";
 import { md5, convertToAsciiSum } from "../utils/codec-util.js";
 import { addAnime, removeEarliestAnime } from "../utils/cache-util.js";
-import { SegmentListResponse } from '../models/dandan-model.js';
+import { SegmentListResponse } from '../models/player-model.js';
 import { isSupplementaryEpisode } from '../utils/episode-category-util.js';
 
 // =====================

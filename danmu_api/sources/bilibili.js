@@ -6,7 +6,7 @@ import { parseDanmakuBase64, md5, convertToAsciiSum, decodeHtmlEntities } from "
 import { generateValidStartDate } from "../utils/time-util.js";
 import { addAnime, removeEarliestAnime } from "../utils/cache-util.js";
 import { titleMatches, getExplicitSeasonNumber, extractSeasonNumberFromAnimeTitle, extractEpisodeNumberFromTitle } from "../utils/common-util.js";
-import { SegmentListResponse } from '../models/dandan-model.js';
+import { SegmentListResponse } from '../models/player-model.js';
 import { simplized } from "../utils/zh-util.js";
 import { getTmdbJaOriginalTitle, smartTitleReplace } from "../utils/tmdb-util.js";
 import { searchBangumiData } from '../utils/bangumi-data-util.js';

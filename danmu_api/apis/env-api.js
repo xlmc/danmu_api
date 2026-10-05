@@ -137,12 +137,3 @@ export async function handleDelEnv(request) {
     return jsonResponse({ success: false, message: `删除环境变量失败: ${error.message}` }, 500);
   }
 }
-
-/**
- * 处理AI连通性验证请求
- */
-
-
-/**
- * 处理弹弹play账号连通性验证请求
- */

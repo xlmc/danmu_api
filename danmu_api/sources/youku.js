@@ -6,7 +6,7 @@ import { printFirst200Chars, titleMatches, getExplicitSeasonNumber, extractSeaso
 import { md5, convertToAsciiSum } from "../utils/codec-util.js";
 import { generateValidStartDate } from "../utils/time-util.js";
 import { addAnime, removeEarliestAnime } from "../utils/cache-util.js";
-import { SegmentListResponse } from '../models/dandan-model.js';
+import { SegmentListResponse } from '../models/player-model.js';
 
 // =====================
 // 获取优酷弹幕

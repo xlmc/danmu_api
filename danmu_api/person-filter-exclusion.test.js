@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { Globals } from './configs/globals.js';
 import { shouldBlockDomesticCelebrities, splitPersonFilterExcludedTitles } from './utils/person-filter-exclusion-util.js';
 import { applyRemoteTitleMappingText, resolveLocalTitleMapping } from './utils/title-mapping-url-util.js';
-import { getComment, getCommentByUrl, getSegmentComment } from './apis/dandan-api.js';
+import { getComment, getCommentByUrl, getSegmentComment } from './apis/player-api.js';
 import { getSourceByKey } from './sources/registry.js';
 import { convertToDanmakuJson, filterDanmusByBlockedNames, filterDanmusByBlockedWords } from './utils/danmu-util.js';
 import { setCommentCache } from './utils/cache-util.js';

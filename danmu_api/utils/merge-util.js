@@ -61,7 +61,6 @@ const MergeWeights = Object.freeze({
     // ── 集数对齐 (Episode Alignment) ─────────────────────────
     EP_ALIGN: {
         MOVIE_TYPE_MISMATCH:     -5.0,  // 电影/TV 类型不符
-        SPECIAL_STRICT_MISMATCH: -8.0,  // 正片与番外（SP/OVA）混淆
         LANG_MATCH:               3.0,  // 集标题语言一致
         LANG_MISMATCH:           -5.0,  // 集标题语言不一致
         SEASON_NUM_MISMATCH:    -10.0,  // 季度编号冲突
@@ -177,7 +176,6 @@ const RegexStore = {
         SEASON_PREFIX:       /(?:^|\s)(?:第\s*[0-9一二三四五六七八九十]+\s*季|S(?:eason)?\s*\d+)(?:\s+|_)/gi,
         CLEAN_SMART:         /(?:^|\s)(?:EP|E|Vol|Episode|No|Part|第)\s*\d+(?:\.\d+)?(?:\s*[话話集])?(?!\s*[季期部])/gi,
         PUNCTUATION:         /[!！?？,，.。、~～:：\-–—]/g,
-        SPECIAL_START:       /^S\d+/i,
         MOVIE_CHECK:         /剧场版|劇場版|movie|film/i,
         PV_CHECK:            /(pv|trailer|预告)/i,
         SPECIAL_CHECK:       /^(s|o|sp|special)\d/i,
@@ -1059,7 +1057,7 @@ function getSpecialEpisodeType(title) {
  * 提取集数信息 (Episode Info Extraction)
  * @param {string} title      - 集标题
  * @param {string} [sourceName=''] - 来源平台名称
- * @returns {{isMovie:boolean, num:number|null, isSpecial:boolean, isPV:boolean, season:number|null, isStrictSpecial:boolean}}
+ * @returns {{isMovie:boolean, num:number|null, isSpecial:boolean, isPV:boolean, season:number|null}}
  */
 function extractEpisodeInfo(title, sourceName = '') {
     const t           = cleanText(title || '');
@@ -1084,7 +1082,7 @@ function extractEpisodeInfo(title, sourceName = '') {
             if (weakPrefixMatch) num = parseFloat(weakPrefixMatch[1]);
         }
     }
-    return { isMovie, num, isSpecial, isPV, season, isStrictSpecial: false };
+    return { isMovie, num, isSpecial, isPV, season };
 }
 
 /**
@@ -1340,8 +1338,6 @@ function findBestAlignmentOffset(
             // ── 类型判断 ──────────────────────────────────────────────
             if (infoA.isMovie !== infoB.isMovie)
                 pairScore += MergeWeights.EP_ALIGN.MOVIE_TYPE_MISMATCH;
-            if ((infoA.isStrictSpecial && !infoB.isSpecial) || (infoB.isStrictSpecial && !infoA.isSpecial))
-                pairScore += MergeWeights.EP_ALIGN.SPECIAL_STRICT_MISMATCH;
 
             // ── 语言对齐 ──────────────────────────────────────────────
             const normLangA = dataA.effLang === 'Unspecified' ? 'JP' : dataA.effLang;
@@ -1580,7 +1576,7 @@ function stitchUnmatchedEpisodes(derivedAnime, orphans, sourceName) {
         const link  = derivedAnime.links[i];
         const title = link.title || link.name || '';
         const info  = extractEpisodeInfo(title, derivedAnime.source);
-        if (!info.isSpecial && !info.isPV && !info.isStrictSpecial && info.num !== null) {
+        if (!info.isSpecial && !info.isPV && info.num !== null) {
             lastPrimaryMainIndex = i;
             break;
         }
@@ -1588,12 +1584,11 @@ function stitchUnmatchedEpisodes(derivedAnime, orphans, sourceName) {
 
     for (const item of orphans) {
         const relativeIdx    = item.relativeIndex;
-        const isStrictSpecial= item.info && item.info.isStrictSpecial;
-        const isOrphanMain   = item.info && !item.info.isSpecial && !item.info.isPV && !isStrictSpecial && item.info.num !== null;
-        if (relativeIdx < 0 && !isStrictSpecial) {
+        const isOrphanMain   = item.info && !item.info.isSpecial && !item.info.isPV && item.info.num !== null;
+        if (relativeIdx < 0) {
             headList.push(item);
         } else if (
-            (relativeIdx >= currentLen && !isStrictSpecial) ||
+            (relativeIdx >= currentLen) ||
             (isOrphanMain && relativeIdx > lastPrimaryMainIndex)
         ) {
             tailList.push(item);
@@ -2498,8 +2493,8 @@ async function processMergeTask(params) {
 
             let mergedCount        = 0;
             const redundantS       = identifyRedundantTitle(derivedMatch.links, derivedMatch.animeTitle, secSource);
-            // 广义番外判断：isSpecial / isStrictSpecial / 小数集数
-            const isBroadSpecial = (info) => info.isSpecial || info.isStrictSpecial || (info.num !== null && info.num % 1 !== 0);
+            // 广义番外判断：isSpecial / 小数集数
+            const isBroadSpecial = (info) => info.isSpecial || (info.num !== null && info.num % 1 !== 0);
             const kToPIndexMap = new Map(); // 用于记录副源到主源的索引映射，供合集进度记录使用
             let offset = 0; // 保留供非特权情况和合集索引修正使用
 
@@ -2539,7 +2534,7 @@ async function processMergeTask(params) {
 
                     // 提取集数：优先使用标题中提取的数字，若提取为空（如电影/单集）则回退使用当前正片列表的自然序列索引
                     let sNum = infoS.num;
-                    if (sNum === null && !infoS.isStrictSpecial) {
+                    if (sNum === null) {
                         sNum = k + 1;
                     }
 
@@ -2555,10 +2550,10 @@ async function processMergeTask(params) {
                     const pIndex = filteredPLinksWithIndex.findIndex((pItem, idx) => {
                         const infoP = extractEpisodeInfo(getTempTitle(pItem.link.title || pItem.link.name, redundantP), currentPrimarySource);
                         let pNum = infoP.num;
-                        if (pNum === null && !infoP.isStrictSpecial) {
+                        if (pNum === null) {
                             pNum = idx + 1;
                         }
-                        return pNum === targetPNum && !infoP.isSpecial && !infoP.isStrictSpecial;
+                        return pNum === targetPNum && !infoP.isSpecial;
                     });
 
                     if (pIndex !== -1) {
@@ -2718,9 +2713,9 @@ async function processMergeTask(params) {
                             orphanedEpisodes.push(orphanItem);
                             continue;
                         }
-                        // 正片与番外强阻断：isStrictSpecial 或小数集视为"强番外属性"，不与纯正片互通
-                        const strictOrDecimalP = infoP.isStrictSpecial || (infoP.num !== null && infoP.num % 1 !== 0);
-                        const strictOrDecimalS = infoS.isStrictSpecial || (infoS.num !== null && infoS.num % 1 !== 0);
+                        // 正片与番外强阻断：小数集视为"强番外属性"，不与纯正片互通
+                        const strictOrDecimalP = (infoP.num !== null && infoP.num % 1 !== 0);
+                        const strictOrDecimalS = (infoS.num !== null && infoS.num % 1 !== 0);
                         const isRegularP       = !infoP.isSpecial && (infoP.num === null || infoP.num % 1 === 0);
                         const isRegularS       = !infoS.isSpecial && (infoS.num === null || infoS.num % 1 === 0);
                         if ((strictOrDecimalP && isRegularS) || (strictOrDecimalS && isRegularP)) {

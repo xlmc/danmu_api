@@ -6,7 +6,7 @@ import { md5, convertToAsciiSum, decodeHtmlEntities, base64ToBytes, decompressBr
 import { generateValidStartDate } from "../utils/time-util.js";
 import { addAnime, removeEarliestAnime } from "../utils/cache-util.js";
 import { globals } from '../configs/globals.js';
-import { SegmentListResponse } from '../models/dandan-model.js';
+import { SegmentListResponse } from '../models/player-model.js';
 import { isSupplementaryEpisode, isSupplementaryCategory } from '../utils/episode-category-util.js';
 
 // =====================

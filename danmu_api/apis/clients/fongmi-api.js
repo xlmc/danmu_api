@@ -4,7 +4,7 @@ import { log } from "../../utils/log-util.js";
 import { simplized } from "../../utils/zh-util.js";
 import { convertChineseNumber, extractEpisodeTitle, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, getExplicitSeasonNumber, stripNonTitleChars, normalizeSpaces } from "../../utils/common-util.js";
 import { applyTitleMappingWithLog, ensureRemoteTitleMapping } from "../../utils/title-mapping-url-util.js";
-import { filterSameEpisodeTitle, getBangumiDataForMatch, searchAnime } from "../dandan-api.js";
+import { filterSameEpisodeTitle, getBangumiDataForMatch, searchAnime } from "../player-api.js";
 
 // =====================
 // FongMi 弹幕接口适配

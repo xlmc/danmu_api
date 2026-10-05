@@ -16,7 +16,7 @@ import {
 import { addAnime, removeEarliestAnime } from "../utils/cache-util.js";
 import { generateValidStartDate } from "../utils/time-util.js";
 import { titleMatches } from "../utils/common-util.js";
-import { SegmentListResponse } from "../models/dandan-model.js";
+import { SegmentListResponse } from "../models/player-model.js";
 
 const CLIENT_CONFIG = {
   apiHosts: Object.freeze([

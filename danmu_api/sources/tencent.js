@@ -6,7 +6,7 @@ import { convertToAsciiSum } from "../utils/codec-util.js";
 import { generateValidStartDate } from "../utils/time-util.js";
 import { addAnime, removeEarliestAnime } from "../utils/cache-util.js";
 import { printFirst200Chars, titleMatches, getExplicitSeasonNumber, extractSeasonNumberFromAnimeTitle } from "../utils/common-util.js";
-import { SegmentListResponse } from '../models/dandan-model.js';
+import { SegmentListResponse } from '../models/player-model.js';
 import { isSupplementaryCategory } from '../utils/episode-category-util.js';
 
 // =====================

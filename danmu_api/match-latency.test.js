@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Globals } from './configs/globals.js';
 import { handleRequest } from './worker.js';
-import { matchAniAndEp, searchAnime } from './apis/dandan-api.js';
+import { matchAniAndEp, searchAnime } from './apis/player-api.js';
 import { addAnime } from './utils/cache-util.js';
 import { getSourceByKey } from './sources/registry.js';
 

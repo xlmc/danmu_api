@@ -33,6 +33,8 @@ test('only supported official sources survive old source configuration',()=>{
 test('dandan source and legacy configuration cannot be restored', async()=>{
   reset({SOURCE_ORDER:'dandan,tencent,bilibili',PLATFORM_ORDER:'dandan&tencent,dandan,bilibili',MERGE_SOURCE_PAIRS:'dandan&tencent;tencent&dandan&bilibili',DANDANPLAY_ACCOUNT:'obsolete',DANDANPLAY_PASSWORD:'obsolete'});
   assert.equal(getSourceByKey('dandan'),null);
+  for(const retired of ['sources/dandan.js','utils/nipaplay-util.js','apis/dandan-api.js','models/dandan-model.js'])assert.equal(fs.existsSync(new URL(retired,import.meta.url)),false,retired);
+  for(const current of ['apis/player-api.js','models/player-model.js'])assert.equal(fs.existsSync(new URL(current,import.meta.url)),true,current);
   assert.deepEqual(Globals.envs.sourceOrderArr,['tencent','bilibili']);
   assert.deepEqual(Globals.envs.platformOrderArr,['tencent','bilibili',null]);
   assert.deepEqual(Globals.envs.mergeSourcePairs,[{primary:'tencent',secondaries:['bilibili']}]);

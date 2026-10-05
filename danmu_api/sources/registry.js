@@ -1,7 +1,7 @@
 // =====================
 // 源注册表 (Source Registry)
 // =====================
-// 集中管理所有弹幕源的元数据与实例化，消除散落在 dandan-api.js 中的
+// 集中管理所有弹幕源的元数据与实例化，消除散落在 player-api.js 中的
 // import + new + if/else 分发三段重复代码。
 //
 // 新增一个源只需：
@@ -9,7 +9,7 @@
 //   2. 在下方 SOURCE_REGISTRY 数组里加一条 { key, factory, ... } 配置
 //
 // 所有"按 sourceKey 查实例"的分发点改为调用 getSourceByKey(key) 即可，
-// 无需再改动 dandan-api.js 的 import 区、实例化区或 if/else 分发链。
+// 无需再改动 player-api.js 的 import 区、实例化区或 if/else 分发链。
 // =====================
 
 import { globals } from '../configs/globals.js';

@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { canonicalPlatformName, canonicalPlatformGroup } from './utils/platform-util.js';
 import { Globals } from './configs/globals.js';
 import { Envs } from './configs/envs.js';
-import { Anime, Episodes, Segment, SegmentListResponse } from './models/dandan-model.js';
+import { Anime, Episodes, Segment, SegmentListResponse } from './models/player-model.js';
 import { parseFileName, createDynamicPlatformOrder } from './utils/common-util.js';
 import { parseAutoMatchMappingRules } from './utils/auto-match-mapping-util.js';
 import { parseOffsetRules, resolveOffset } from './utils/offset-util.js';
-import { getSegmentComment } from './apis/dandan-api.js';
+import { getSegmentComment } from './apis/player-api.js';
 import { getSourceByKey } from './sources/registry.js';
 import { convertToDanmakuJson } from './utils/danmu-util.js';
 

@@ -1,7 +1,7 @@
 import { isSupportedSource, isSupportedLocation, pruneSourcePreferences } from '../sources/policy.js';
 import { globals } from '../configs/globals.js';
 import { log } from './log-util.js'
-import { Anime } from "../models/dandan-model.js";
+import { Anime } from "../models/player-model.js";
 import { simpleHash } from "./codec-util.js";
 
 let fs, path;

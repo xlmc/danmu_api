@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Globals } from './configs/globals.js';
-import { buildSearchAnimeUrl } from './apis/dandan-api.js';
+import { buildSearchAnimeUrl } from './apis/player-api.js';
 import {
   candidateMatchesMappingTitle,
   candidateMatchesMappingQualifiers,

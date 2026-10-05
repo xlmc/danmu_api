@@ -7,7 +7,7 @@ import { log, formatLogMessage } from './utils/log-util.js'
 import { cleanupExpiredIPs, findUrlById, getCommentCache, judgeLocalCacheValid } from "./utils/cache-util.js";
 import { formatDanmuResponse } from "./utils/danmu-util.js";
 
-import { getBangumi, getComment, getCommentByUrl, getSegmentComment, matchAnime, searchAnime, searchEpisodes } from "./apis/dandan-api.js";
+import { getBangumi, getComment, getCommentByUrl, getSegmentComment, matchAnime, searchAnime, searchEpisodes } from "./apis/player-api.js";
 
 import { getFongmiDanmaku } from "./apis/clients/fongmi-api.js";
 import { handleConfig, handleUI, handleLogs, handleClearLogs, handleClearCache, handleCacheAnimes, handleRemoteMappingLogs, handleRemoteMappingRefresh, handleRemoteAutoMatchMappingRefresh } from "./apis/system-api.js";
@@ -15,7 +15,7 @@ import { handleConfig, handleUI, handleLogs, handleClearLogs, handleClearCache, 
 import { handleSetEnv, handleAddEnv, handleDelEnv } from './apis/env-api.js';
 
 
-import { Segment } from "./models/dandan-model.js"
+import { Segment } from "./models/player-model.js"
 import {
     handleCookieStatus,
     handleCookieVerify,
