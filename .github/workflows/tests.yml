@@ -26,6 +26,8 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
+      - name: Check repository hygiene
+        run: node tools/commit-hygiene.mjs --ci
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Test self-use code and safe sync behavior

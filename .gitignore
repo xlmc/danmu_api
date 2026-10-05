@@ -4,3 +4,9 @@ node_modules
 .env
 .cache
 dist
+
+# Local temporary data and work records
+/work/
+/outputs/
+/.ai-work/
+/tmp-test-data/
