@@ -1,6 +1,7 @@
 import { log } from "../utils/log-util.js";
 import { convertToDanmakuJson } from "../utils/danmu-util.js";
 import { extractAnimeTitle, extractYear } from "../utils/common-util.js";
+import { getCommentTransformConfig } from '../utils/comment-context.js';
 
 // =====================
 // 源基类
@@ -49,6 +50,7 @@ export default class BaseSource {
 
   // 获取弹幕流水线方法(获取某集弹幕 -> 格式化弹幕 -> 弹幕处理，如去重/屏蔽字等)
   async getComments(id, sourceName, segmentFlag=false, progressCallback=null) {
+    const commentConfig = getCommentTransformConfig();
     if (segmentFlag) {
       if(progressCallback) await progressCallback(5, `开始获取弹幕${sourceName}弹幕分片列表`);
       log("info", `[system] [base] 开始获取弹幕${sourceName}弹幕分片列表`);
@@ -62,11 +64,12 @@ export default class BaseSource {
     const formatted = this.formatComments(raw);
     if(progressCallback) await progressCallback(100,`弹幕处理完成，共 ${formatted.length} 条`);
     log("info", `[system] [base] 弹幕处理完成，共 ${formatted.length} 条`);
-    return convertToDanmakuJson(formatted, sourceName);
+    return convertToDanmakuJson(formatted, sourceName, commentConfig);
   }
 
   // 获取分片弹幕流水线方法(获取某集分片弹幕 -> 格式化弹幕 -> 弹幕处理，如去重/屏蔽字等)
   async getSegmentComments(segment, progressCallback=null) {
+    const commentConfig = getCommentTransformConfig();
     if(progressCallback) await progressCallback(5, `开始获取分片弹幕${segment.type}弹幕`);
     log("info", `[system] [base] 开始获取分片弹幕${segment.type}弹幕`);
     const raw = await this.getEpisodeSegmentDanmu(segment);
@@ -75,7 +78,7 @@ export default class BaseSource {
     const formatted = this.formatComments(raw);
     if(progressCallback) await progressCallback(100,`分片弹幕处理完成，共 ${formatted.length} 条`);
     log("info", `[system] [base] 分片弹幕处理完成，共 ${formatted.length} 条`);
-    return convertToDanmakuJson(formatted, segment.type);
+    return convertToDanmakuJson(formatted, segment.type, commentConfig);
   }
 
   // 按年份降序排序并添加到curAnimes

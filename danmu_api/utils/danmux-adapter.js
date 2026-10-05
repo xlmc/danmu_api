@@ -3,6 +3,8 @@ import {
   fromBilibili,
   applyGradient,
   toCompatibilityWire,
+  validateGradientEffect,
+  canonicalizeGradientEffect,
 } from 'danmux';
 import { DANMUX_GRADIENT_META } from './danmux-meta.js';
 
@@ -10,6 +12,31 @@ const NATIVE_GRADIENT_FIELDS = ['color_v2', 'colorV2', 'colorfulSrc', 'colorful_
 
 function hasNativeGradient(comment) {
   return NATIVE_GRADIENT_FIELDS.some((field) => comment?.[field] !== undefined);
+}
+
+// Enrich legacy JSON in place structurally, without rebuilding its Base or envelope.
+// Return new objects only for selected comments; never mutate cached comments.
+export function appendDanmuxGradients(danmuData, { gradientEnabled = false, gradientChance = 0 } = {}) {
+  if (!gradientEnabled || gradientChance <= 0 || !Array.isArray(danmuData?.comments)) return danmuData;
+  const comments = danmuData.comments.map(comment => {
+    const selected = comment?.[DANMUX_GRADIENT_META];
+    if (!selected || hasNativeGradient(comment)) return comment;
+    try {
+      const effect = {
+        type: 'gradient', origin: 'generated', target: 'fill',
+        source: { type: 'linear', angle: selected.angle, stops: selected.stops },
+      };
+      if (!validateGradientEffect(effect).ok) return comment;
+      return {
+        ...comment,
+        danmux: { extensionVersion: 1, effects: [canonicalizeGradientEffect(effect)] },
+      };
+    } catch {
+      // Optional effect failure must not discard the comment or fail the response.
+      return comment;
+    }
+  });
+  return { ...danmuData, comments };
 }
 
 function parseComment(comment, sourceLabel) {

@@ -34,6 +34,7 @@ export const Globals = {
   localRedisHashes: {},
   searchCache: new Map(), // 搜索结果缓存，存储格式：{ keyword: { results, timestamp } }
   commentCache: new Map(), // 弹幕缓存，存储格式：{ videoUrl: { comments, timestamp } }
+  commentTransformRevision: 0,
   deployPlatform: '', // 部署平台配置
   currentToken: '', // 标识当前可用token
 
@@ -45,6 +46,7 @@ export const Globals = {
   init(env = {}) {
     this.env = env;
     this.envs = Envs.load(this.env);
+    this.updateCommentTransformRevision();
     this.originalEnvVars = Object.fromEntries(Envs.getOriginalEnvVars());
     this.accessedEnvVars = Object.fromEntries(Envs.getAccessedEnvVars());
     return this.getConfig();
@@ -56,9 +58,23 @@ export const Globals = {
    */
   reInit() {
     this.envs = Envs.load(this.env);
+    this.updateCommentTransformRevision();
     this.originalEnvVars = Object.fromEntries(Envs.getOriginalEnvVars());
     this.accessedEnvVars = Object.fromEntries(Envs.getAccessedEnvVars());
     return this.getConfig();
+  },
+
+  updateCommentTransformRevision() {
+    const key = JSON.stringify([
+      this.envs.gradientEnabled, this.envs.gradientChance,
+      this.envs.convertColor, this.envs.colorPool,
+      this.envs.convertTopBottomToScroll,
+    ]);
+    if (key !== this._commentTransformKey) {
+      this._commentTransformKey = key;
+      this.commentTransformRevision += 1;
+      this.commentCache.clear();
+    }
   },
 
   /**

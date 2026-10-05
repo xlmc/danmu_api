@@ -6,8 +6,9 @@ import { log } from './log-util.js'
 import { binResponse, jsonResponse, xmlResponse } from "./http-util.js";
 import { simplized, traditionalized } from './zh-util.js';
 import { convertDanAny } from './dan-any.js';
-import { convertCommentsToDanmux } from './danmux-adapter.js';
+import { appendDanmuxGradients, convertCommentsToDanmux } from './danmux-adapter.js';
 import { DANMUX_GRADIENT_META } from './danmux-meta.js';
+import { getCommentTransformConfig } from './comment-context.js';
 
 const NATIVE_GRADIENT_FIELDS = ['color_v2', 'colorV2', 'colorfulSrc', 'colorful_src', 'gradient'];
 
@@ -479,7 +480,7 @@ export function filterDanmusByBlockedWords(danmus) {
   return filteredDanmus;
 }
 
-export function convertToDanmakuJson(contents, platform) {
+export function convertToDanmakuJson(contents, platform, commentConfig = getCommentTransformConfig()) {
   let danmus = [];
   let cidCounter = 1;
   let isMultiSource = false; // 用于记录当前弹幕集合是否为多源组合
@@ -524,13 +525,13 @@ export function convertToDanmakuJson(contents, platform) {
       // 处理新格式的弹幕对象
       time = (item.progress / 1000).toFixed(2);
       mode = item.mode || 1;
-      color = item.color || 16777215;
+      color = item.color ?? 16777215;
       m = item.content;
     } else if ("timepoint" in item) {
       // 处理对象数组输入
       time = parseFloat(item.timepoint).toFixed(2);
       mode = item.ct || 0;
-      color = item.color || 16777215;
+      color = item.color ?? 16777215;
       m = item.content;
     } else {
       if (!("p" in item)) {
@@ -619,15 +620,20 @@ export function convertToDanmakuJson(contents, platform) {
 
   // 应用弹幕转换规则（在去重和限制弹幕数之后）
   let convertedDanmus = limitDanmusByCount(likeDanmus, globals.danmuLimit);
-  if (globals.convertTopBottomToScroll || globals.convertColor === 'white' || globals.convertColor === 'color' || globals.gradientEnabled) {
+  if (commentConfig.convertTopBottomToScroll || commentConfig.convertColor === 'white' || commentConfig.convertColor === 'color' || commentConfig.gradientEnabled) {
     let topBottomCount = 0;
     let colorCount = 0;
     let gradientCount = 0;
     // 独立开关：普通白色弹幕按概率使用固定 bili 渐变。
-    const gradientRawStops = globals.gradientEnabled ? BILI_GRADIENT_COLORS : null;
+    const gradientRawStops = commentConfig.gradientEnabled ? BILI_GRADIENT_COLORS : null;
     const gradientSampler = buildGradientSampler(gradientRawStops);
     const danmuxGradientStops = gradientStopsForDanmux(gradientRawStops);
-    const gradientChance = Math.min(Math.max(globals.gradientChance || 0, 0), 100) / 100;
+    const gradientChance = Math.min(Math.max(commentConfig.gradientChance || 0, 0), 100) / 100;
+    const colorPoolText = typeof commentConfig.colorPool === 'string' ? commentConfig.colorPool : '';
+    const colors = colorPoolText.split(',')
+      .map(c => parseInt(c.trim(), 10))
+      .filter(c => !isNaN(c) && c >= 0 && c <= 16777215);
+    const safeColors = colors.length > 0 ? colors : [16777215];
 
     convertedDanmus = convertedDanmus.map(danmu => {
       const pValues = danmu.p.split(',');
@@ -635,11 +641,12 @@ export function convertToDanmakuJson(contents, platform) {
 
       let mode = parseInt(pValues[1], 10);
       let color = parseInt(pValues[2], 10);
+      const originallyWhite = color === 16777215;
       let modified = false;
       let selectedGradient = false;
 
       // 1. 将顶部/底部弹幕转换为浮动弹幕
-      if (globals.convertTopBottomToScroll && (mode === 4 || mode === 5)) {
+      if (commentConfig.convertTopBottomToScroll && (mode === 4 || mode === 5)) {
         topBottomCount++;
         mode = 1;
         modified = true;
@@ -647,7 +654,7 @@ export function convertToDanmakuJson(contents, platform) {
 
       // 2. 弹幕转换颜色
       // 2.1 将彩色弹幕转换为白色
-      if (globals.convertColor === 'white' && color !== 16777215) {
+      if (commentConfig.convertColor === 'white' && color !== 16777215) {
         colorCount++;
         color = 16777215;
         modified = true;
@@ -655,17 +662,11 @@ export function convertToDanmakuJson(contents, platform) {
       // 2.2 将白色弹幕转换为随机颜色，白、红、橙、黄、绿、青、蓝、紫、粉（模拟真实情况，增加白色出现概率）
       // 颜色池配置可能为空或尚未初始化，先安全解析；无有效颜色时回退为白色。
       // 这样即使运行时配置不完整，也不会因为调用 split() 抛错或把颜色写成 undefined。
-      const colorPoolText = typeof globals.colorPool === 'string' ? globals.colorPool : '';
-      const colors = colorPoolText.split(',')
-        .map(c => parseInt(c.trim(), 10))
-        .filter(c => !isNaN(c) && c >= 0 && c <= 16777215);
-      const safeColors = colors.length > 0 ? colors : [16777215];
-      let randomColor = safeColors[Math.floor(Math.random() * safeColors.length)];
       // B 站原生渐变不参与本规则；这里只处理没有 color_v2 的普通白色弹幕。
-      if ((globals.convertColor === 'color' || globals.gradientEnabled) && color === 16777215 && !getNativeGradientValue(danmu).present) {
-        let target = globals.convertColor === 'color' ? randomColor : color;
+      if ((commentConfig.convertColor === 'color' || commentConfig.gradientEnabled) && originallyWhite && !getNativeGradientValue(danmu).present) {
+        let target = commentConfig.convertColor === 'color' ? safeColors[Math.floor(Math.random() * safeColors.length)] : color;
         if (gradientSampler && danmuxGradientStops && Math.random() < gradientChance) {
-          // 渐变色弹幕：以弹幕出现时间在色带上取色（每 60 秒从粉色过渡到蓝色），相邻弹幕颜色平滑过渡
+          // Legacy fallback samples pink→blue every 60 seconds, then resets.
           const appearTime = parseFloat(pValues[0]) || 0;
           target = gradientSampler((appearTime % 60) / 60);
           selectedGradient = true;
@@ -836,7 +837,7 @@ export function formatDanmuResponse(danmuData, queryFormat) {
       // 转换失败时回退到 JSON
       return jsonResponse(danmuData);
     }
-  } else if (format === 'json') return jsonResponse(danmuData);
+  } else if (format === 'json') return jsonResponse(appendDanmuxGradients(danmuData, getCommentTransformConfig()));
 
   const converted = convertDanAny(danmuData, format);
   if (converted?.type === 'json') return jsonResponse(converted.data);
@@ -844,5 +845,5 @@ export function formatDanmuResponse(danmuData, queryFormat) {
   if (converted?.type === 'binary') return binResponse(converted.data, converted.filename);
 
   // 默认返回 JSON
-  return jsonResponse(danmuData);
+  return jsonResponse(appendDanmuxGradients(danmuData, getCommentTransformConfig()));
 }

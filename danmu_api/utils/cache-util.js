@@ -3,6 +3,7 @@ import { globals } from '../configs/globals.js';
 import { log } from './log-util.js'
 import { Anime } from "../models/player-model.js";
 import { simpleHash } from "./codec-util.js";
+import { getCommentTransformConfig } from './comment-context.js';
 
 let fs, path;
 let nodeModulesPromise;
@@ -341,6 +342,12 @@ export function isCommentCacheValid(videoUrl) {
     }
 
     const cached = globals.commentCache.get(videoUrl);
+    // A completed old request must not serve or evict a newer revision's cache.
+    if (getCommentTransformConfig().revision !== globals.commentTransformRevision) return false;
+    if (cached.transformRevision !== globals.commentTransformRevision) {
+        globals.commentCache.delete(videoUrl);
+        return false;
+    }
     const commentCount = Array.isArray(cached.comments) ? cached.comments.length : 0;
     const minCount = Math.max(0, globals.commentCacheMinCount || 0);
 
@@ -373,13 +380,16 @@ export function getCommentCache(videoUrl) {
 }
 
 // 设置弹幕缓存
-export function setCommentCache(videoUrl, comments) {
+export function setCommentCache(videoUrl, comments, transformRevision = getCommentTransformConfig().revision) {
     if (globals.commentCacheMinutes <= 0) return;
+    // Clearing on config changes alone is insufficient: old work can finish later.
+    if (transformRevision !== globals.commentTransformRevision) return;
     // 写入前先清理所有过期条目
     sweepExpiredCache(globals.commentCache, globals.commentCacheMinutes, 'commentCache');
 
     globals.commentCache.set(videoUrl, {
         comments: comments,
+        transformRevision,
         timestamp: Date.now()
     });
 

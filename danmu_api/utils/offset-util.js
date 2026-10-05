@@ -1,5 +1,6 @@
 import { canonicalPlatformName } from './platform-util.js';
 import { normalizeTitleForMatch } from './common-util.js';
+import { copyDanmuxGradientMeta } from './danmux-meta.js';
 
 // 弹幕时间偏移独立模块
 // 职责：解析链接 @偏移 与偏移规则、匹配偏移量、应用偏移到弹幕
@@ -224,7 +225,7 @@ export function applyOffset(danmus, offsetSeconds, options = {}) {
 
   return danmus.map(danmu => {
     if (!danmu || typeof danmu !== 'object') return danmu;
-    const updated = { ...danmu };
+    const updated = copyDanmuxGradientMeta(danmu, { ...danmu });
 
     // p 字段（逗号分隔，第一段为秒）
     if (typeof updated.p === 'string') {

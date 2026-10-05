@@ -3,6 +3,7 @@ import { isSupportedSource, isSupportedLocation, sourceForUrl } from '../sources
 import { canonicalPlatformName } from '../utils/platform-util.js';
 import { runWithMatchTrace, traceMatchStep, getMatchTracePrefix } from '../utils/match-trace-util.js';
 import { globals } from '../configs/globals.js';
+import { runWithCommentTransform } from '../utils/comment-context.js';
 import { getPageTitle, jsonResponse, httpGet, sourceLogContext, runWithHttpCache, httpCacheContext } from '../utils/http-util.js';
 import { log } from '../utils/log-util.js'
 import { logEvent } from '../utils/log-util.js';
@@ -2630,7 +2631,11 @@ async function fetchMergedComments(url, animeTitle, commentId) {
 }
 
 // Extracted function for GET /api/v2/comment/:commentId
-export async function getComment(path, queryFormat, segmentFlag, clientIp, includeDuration = false) {
+export function getComment(path, queryFormat, segmentFlag, clientIp, includeDuration = false) {
+  return runWithCommentTransform(() => getCommentResponse(path, queryFormat, segmentFlag, clientIp, includeDuration));
+}
+
+async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, includeDuration) {
   const commentId = parseInt(path.split("/").pop());
   let animeTitle = findAnimeTitleById(commentId);
   let url = findUrlById(commentId);
@@ -2842,7 +2847,11 @@ export async function getComment(path, queryFormat, segmentFlag, clientIp, inclu
 }
 
 // Extracted function for GET /api/v2/comment?url=xxx or /api/v2/extcomment?url=xxx
-export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration = false, animeTitleHint = '') {
+export function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration = false, animeTitleHint = '') {
+  return runWithCommentTransform(() => getCommentByUrlResponse(videoUrl, queryFormat, segmentFlag, includeDuration, animeTitleHint));
+}
+
+async function getCommentByUrlResponse(videoUrl, queryFormat, segmentFlag, includeDuration, animeTitleHint) {
   try {
     // 验证URL参数
     if (!videoUrl || typeof videoUrl !== 'string') {
@@ -2971,7 +2980,11 @@ export async function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includ
 }
 
 // Extracted function for GET /api/v2/segmentcomment
-export async function getSegmentComment(segment, queryFormat) {
+export function getSegmentComment(segment, queryFormat) {
+  return runWithCommentTransform(() => getSegmentCommentResponse(segment, queryFormat));
+}
+
+async function getSegmentCommentResponse(segment, queryFormat) {
   try {
     let url = segment.url;
     let platform = canonicalPlatformName(segment.type);
