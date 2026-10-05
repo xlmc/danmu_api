@@ -114,4 +114,4 @@ TMDB 身份为 tv:ID 或 movie:ID，随匹配成功的目录保存；失败候�
 
 云部署凭据、Upstash、AI、IP 黑名单和关闭 TLS 证书校验的管理项已移除。HTTPS 使用 Node 默认的证书校验。
 
-渐变配置仅保留以上开关与概率。旧 `GRADIENT_COLORS`、`DANMUX_GRADIENT_STOPS`、`DANMUX_GRADIENT_ANGLE` 不再读取；原生渐变保持原样。DanmuX 输出携带标准渐变，普通 JSON/XML 保留按出现时间从粉蓝色带采样的兼容颜色，实际文字渐变需播放器支持。
+渐变配置仅保留以上开关与概率。旧 `GRADIENT_COLORS`、`DANMUX_GRADIENT_STOPS`、`DANMUX_GRADIENT_ANGLE` 不再读取；原生渐变保持原样。普通 JSON 的命中评论附加可选 `danmux` 渐变扩展，保留既有 `p/m` 及按出现时间采样的兼容颜色；XML 继续单色输出。实际文字渐变需播放器增加绘制支持，字段和接入方式见 [播放器渐变接入指南](player-gradient-integration.md)。
