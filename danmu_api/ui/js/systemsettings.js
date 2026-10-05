@@ -1064,7 +1064,7 @@ function renderBlockedWordSummary(value) {
     if (!groups.length) return '<div class="text-dark-gray">暂无屏蔽词</div>';
     return groups.map(function(group) {
         const preview = group.entries.map(function(entry) { return entry.value; }).join('，');
-        return '<div class="blocked-word-group-summary"><span class="blocked-word-kind">' + group.kind + ' · ' + group.entries.length + '</span><span class="blocked-word-group-preview">' + escapeHtml(preview) + '</span></div>';
+        return '<div class="blocked-word-group-summary"><span class="blocked-word-kind">' + group.kind + ' · ' + group.entries.length + '</span><span class="blocked-word-group-preview' + (group.kind === '普通词' ? '' : ' blocked-word-regex-preview') + '">' + escapeHtml(preview) + '</span></div>';
     }).join('');
 }
 
@@ -2531,7 +2531,7 @@ function renderEnvItem(item, category, originalIndex) {
     const badgeClass = item.type === 'multi-select' ? 'multi' : '';
 
     return \`
-        <div class="env-item">
+        <div class="env-item\${item.key === 'BLOCKED_WORDS' ? ' env-item-blocked-words' : ''}">
             <div class="env-info">
                 <strong>\${escapeHtml(item.key)}<span class="value-type-badge \${badgeClass}">\${typeLabel}</span></strong>
                 \${item.key === 'BLOCKED_WORDS' ? renderBlockedWordSummary(item.value) : '<div class="text-dark-gray">' + escapeHtml(item.value) + '</div>'}

@@ -1241,6 +1241,18 @@ summary.blocked-word-group-summary::before { content: '▸'; flex-shrink: 0; }
 .env-item .env-info .blocked-word-kind { white-space: nowrap; }
 .env-item .env-info .blocked-word-group-preview { white-space: nowrap; }
 .blocked-word-group-preview { display: block; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 配置卡片的分类摘要不继承正文大字号；长正则只能占可用宽度。 */
+.env-item.env-item-blocked-words { align-items: flex-start; flex-wrap: nowrap; }
+.env-item.env-item-blocked-words .env-info { min-width: 0; max-width: 100%; }
+.env-item-blocked-words .blocked-word-group-summary { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 10px; padding: 5px 0; }
+.env-item-blocked-words .blocked-word-kind { width: fit-content; line-height: 1.5; }
+.env-item-blocked-words .blocked-word-group-preview { font-size: 13px; line-height: 1.6; font-weight: 400; letter-spacing: normal; }
+.env-item-blocked-words .blocked-word-regex-preview { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; }
+@media (max-width: 768px) {
+    .env-item.env-item-blocked-words .env-info { width: 100%; }
+    .env-item-blocked-words .blocked-word-group-summary { grid-template-columns: 100px minmax(0, 1fr); gap: 6px; }
+}
+
 .blocked-word-heading > span:last-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .blocked-word-summary, .blocked-word-empty { color: var(--theme-muted); font-size: 12px; padding: 8px 0; }
