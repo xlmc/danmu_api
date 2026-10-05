@@ -790,14 +790,12 @@ function renderValueInput(item) {
 
         container.innerHTML = \`
             <label>映射配置</label>
-            <textarea id="map-bulk-value" rows="6" placeholder="原值->映射值;原值2->映射值2">\${escapeHtml(value || '')}</textarea>
-            <button type="button" class="btn btn-secondary" onclick="parseBulkMapItems()">\${uiIcon('refresh-cw')} 解析并更新列表</button>
             <div class="map-container" id="map-container">
                 \${mapItems.map((item, index) => \`
                     <div class="map-item" data-index="\${index}">
-                        <input type="text" class="map-input-left" placeholder="原始值" value="\${item.left}">
+                        <input type="text" class="map-input-left" placeholder="原始值" value="\${escapeHtml(item.left)}">
                         <span class="map-separator">-></span>
-                        <input type="text" class="map-input-right" placeholder="映射值" value="\${item.right}">
+                        <input type="text" class="map-input-right" placeholder="映射值" value="\${escapeHtml(item.right)}">
                         <button type="button" class="btn btn-danger map-remove-btn" onclick="removeMapItem(this)">删除</button>
                     </div>
                 \`).join('')}
@@ -810,12 +808,10 @@ function renderValueInput(item) {
             </div>
             <div style="margin-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
                 <button type="button" class="btn btn-primary" onclick="addMapItem()">\${uiIcon('plus')} 添加映射项</button>
-                \${renderRecentDataButton('btn btn-primary')}
             </div>
-            \${renderRecentDataPanel()}
+            \${renderMappingShareItem({key: currentKey, value})}
         \`;
 
-        bindMapInputSync();
 
     } else {
         // 文本输入
@@ -2470,12 +2466,10 @@ function renderMappingShareItem(item) {
     if (!['TITLE_MAPPING_TABLE', 'AUTO_MATCH_MAPPING_TABLE'].includes(item.key)) return '';
     const kind = item.key === 'TITLE_MAPPING_TABLE' ? 'title' : 'season';
     const lines = mappingShareLines(item.value || '');
-    return '<div class="env-item mapping-share-item" data-share-kind="' + kind + '"><div class="env-info"><strong>共享本地' + (kind === 'title' ? '标题' : '季集') + '规则</strong>' +
-        '<div class="text-gray font-size-12">只公开勾选的已保存规则，不上传其他配置。上传成功不代表已发布；冲突和无效规则不会自动生效。</div>' +
-        '<details><summary>选择规则（' + lines.length + ' 条）</summary>' + lines.map((line, index) =>
-            '<label style="display:flex;gap:8px;margin:6px 0;overflow-wrap:anywhere;"><input type="checkbox" class="mapping-share-choice" value="' + index + '" data-line="' + escapeHtml(line) + '"><span>' + escapeHtml(line) + '</span></label>').join('') + '</details>' +
-        '</div><div class="env-actions"><button class="btn btn-secondary" onclick="shareLocalMappings(this)"' + (lines.length ? '' : ' disabled') + '>上传共享</button>' +
-        '<div class="mapping-share-status text-gray font-size-12" aria-live="polite" style="margin-top:6px;white-space:pre-wrap;"></div></div></div>';
+    return '<div class="mapping-share-item" data-share-kind="' + kind + '" data-share-lines="' + escapeHtml(JSON.stringify(lines)) + '">' +
+        '<button type="button" class="btn btn-secondary" onclick="shareLocalMappings(this)"' + (lines.length ? '' : ' disabled') + '>上传共享</button>' +
+        '<div class="text-gray font-size-12">上传此表全部已保存的本地规则，不上传其他配置；修改后请先保存。上传成功不代表已发布。</div>' +
+        '<div class="mapping-share-status text-gray font-size-12" aria-live="polite" style="margin-top:6px;white-space:pre-wrap;"></div></div>';
 }
 function mappingShareLines(raw) {
     const lines = []; let current = '', depth = 0;
@@ -2489,25 +2483,46 @@ function mappingShareLines(raw) {
     return lines;
 }
 async function shareLocalMappings(button) {
-    if (!button || button.disabled) return;
     const panel = button.closest('.mapping-share-item');
     const status = panel.querySelector('.mapping-share-status');
-    const selected = Array.from(panel.querySelectorAll('.mapping-share-choice:checked'));
-    if (!selected.length || selected.length > 100) { status.textContent = '请先勾选 1~100 条要公开分享的规则'; return; }
+    const lines = JSON.parse(panel.dataset.shareLines || '[]');
+    const normalize = line => line.split('->').map(part => part.trim()).join('->');
+    const rows = Array.from(document.querySelectorAll('#map-container .map-item')).map(row => {
+        const left = row.querySelector('.map-input-left').value.trim();
+        const right = row.querySelector('.map-input-right').value.trim();
+        return {left, right};
+    });
+    const current = rows.filter(row => row.left || row.right).map(row => row.left + '->' + row.right);
+    if (JSON.stringify(current) !== JSON.stringify(lines.map(normalize))) {
+        status.textContent = '映射规则有未保存修改，请先保存，再打开编辑器上传。'; return;
+    }
+    if (!lines.length) { status.textContent = '没有已保存的本地规则可上传。'; return; }
     const kind = panel.dataset.shareKind;
+    const batches = []; let batch = [];
+    for (let index = 0; index < lines.length; index++) {
+        const entry = {index, line: lines[index]};
+        const size = entries => new TextEncoder().encode(JSON.stringify({version:1,rules:entries.map(e => ({kind,line:e.line}))})).length;
+        if (size([entry]) > 60000) { status.textContent = '第 ' + (index + 1) + ' 条规则过大，请检查后重新上传。'; return; }
+        if (batch.length === 100 || size([...batch, entry]) > 60000) { batches.push(batch); batch = []; }
+        batch.push(entry);
+    }
+    if (batch.length) batches.push(batch);
     const original = button.textContent;
     button.disabled = true; button.textContent = '上传中…'; status.textContent = '';
+    let completed = 0, stored = 0, duplicate = 0, conflict = 0, invalid = 0;
     try {
-        const response = await fetch(buildApiUrl('/api/title-mapping/share', true), {
-            method: 'POST', headers: {'Content-Type': 'application/json'}, signal: AbortSignal.timeout(35000),
-            body: JSON.stringify({kind, indices: selected.map(el => Number(el.value)), lines: selected.map(el => el.dataset.line)})
-        });
-        const result = await response.json();
-        if (!response.ok || !result.success) throw new Error(result.error || '上传失败');
-        status.textContent = '已上传 ' + result.stored + ' 条，重复 ' + (result.duplicate || 0) + ' 条，冲突 ' + (result.conflict || []).length + ' 条，无效 ' + (result.invalid || []).length + ' 条。' +
-            (result.status === 'pending_review' ? '新规则等待核验，尚未发布。' : result.status === 'already_received' ? '此前已收到，无需重复上传。' : '没有可新增的规则。') +
-            [...(result.conflict || []), ...(result.invalid || [])].map(entry => '\\n第 ' + (entry.index + 1) + ' 条：' + entry.reason).join('');
-    } catch (error) { status.textContent = error.message || '上传失败，本地规则未改变'; }
+        for (const entries of batches) {
+            const response = await fetch(buildApiUrl('/api/title-mapping/share', true), {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, signal: AbortSignal.timeout(35000),
+                body: JSON.stringify({kind, indices: entries.map(e => e.index), lines: entries.map(e => e.line)})
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.error || '上传失败');
+            completed++; stored += result.stored || 0; duplicate += result.duplicate || 0;
+            conflict += (result.conflict || []).length; invalid += (result.invalid || []).length;
+            status.textContent = '已处理 ' + completed + '/' + batches.length + ' 批，新增 ' + stored + ' 条，重复 ' + duplicate + ' 条，冲突 ' + conflict + ' 条，无效 ' + invalid + ' 条。新规则等待核验，尚未发布。';
+        }
+    } catch (error) { status.textContent = '已完成 ' + completed + '/' + batches.length + ' 批，新增 ' + stored + ' 条。' + (error.message || '上传失败') + '；本地规则未改变，可重新上传（接收端会去重）。'; }
     finally { button.disabled = false; button.textContent = original; }
 }
 
@@ -2567,7 +2582,7 @@ function renderEnvList() {
         if (themeSettings) themeSettings.hidden = currentCategory !== 'system';
         if (status) status.textContent = previewCategoryMeta[currentCategory].label + ' · ' + categoryItems.length + ' 项';
         list.innerHTML = items.length
-            ? items.map(({ item, originalIndex }) => renderEnvItem(item, currentCategory, originalIndex) + renderMappingShareItem(item) + (item.key === 'TITLE_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('title') : item.key === 'AUTO_MATCH_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('auto-match') : '')).join('')
+            ? items.map(({ item, originalIndex }) => renderEnvItem(item, currentCategory, originalIndex) + (item.key === 'TITLE_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('title') : item.key === 'AUTO_MATCH_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('auto-match') : '')).join('')
             : '<p class="text-gray padding-20 text-center">暂无配置项</p>';
         return;
     }
@@ -2594,7 +2609,7 @@ function renderEnvList() {
                     <span>\${regularMatches.length} 项</span>
                 </div>
                 <div>
-                    \${regularMatches.map(({ item, originalIndex }) => renderEnvItem(item, category, originalIndex) + renderMappingShareItem(item) + (item.key === 'TITLE_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('title') : item.key === 'AUTO_MATCH_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('auto-match') : '')).join('')}
+                    \${regularMatches.map(({ item, originalIndex }) => renderEnvItem(item, category, originalIndex) + (item.key === 'TITLE_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('title') : item.key === 'AUTO_MATCH_MAPPING_TABLE_URL' ? renderRemoteMappingRefreshItem('auto-match') : '')).join('')}
                 </div>
             </section>
         \`;
@@ -2775,7 +2790,6 @@ document.getElementById('env-form').addEventListener('submit', async function(e)
         itemData = { key, value, description, type, options };
     } else if (type === 'map') {
         // 获取映射表值
-        parseBulkMapItems(true);
         const mapItems = document.querySelectorAll('#map-container .map-item');
         const pairs = [];
         mapItems.forEach(item => {
@@ -2866,29 +2880,6 @@ document.getElementById('env-form').addEventListener('submit', async function(e)
     }
 });
 
-function parseBulkMapItems(silent = false) {
-    const input = document.getElementById('map-bulk-value');
-    const container = document.getElementById('map-container');
-    if (!input || !container) return false;
-    const latest = new Map(); const invalid = [];
-    String(input.value || '').split(/[;\\r\\n]+/).forEach((raw, index) => {
-        const text = raw.trim(); if (!text) return;
-        const pos = text.indexOf('->');
-        if (pos < 1 || !text.slice(pos + 2).trim()) { invalid.push(index + 1); return; }
-        latest.set(text.slice(0, pos).trim(), text.slice(pos + 2).trim());
-    });
-    container.querySelectorAll('.map-item').forEach(item => item.remove());
-    for (const [left, right] of latest) {
-        const row = document.createElement('div'); row.className = 'map-item';
-        row.innerHTML = '<input type="text" class="map-input-left"><span class="map-separator">-&gt;</span><input type="text" class="map-input-right"><button type="button" class="btn btn-danger map-remove-btn" onclick="removeMapItem(this)">删除</button>';
-        row.querySelector('.map-input-left').value = left;
-        row.querySelector('.map-input-right').value = right;
-        container.insertBefore(row, container.querySelector('.map-item-template'));
-    }
-    if (invalid.length && !silent) addLog('Invalid mapping entries ignored: ' + invalid.join(', '), 'warning');
-    return invalid.length === 0;
-}
-
 // 添加映射项
 function addMapItem() {
     const container = document.getElementById('map-container');
@@ -2900,8 +2891,6 @@ function addMapItem() {
     const index = container.querySelectorAll('.map-item').length;
     newItem.setAttribute('data-index', index);
     container.appendChild(newItem);
-    newItem.querySelectorAll('.map-input-left, .map-input-right').forEach(input => input.addEventListener('input', syncBulkMapValue));
-    syncBulkMapValue();
 }
 
 // 删除映射项
@@ -2909,25 +2898,9 @@ function removeMapItem(button) {
     const item = button.closest('.map-item');
     if (item) {
         item.remove();
-        syncBulkMapValue();
     }
 }
 
-function syncBulkMapValue() {
-    const input = document.getElementById('map-bulk-value');
-    if (!input) return;
-    input.value = Array.from(document.querySelectorAll('#map-container .map-item')).map(item => {
-        const l = item.querySelector('.map-input-left')?.value.trim();
-        const r = item.querySelector('.map-input-right')?.value.trim();
-        return l && r ? l + '->' + r : '';
-    }).filter(Boolean).join(';');
-}
-
-function bindMapInputSync() {
-    document.querySelectorAll('#map-container .map-input-left, #map-container .map-input-right').forEach(input => {
-        input.addEventListener('input', syncBulkMapValue);
-    });
-}
 /* ========================================
    Bilibili Cookie 扫码登录功能
    ======================================== */
