@@ -2460,7 +2460,7 @@ function renderMappingShareItem(item) {
     const lines = mappingShareLines(item.value || '');
     return '<div class="mapping-share-item" data-share-kind="' + kind + '" data-share-lines="' + escapeHtml(JSON.stringify(lines)) + '">' +
         '<div class="mapping-editor-actions">' + addButton +
-        '<button type="button" class="btn btn-primary mapping-upload-button" onclick="shareLocalMappings(this)"' + (lines.length ? '' : ' disabled') + '>' + uiIcon('upload') + ' 上传共享</button></div>' +
+        '<button type="button" class="btn btn-primary mapping-upload-button" onclick="shareLocalMappings(this)"' + (lines.length ? '' : ' disabled') + '>' + uiIcon('upload') + ' 上传</button></div>' +
         '<div class="form-help mapping-share-help">上传此表全部已保存的本地规则，不上传其他配置；修改后请先保存。上传成功不代表已发布。</div>' +
         '<div class="mapping-share-status text-gray font-size-12" aria-live="polite" style="margin-top:6px;white-space:pre-wrap;"></div></div>';
 }
@@ -2510,7 +2510,7 @@ async function shareLocalMappings(button) {
                 body: JSON.stringify({kind, indices: entries.map(e => e.index), lines: entries.map(e => e.line)})
             });
             const result = await response.json();
-            if (!response.ok || !result.success) throw new Error(result.error || '上传失败');
+            if (!response.ok || !result.success) throw new Error((result.error || '上传失败') + (result.upstreamStatus ? '（共享服务 HTTP ' + result.upstreamStatus + '）' : ''));
             completed++; stored += result.stored || 0; duplicate += result.duplicate || 0;
             conflict += (result.conflict || []).length; invalid += (result.invalid || []).length;
             status.textContent = '已处理 ' + completed + '/' + batches.length + ' 批，新增 ' + stored + ' 条，重复 ' + duplicate + ' 条，冲突 ' + conflict + ' 条，无效 ' + invalid + ' 条。新规则等待核验，尚未发布。';

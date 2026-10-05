@@ -27,7 +27,7 @@ for (const key of ['TITLE_MAPPING_TABLE','AUTO_MATCH_MAPPING_TABLE']) {
     const r = context();
     r.ctx.renderValueInput({key, type:'map', value:'原值->目标;带"引号<值>->目标 @youku'});
     assert.match(r.container.innerHTML,/添加映射项/);
-    assert.match(r.container.innerHTML,/上传共享/);
+    assert.match(r.container.innerHTML,/上传/);
     assert.match(r.container.innerHTML, /mapping-editor-actions[\s\S]*addMapItem[\s\S]*mapping-upload-button[\s\S]*shareLocalMappings/);
     assert.doesNotMatch(r.container.innerHTML,/btn-secondary/);
     assert.doesNotMatch(r.container.innerHTML,/mapping-share-choice|checkbox|选择规则/);
@@ -50,7 +50,7 @@ function uploadContext(lines, kind='title') {
   const r=context();
   const status={textContent:''};
   const panel={dataset:{shareKind:kind,shareLines:JSON.stringify(lines)},querySelector:()=>status};
-  const button={innerHTML:'<svg></svg> 上传共享',textContent:'上传共享',disabled:false,closest:()=>panel};
+  const button={innerHTML:'<svg></svg> 上传',textContent:'上传',disabled:false,closest:()=>panel};
   for(const line of lines) {const [left,right]=line.split('->').map(s=>s.trim());r.rows.push({querySelector:selector=>({value:selector==='.map-input-left'?left:right})});}
   r.ctx.fetch=async(url,opts)=>{const body=JSON.parse(opts.body);r.requests.push(body);return {ok:true,json:async()=>({success:true,stored:body.lines.length,duplicate:0,conflict:[],invalid:[]})};};
   return {...r,button,status};
@@ -61,7 +61,7 @@ test('one click uploads all saved rules in indexed batches without selection',as
   assert.deepEqual(r.requests.map(b=>b.lines.length),[100,100,5]);
   assert.deepEqual(r.requests.flatMap(b=>b.lines),lines);
   assert.deepEqual(r.requests.flatMap(b=>b.indices),Array.from({length:205},(_,i)=>i));
-  assert.match(r.status.textContent,/新增 205 条/);assert.equal(r.button.disabled,false);assert.equal(r.button.innerHTML,'<svg></svg> 上传共享');
+  assert.match(r.status.textContent,/新增 205 条/);assert.equal(r.button.disabled,false);assert.equal(r.button.innerHTML,'<svg></svg> 上传');
 });
 test('unsaved edits prevent upload and season table uses season payload',async()=>{
   const r=uploadContext(['作品 S2E1 -> 平台 S1E10'],'season');await r.ctx.shareLocalMappings(r.button);
@@ -73,7 +73,7 @@ test('partial failure stops subsequent batches and reports retry without local c
   const r=uploadContext(Array.from({length:205},(_,i)=>'作品'+i+' -> 平台'+i));
   let calls=0;r.ctx.fetch=async()=>{calls++;return {ok:calls===1,json:async()=>calls===1?{success:true,stored:100}:{success:false,error:'共享服务不可用'}};};
   await r.ctx.shareLocalMappings(r.button);
-  assert.equal(calls,2);assert.equal(r.rows.length,205);assert.match(r.status.textContent,/已完成 1\/3 批/);assert.match(r.status.textContent,/新增 100 条/);assert.equal(r.button.disabled,false);assert.equal(r.button.innerHTML,'<svg></svg> 上传共享');
+  assert.equal(calls,2);assert.equal(r.rows.length,205);assert.match(r.status.textContent,/已完成 1\/3 批/);assert.match(r.status.textContent,/新增 100 条/);assert.equal(r.button.disabled,false);assert.equal(r.button.innerHTML,'<svg></svg> 上传');
 });
 test('non-editor configuration list does not render standalone upload panel',()=>{
   assert.doesNotMatch(systemSettingsJsContent,/renderEnvItem\(item, (?:category|currentCategory), originalIndex\) \+ renderMappingShareItem/);
