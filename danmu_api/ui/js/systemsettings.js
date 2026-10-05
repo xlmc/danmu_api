@@ -764,12 +764,6 @@ function renderValueInput(item) {
                 </div>
             </div>
 
-            \${currentKey === 'MERGE_SOURCE_PAIRS' ? \`
-            <div style="margin-top: 8px; display: flex; justify-content: flex-end;">
-                \${renderRecentDataButton()}
-            </div>
-            \${renderRecentDataPanel()}
-            \` : ''}
         \`;
 
         // 设置拖动事件
