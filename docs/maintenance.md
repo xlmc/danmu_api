@@ -16,54 +16,7 @@
 
 `main` 用于通过验证的自用代码和 GHCR 发布。临时工作分支在 PR 合并后删除，不长期保留整理分支；NAS 运行不需要功能分支。
 
-以下 6 个分支对应仍开放的上游 PR，必须保留，不能因代码已出现在自用 main 就删除：
-
-| 分支 | 上游 PR | 用途 |
-| --- | --- | --- |
-| `feat/remote-title-mapping` | #456 | 远程剧名映射 |
-| `feat/gradient-color-danmaku` | #461 | 渐变弹幕 |
-| `feat/domestic-celebrity-context-filter` | #462 | 当前作品演员/角色语境过滤 |
-| `feat/remote-season-mapping` | #463 | 远程季集映射 |
-| `feat/auto-match-rule-enhancements` | #464 | 自动匹配规则改进 |
-| `fix/auto-match-title-episode-accuracy` | #465 | 剧名/季集准确性 |
-
-2026-10-02 已安全删除以下 6 个远程分支（删除前逐个复核 main 祖先关系、开放 PR 和备份 SHA）：
-
-- `codex/publish-ghcr`
-- `dev_new`
-- `feat/blocked-words-names-context`
-- `feat/blocked-words-region-context`
-- `feat/celebrity-context-filter`
-- `feat/region-context-filter`
-
-上面 6 个 tip 均已在整理前 main 历史中，不存在开放上游 PR。
-
-2026-10-02 NAS 部署收敛时再删除 2 个远程分支：
-
-- `feat/blocked-words-enhancement`：5 个非合并提交均与 main 中的补丁等价，无独有合并提交。
-- `feat/layered-danmaku-matching`：12 个非合并提交均与 main 中的补丁等价；独有合并提交 `711d1ea` 与 main 历史中的 `6cc785d` 完整文件树一致（`74f384117847ba0ffe2c2af354997c285a6ef588`）。
-
-两者均无开放的本仓库/上游 PR，已核对备份包含准确 tip，并通过 atomic push + 明确 SHA lease 删除，未 force main。不能只看“不是 main 祖先”或“代码名字类似”就判断是否可删。
-
-暂留 `codex/fix-domestic-filter-context`：有独有提交 `a001b196d9a513a46d32f6f5192361b018c3b0e9`；当前已有后续语境过滤实现，但未证明其全部历史修改均可丢弃。若不再需要上游投稿，应先明确关闭对应 PR，再决定删除那 6 个 PR 分支，而不是反过来。
-
-本轮完成后长期远程分支为 **8 个：main + 6 个开放 PR 分支 + 1 个待审计分支**。上游同步分支和后续工作分支可能临时出现，不属于 NAS 运行依赖。
-
-NAS 清理前的备份为工作目录 `outputs/danmu-api-before-nas-cleanup-2026-10-02.bundle`，审计记录为 `outputs/branches-nas-cleanup-audit-2026-10-02.json`；这些备份不跟踪到仓库。恢复本轮分支示例：
-
-```bash
-git bundle verify /path/to/danmu-api-before-nas-cleanup-2026-10-02.bundle
-git fetch /path/to/danmu-api-before-nas-cleanup-2026-10-02.bundle refs/remotes/origin/feat/layered-danmaku-matching:refs/heads/restore/layered-danmaku-matching
-```
-
-清理前已保存所有分支完整 SHA 和完整 Git bundle。备份位于本次工作目录的 `outputs/branches-before-cleanup-2026-10-02.txt` 和 `outputs/danmu-api-before-cleanup-2026-10-02.bundle`，不是仓库内文件。请另存到你的备份位置，避免依赖这台电脑。恢复示例：
-
-```bash
-git bundle verify /path/to/danmu-api-before-cleanup-2026-10-02.bundle
-git fetch /path/to/danmu-api-before-cleanup-2026-10-02.bundle refs/remotes/origin/dev_new:refs/heads/restore/dev-new
-```
-
-恢复前用 `git bundle list-heads` 核对实际 ref；只有需要恢复远程分支时再明确推送。
+仍有关联开放 PR 或未合并独有提交的分支，不应仅因代码名字类似而删除。删除前核对关联 PR、提交差异并保存备份；私人备份路径和一次性分支审计记录不放入仓库。
 
 ## 自动同步上游
 
@@ -81,9 +34,9 @@ git fetch /path/to/danmu-api-before-cleanup-2026-10-02.bundle refs/remotes/origi
 
 ### 需要一次性确认的 GitHub 权限
 
-本次读取的仓库设置：`can_approve_pull_request_reviews=false`，自动创建 PR 尚未证实可用。默认使用 `GITHUB_TOKEN` 时，请由仓库管理员在 **Settings → Actions → General → Workflow permissions** 开启 **Allow GitHub Actions to create and approve pull requests**；工作流只创建/更新 PR，不执行自动 approve。
+默认使用 `GITHUB_TOKEN` 时，需要由仓库管理员在 **Settings → Actions → General → Workflow permissions** 开启 **Allow GitHub Actions to create and approve pull requests**；工作流只创建/更新 PR，不执行自动 approve。
 
-此整理不会静默修改仓库权限或生成 PAT。若组织策略不允许开启，可由你配置 `UPSTREAM_SYNC_TOKEN`（该仓库最小 Contents / Pull requests 写权限），工作流会优先使用它。不要将 token 写入仓库。
+同步脚本不自动修改仓库权限或生成 PAT。若组织策略不允许开启，可由你配置 `UPSTREAM_SYNC_TOKEN`（该仓库最小 Contents / Pull requests 写权限），工作流会优先使用它。不要将 token 写入仓库。
 
 默认 GITHUB_TOKEN 创建 PR 不一定触发独立 PR 工作流，因此同步工作流自身会先执行回归测试；PR 中应查看该次 Fork Sync 日志。权限开通后，应手动运行一次验证，才能确认 PR 创建链路实际可用。
 
