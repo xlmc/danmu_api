@@ -5,6 +5,7 @@ import { httpGet } from "./http-util.js";
 import { isNonChinese } from "./zh-util.js";
 import { searchBangumiData } from './bangumi-data-util.js';
 import { getWikipediaPersonMetadata } from './wikipedia-person-util.js';
+import { getBaiduPersonMetadata } from './baidu-person-util.js';
 import { cachedPersonSource, personCacheIdentity } from './person-source-cache.js';
 
 // ---------------------
@@ -383,6 +384,24 @@ export async function getDomesticPersonMetadataForTitle(title) {
         resolved.actorNames = [...new Set([...resolved.actorNames, ...wiki.actorNames])];
         resolved.characterNames = [...new Set([...resolved.characterNames, ...wiki.characterNames])];
         log('info', `[system] [person-metadata] Wikipedia 当前作品演员 ${wiki.actorNames.length} 个、角色 ${wiki.characterNames.length} 个${wiki.sourceUrl ? `，来源 ${wiki.sourceUrl}，修订 ${wiki.revision}` : '，无对应条目'}`);
+      }
+      // 为弹幕入口已选中的当前作品补人物信息；不参与作品匹配，也不以 TMDB 身份匹配失败为触发条件。
+      // 仅在整张中文角色表为空时补查；已有演员表保留，均缺失时补两张表。
+      if (resolved.characterNames.length === 0) {
+        const baiduTitle = context.hasSeason ? searchTitle : sourceTitle;
+        const baiduYear = context.hasSeason ? year : sourceYear;
+        const baiduResult = await cachedPersonSource(`${cacheKey}:baidu-v1`,
+          () => getBaiduPersonMetadata(baiduTitle, baiduYear, candidate?.media_type || ''),
+          value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames)
+            && value.actorNames.length + value.characterNames.length > 0,
+          value => value.actorNames.length > 0 && value.characterNames.length > 0);
+        if (baiduResult.value) {
+          const baidu = baiduResult.value;
+          if (resolved.actorNames.length === 0) resolved.actorNames = baidu.actorNames.slice();
+          resolved.characterNames = baidu.characterNames.slice();
+          log('info', `[system] [person-metadata] Baidu 补充当前作品演员 ${baidu.actorNames.length} 个、角色 ${baidu.characterNames.length} 个，来源 ${baidu.sourceUrl}`);
+        }
+        if (baiduResult.stale) incomplete = true;
       }
       if (resolved.characterNames.length === 0) incomplete = true;
       resolved.names = [...new Set([...resolved.actorNames, ...resolved.characterNames])];
