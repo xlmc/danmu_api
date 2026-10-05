@@ -46,7 +46,7 @@ test('removed members do not discard the priority of surviving platforms in a le
  const original = Envs.env;
  try {
   Envs.env = { PLATFORM_ORDER: 'tencent&youku,renren&hanjutv&bilibili,leshi&xigua&sohu,hongguo,migu' };
-  assert.deepEqual(Envs.resolvePlatformOrder(), ['tencent&youku','bilibili','leshi&sohu','hongguo','migu',null]);
+  assert.deepEqual(Envs.resolvePlatformOrder(), ['tencent&youku','renren&hanjutv&bilibili','leshi&sohu','hongguo','migu',null]);
  } finally {Envs.env=original;}
 });
 

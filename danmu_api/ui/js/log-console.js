@@ -2,7 +2,7 @@
 export const logConsoleJsContent = String.raw`
 const logViewState = { view: 'all', category: 'all', sources: new Set(), query: '', level: 'all', sort: 'new', context: '', auto: false, follow: true };
 const logCategories = { all: '全部', match: '匹配', mapping: '映射', filter: '弹幕过滤', cache: '缓存', source: '来源请求', merge: '合并', system: '系统' };
-const logSources = { tencent: '腾讯', iqiyi: '爱奇艺', bilibili: 'B站', mango: '芒果', youku: '优酷', imgo: '芒果', qq: '腾讯', migu: '咪咕', sohu: '搜狐', leshi: '乐视', hongguo: '红果', bahamut: '巴哈姆特' };
+const logSources = { tencent: '腾讯', iqiyi: '爱奇艺', bilibili: 'B站', mango: '芒果', youku: '优酷', imgo: '芒果', qq: '腾讯', migu: '咪咕', sohu: '搜狐', leshi: '乐视', hongguo: '红果', hanjutv: '韩剧TV', renren: '人人视频', bahamut: '巴哈姆特' };
 let logFetchPending = false;
 let logInitialized = false;
 let logCapacity = 1000;

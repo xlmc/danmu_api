@@ -1,6 +1,6 @@
 # NAS 精简版配置参考
 
-保留官方视频平台。搜索与匹配使用这些来源；360、豆瓣/TMDB 聚合搜索、VOD、人人、韩剧、爱壹帆、Animeko、自定义与兜底弹幕源已移除。TMDB/Bangumi Data 仍可辅助译名及季集判断。
+保留官方视频平台、韩剧 TV（hanjutv）、人人视频（renren）。搜索与匹配使用这些来源；360、豆瓣/TMDB 聚合搜索、VOD、爱壹帆、Animeko、自定义与兜底弹幕源已移除。TMDB/Bangumi Data 仍可辅助译名及季集判断。
 
 ## 播放器接口
 
@@ -49,7 +49,7 @@ TMDB 身份为 tv:ID 或 movie:ID，随匹配成功的目录保存；失败候�
 
 ## 弹幕来源
 
-可选：tencent、iqiyi、youku、imgo、bilibili、migu、sohu、leshi、hongguo、bahamut。默认启用腾讯、爱奇艺、优酷、芒果、B站。旧配置中不支持的来源会被过滤；全部无效时使用默认来源。已移除 dandan 来源及账号、中转获取功能；旧配置中的该来源会被过滤。
+可选：tencent、iqiyi、youku、imgo、bilibili、migu、sohu、leshi、hongguo、hanjutv、renren、bahamut。默认启用腾讯、爱奇艺、优酷、芒果、B站；韩剧 TV、人人视频需在 SOURCE_ORDER 中启用，可在 PLATFORM_ORDER 和 MERGE_SOURCE_PAIRS 中配置。旧配置中不支持的来源会被过滤；全部无效时使用默认来源。已移除 dandan 来源及账号、中转获取功能；旧配置中的该来源会被过滤。
 
 ## 缓存
 

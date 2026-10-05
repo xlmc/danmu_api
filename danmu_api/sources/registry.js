@@ -20,6 +20,8 @@ import { globals } from '../configs/globals.js';
 
 
 
+import HanjutvSource from './hanjutv.js';
+import RenrenSource from './renren.js';
 import BahamutSource from './bahamut.js';
 
 import TencentSource from './tencent.js';
@@ -57,6 +59,8 @@ const SOURCE_REGISTRY = [
   { key: 'sohu', logName: 'sohu', factory: () => new SohuSource(), deps: [] },
   { key: 'leshi', logName: 'leshi', factory: () => new LeshiSource(), deps: [] },
   { key: 'hongguo', logName: 'hongguo', factory: () => new HongguoSource(), deps: [] },
+  { key: 'hanjutv', logName: 'hanjutv', factory: () => new HanjutvSource(), deps: [] },
+  { key: 'renren', logName: 'renren', factory: () => new RenrenSource(), deps: [] },
   { key: 'bahamut', logName: 'bahamut', factory: () => new BahamutSource(), deps: [] },
 ];
 

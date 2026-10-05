@@ -140,6 +140,7 @@ export function handleDanmusLike(groupedDanmus) {
     return groupedDanmus;
   }
   const lowThresholdSources = new Set([
+    '[hanjutv]',
     '[sohu]',
     '[bilibili]',
     '[bilibili1]',

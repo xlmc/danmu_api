@@ -31,6 +31,7 @@ import { applyMergeLogic, mergeDanmakuList, MERGE_DELIMITER, sanitizeUrl } from 
 
 
 import { getSourceByKey, getSourceMetaByKey, getLogNameByKey } from "../sources/registry.js";
+import { getHanjutvSourceLabel } from '../utils/hanjutv-util.js';
 import { isHongguoPlayerUrl } from "../sources/hongguo.js";
 import BilibiliSource from "../sources/bilibili.js"; // resolveB23Link 为 BilibiliSource 实例方法，单测中仍需直接 new
 import { Anime, AnimeMatch, Episodes, Bangumi } from "../models/player-model.js";
@@ -2462,7 +2463,7 @@ async function fetchMergedComments(url, animeTitle, commentId) {
       return {
         realId,
         logicalSource: sourceName,
-        sourceLabel: sourceName,
+        sourceLabel: sourceName === 'hanjutv' ? getHanjutvSourceLabel(realId) : sourceName,
         manualOffset,
         manualOffsetPercent,
       };
@@ -2724,7 +2725,7 @@ async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, incl
     const urlPattern = /^(https?:\/\/)?([\w.-]+)\.([a-z]{2,})(\/.*)?$/i;
     if (!urlPattern.test(url) && !isHongguoUrl) {
       // 剥离单源 source:id 前缀（如 bahamut:50709 → 50709），使各源拿到真实 ID，与合并路径分割逻辑一致
-      const sourceUrl = sanitizeUrl(commentUrl);
+      const sourceUrl = plat === 'hanjutv' ? commentUrl : sanitizeUrl(commentUrl);
       // plat 值即源调度键名，直接从注册表查实例；未注册则跳过
       const platSource = getSourceByKey(plat);
       if (platSource) {
@@ -3045,6 +3046,8 @@ async function getSegmentCommentResponse(segment, queryFormat) {
       danmus = await sourceLogContext.run('leshi', () => leshiSource.getSegmentComments(segment));
     } else if (platform === "hongguo") {
       danmus = await sourceLogContext.run('hongguo', () => hongguoSource.getSegmentComments(segment));
+    } else if (platform === "hanjutv" || platform === "renren") {
+      danmus = await sourceLogContext.run(platform, () => getSourceByKey(platform).getSegmentComments(segment));
     } else if (platform === "bahamut") {
       danmus = await sourceLogContext.run('bahamut', () => bahamutSource.getSegmentComments(segment));
     } else

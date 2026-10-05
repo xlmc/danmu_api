@@ -25,9 +25,9 @@ export class Envs {
   // 允许在值中写入 # 等 dotenv 视为注释字符的变量；读取时绕过 dotenv 截断以保留完整内容。加密变量按掩码写入预览集合，原始值仅供运行期使用与日志脱敏。
   static RAW_ENV_KEYS = new Set(['ADMIN_TOKEN', 'ANIME_TITLE_FILTER', 'AUTO_MATCH_MAPPING_TABLE', 'BLOCKED_WORDS', 'BILIBILI_COOKIE', 'COLOR_POOL', 'CUSTOM_MERGE_RULES', 'DANMU_OFFSET', 'EPISODE_TITLE_FILTER', 'LOCAL_REDIS_URL', 'PROXY_URL', 'TITLE_MAPPING_TABLE', 'TITLE_NOISE_FILTER', 'TMDB_API_KEY', 'TOKEN', ]);
 
-  static ALLOWED_PLATFORMS = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","bahamut"];
-  static ALLOWED_SOURCES = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","bahamut"];
-  static MERGE_ALLOWED_SOURCES = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","bahamut"];
+  static ALLOWED_PLATFORMS = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","hanjutv","renren","bahamut"];
+  static ALLOWED_SOURCES = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","hanjutv","renren","bahamut"];
+  static MERGE_ALLOWED_SOURCES = ["tencent","youku","iqiyi","imgo","bilibili","migu","sohu","leshi","hongguo","hanjutv","renren","bahamut"];
 
 
   /**

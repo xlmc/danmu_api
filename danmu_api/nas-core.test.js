@@ -23,10 +23,10 @@ const request=(route,method='GET',body)=>handleRequest(new Request('http://local
 const comments=[{p:'1,1,16777215,[tencent]',m:'保留弹幕'}];
 const anime=(source='tencent',title='测试作品',url='https://v.qq.com/x/cover/test.html')=>({animeId:11,bangumiId:source+'-11',animeTitle:title+'(2026)【动漫】from '+source,type:'动漫',typeDescription:'动漫',source,startDate:'2026-01-01',episodeCount:1,links:[{name:'第1集',title:'【'+source+'】 第1集',url,id:10002}]});
 
-test('only supported official sources survive old source configuration',()=>{
+test('only supported sources survive old source configuration',()=>{
   reset({SOURCE_ORDER:'xigua,maiduidui,360,other,custom,local,renren,hanjutv,animeko,aiyifan,douban,tmdb,vod,tencent,bilibili'});
-  assert.deepEqual(Globals.envs.sourceOrderArr,['tencent','bilibili']);assert.deepEqual(getAllSourceMetas().map(m=>m.key),[...SUPPORTED_SOURCES]);
-  for(const source of ['xigua','maiduidui','360','vod','tmdb','douban','renren','hanjutv','animeko','aiyifan','custom','local','other'])assert.equal(getSourceByKey(source),null);
+  assert.deepEqual(Globals.envs.sourceOrderArr,['renren','hanjutv','tencent','bilibili']);assert.deepEqual(getAllSourceMetas().map(m=>m.key),[...SUPPORTED_SOURCES]);
+  for(const source of ['xigua','maiduidui','360','vod','tmdb','douban','animeko','aiyifan','custom','local','other'])assert.equal(getSourceByKey(source),null);
   reset({SOURCE_ORDER:'360,local'});assert.ok(Globals.envs.sourceOrderArr.length);assert.ok(Globals.envs.sourceOrderArr.every(s=>SUPPORTED_SOURCES.includes(s)));
 });
 
@@ -99,13 +99,13 @@ test('removed URLs, stale IDs and segment types are rejected before cache hits',
     if(url.startsWith('http'))assert.equal((await request('/api/v2/search/anime?keyword='+encodeURIComponent(url))).status,400,url);
   }
   for(const url of ['dandan:123','https://api.dandanplay.net/api/v2/comment/123','https://www.yfsp.tv/play/test']){Globals.episodeIds=[{id:10099,url,title:'第1集'}];setCommentCache(url,comments);assert.equal((await request('/api/v2/comment/10099')).status,400);}
-  for(const type of ['dandan','xigua','maiduidui','other_server','animeko','custom','local','renren','hanjutv','aiyifan'])assert.equal((await request('/api/v2/segmentcomment','POST',{type,url:'cached-segment',segment_start:0,segment_end:60})).status,400,type);
+  for(const type of ['dandan','xigua','maiduidui','other_server','animeko','custom','local','aiyifan'])assert.equal((await request('/api/v2/segmentcomment','POST',{type,url:'cached-segment',segment_start:0,segment_end:60})).status,400,type);
 });
 
-test('supported official source search/detail/comments/segments remain connected',async()=>{
-  for(const platform of ['tencent','bilibili']){
+test('supported source search/detail/comments/segments remain connected',async()=>{
+  for(const platform of ['tencent','bilibili','hanjutv','renren']){
     reset({SOURCE_ORDER:platform,PLATFORM_ORDER:platform});const source=getSourceByKey(platform),originals={search:source.search,handleAnimes:source.handleAnimes,getComments:source.getComments,getSegmentComments:source.getSegmentComments};let searches=0,downloads=0;
-    source.search=async()=>{searches++;return [];};source.handleAnimes=async(_,title,results,details)=>{const entry=anime(platform,title,platform==='bilibili'?'bilibili:123':'https://v.qq.com/x/cover/test.html');addAnime(entry,details);results.push(entry);};
+    source.search=async()=>{searches++;return [];};source.handleAnimes=async(_,title,results,details)=>{const entry=anime(platform,title,platform==='bilibili'?'bilibili:123':platform==='hanjutv'?'tv:123':platform==='renren'?'series-123':'https://v.qq.com/x/cover/test.html');addAnime(entry,details);results.push(entry);};
     source.getComments=async()=>{downloads++;return structuredClone(comments);};source.getSegmentComments=async()=>structuredClone(comments);
     try{
       const result=await(await request('/api/v2/search/anime?keyword=测试作品')).json();assert.equal(result.success,true);assert.equal(result.animes.length,1);
@@ -138,9 +138,11 @@ test('file cache restores IDs/preferences and prunes removed sources across actu
   try{
     fs.cpSync(new URL('./',import.meta.url),path.join(temporary,'danmu_api'),{recursive:true});fs.writeFileSync(path.join(temporary,'package.json'),'{"type":"module"}');fs.symlinkSync(path.join(checkout,'node_modules'),path.join(temporary,'node_modules'),'junction');fs.mkdirSync(path.join(temporary,'.cache'));
     const kept=anime(),removed={...anime('dandan','旧作品','dandan:old'),animeId:12,links:[{id:10003,url:'dandan:old',title:'第1集'}]};
-    for(const[key,value]of Object.entries({animes:[kept,removed],episodeIds:[{id:10002,url:kept.links[0].url},{id:10003,url:'dandan:old'}],episodeNum:10003,lastSelectMap:{作品:{animeIds:[11],preferBySeason:{1:12,2:11,3:12},sourceBySeason:{1:'dandan',2:'tencent',3:'tencent&dandan'},offsets:{1:5,2:3,3:8},explicitBySeason:{1:true,2:true,3:true}}},reqRecords:[{interface:'legacy-record'}],todayReqNum:99}))fs.writeFileSync(path.join(temporary,'.cache',key),JSON.stringify(value));
-    const code=`import assert from 'node:assert/strict';import {Globals} from './danmu_api/configs/globals.js';import {initializePersistentCaches} from './danmu_api/utils/persistent-cache-util.js';import {getPreferAnimeId,updateLocalCaches} from './danmu_api/utils/cache-util.js';Globals.init({LOCAL_CACHE_ENABLED:'true',LOCAL_REDIS_URL:'',LOG_LEVEL:'error'});Globals.deployPlatform='node';await initializePersistentCaches();assert.equal(Globals.reqRecords,undefined);assert.equal(Globals.todayReqNum,undefined);assert.equal(Globals.animes.length,1);assert.equal(Globals.episodeIds.length,1);assert.equal(Globals.episodeNum,10003);assert.equal(getPreferAnimeId('作品',2)[0],11);assert.deepEqual(Globals.lastSelectMap.get('作品').sourceBySeason,{'2':'tencent'});assert.deepEqual(Globals.lastSelectMap.get('作品').offsets,{'2':3});assert.deepEqual(Globals.lastSelectMap.get('作品').preferBySeason,{'2':11});assert.equal(await updateLocalCaches(),true);`;
+    const hj={...anime('hanjutv','韩剧测试','tv:123'),animeId:13,links:[{id:10004,url:'tv:123',title:'【hanjutv】 第1集'}]};
+    const rr={...anime('renren','人人测试','100-123'),animeId:14,links:[{id:10005,url:'100-123',title:'【renren】 第1集'}]};
+    for(const[key,value]of Object.entries({animes:[kept,removed,hj,rr],episodeIds:[{id:10002,url:kept.links[0].url},{id:10003,url:'dandan:old'},{id:10004,url:'tv:123',title:'【hanjutv】 第1集'},{id:10005,url:'100-123',title:'【renren】 第1集'}],episodeNum:10005,lastSelectMap:{作品:{animeIds:[11],preferBySeason:{1:12,2:11,3:12},sourceBySeason:{1:'dandan',2:'tencent',3:'tencent&dandan'},offsets:{1:5,2:3,3:8},explicitBySeason:{1:true,2:true,3:true}}},reqRecords:[{interface:'legacy-record'}],todayReqNum:99}))fs.writeFileSync(path.join(temporary,'.cache',key),JSON.stringify(value));
+    const code=`import assert from 'node:assert/strict';import {Globals} from './danmu_api/configs/globals.js';import {initializePersistentCaches} from './danmu_api/utils/persistent-cache-util.js';import {getPreferAnimeId,updateLocalCaches} from './danmu_api/utils/cache-util.js';Globals.init({LOCAL_CACHE_ENABLED:'true',LOCAL_REDIS_URL:'',LOG_LEVEL:'error'});Globals.deployPlatform='node';await initializePersistentCaches();assert.equal(Globals.reqRecords,undefined);assert.equal(Globals.todayReqNum,undefined);assert.equal(Globals.animes.length,3);assert.equal(Globals.episodeIds.length,3);assert.equal(Globals.episodeNum,10005);assert.ok(Globals.animes.some(a=>a.source==='hanjutv'));assert.ok(Globals.animes.some(a=>a.source==='renren'));assert.equal(getPreferAnimeId('作品',2)[0],11);assert.deepEqual(Globals.lastSelectMap.get('作品').sourceBySeason,{'2':'tencent'});assert.deepEqual(Globals.lastSelectMap.get('作品').offsets,{'2':3});assert.deepEqual(Globals.lastSelectMap.get('作品').preferBySeason,{'2':11});assert.equal(await updateLocalCaches(),true);`;
     for(let i=0;i<2;i++){const r=spawnSync(process.execPath,['--input-type=module','-e',code],{cwd:temporary,encoding:'utf8',timeout:15000});assert.equal(r.status,0,r.stdout+r.stderr);}
-    fs.writeFileSync(path.join(temporary,'.cache','animes'),'{broken');const r=spawnSync(process.execPath,['--input-type=module','-e',code.replace('assert.equal(Globals.animes.length,1);','assert.equal(Globals.animes.length,0);')],{cwd:temporary,encoding:'utf8',timeout:15000});assert.equal(r.status,0,r.stdout+r.stderr);assert.ok(fs.readdirSync(path.join(temporary,'.cache')).some(n=>n.startsWith('animes.bak-')));
+    fs.writeFileSync(path.join(temporary,'.cache','animes'),'{broken');const r=spawnSync(process.execPath,['--input-type=module','-e',code.replace('assert.equal(Globals.animes.length,3);','assert.equal(Globals.animes.length,0);').replace('assert.equal(Globals.episodeIds.length,3);','assert.equal(Globals.episodeIds.length,1);').replace("assert.ok(Globals.animes.some(a=>a.source==='hanjutv'));assert.ok(Globals.animes.some(a=>a.source==='renren'));",'')],{cwd:temporary,encoding:'utf8',timeout:15000});assert.equal(r.status,0,r.stdout+r.stderr);assert.ok(fs.readdirSync(path.join(temporary,'.cache')).some(n=>n.startsWith('animes.bak-')));
   }finally{fs.rmSync(temporary,{recursive:true,force:true});}
 });

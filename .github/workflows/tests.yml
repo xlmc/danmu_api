@@ -43,6 +43,6 @@ jobs:
             import { handleRequest } from './danmu_api/worker.js';
             import { getAllSourceMetas, isRegisteredSource } from './danmu_api/sources/registry.js';
             if (typeof handleRequest !== 'function') throw new Error('Missing API entry point');
-            if (getAllSourceMetas().length !== 10 || isRegisteredSource('dandan') || isRegisteredSource('360') || isRegisteredSource('xigua') || isRegisteredSource('maiduidui')) throw new Error('Unexpected source registry');
+            if (getAllSourceMetas().length !== 12 || !isRegisteredSource('hanjutv') || !isRegisteredSource('renren') || isRegisteredSource('dandan') || isRegisteredSource('360') || isRegisteredSource('xigua') || isRegisteredSource('maiduidui')) throw new Error('Unexpected source registry');
             console.log('Native Node.js and NAS API imports passed:', process.arch);
           "
