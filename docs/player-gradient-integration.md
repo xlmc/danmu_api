@@ -4,6 +4,8 @@
 
 [渐变绘制参考代码](https://github.com/xlmc/danmux-renderer) 提供 Canvas 2D 实现与可运行示例，播放器作者也可以按自己的绘制技术实现。
 
+移动客户端可从 [移动端最小接入说明](mobile-gradient-integration.md) 入手：说明可选样式如何穿过内部模型与缓存，以及如何复用现有文字准备和填充入口。[Android/Kotlin 参考代码](https://github.com/xlmc/danmux-renderer/blob/main/mobile/android/README.md) 可直接复制到宿主工程。
+
 ## 1. 请求与服务端开关
 
 已有 JSON 请求沿用原方式，例如：
