@@ -806,9 +806,6 @@ function renderValueInput(item) {
                     <button type="button" class="btn btn-danger map-remove-btn" onclick="removeMapItem(this)">删除</button>
                 </div>
             </div>
-            <div style="margin-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-                <button type="button" class="btn btn-primary" onclick="addMapItem()">\${uiIcon('plus')} 添加映射项</button>
-            </div>
             \${renderMappingShareItem({key: currentKey, value})}
         \`;
 
@@ -2463,12 +2460,14 @@ function renderRemoteMappingRefreshItem(kind = 'title') {
 }
 
 function renderMappingShareItem(item) {
-    if (!['TITLE_MAPPING_TABLE', 'AUTO_MATCH_MAPPING_TABLE'].includes(item.key)) return '';
+    const addButton = '<button type="button" class="btn btn-primary" onclick="addMapItem()">' + uiIcon('plus') + ' 添加映射项</button>';
+    if (!['TITLE_MAPPING_TABLE', 'AUTO_MATCH_MAPPING_TABLE'].includes(item.key)) return '<div class="mapping-editor-actions">' + addButton + '</div>';
     const kind = item.key === 'TITLE_MAPPING_TABLE' ? 'title' : 'season';
     const lines = mappingShareLines(item.value || '');
     return '<div class="mapping-share-item" data-share-kind="' + kind + '" data-share-lines="' + escapeHtml(JSON.stringify(lines)) + '">' +
-        '<button type="button" class="btn btn-secondary" onclick="shareLocalMappings(this)"' + (lines.length ? '' : ' disabled') + '>上传共享</button>' +
-        '<div class="text-gray font-size-12">上传此表全部已保存的本地规则，不上传其他配置；修改后请先保存。上传成功不代表已发布。</div>' +
+        '<div class="mapping-editor-actions">' + addButton +
+        '<button type="button" class="btn btn-primary mapping-upload-button" onclick="shareLocalMappings(this)"' + (lines.length ? '' : ' disabled') + '>' + uiIcon('upload') + ' 上传共享</button></div>' +
+        '<div class="form-help mapping-share-help">上传此表全部已保存的本地规则，不上传其他配置；修改后请先保存。上传成功不代表已发布。</div>' +
         '<div class="mapping-share-status text-gray font-size-12" aria-live="polite" style="margin-top:6px;white-space:pre-wrap;"></div></div>';
 }
 function mappingShareLines(raw) {
@@ -2507,7 +2506,7 @@ async function shareLocalMappings(button) {
         batch.push(entry);
     }
     if (batch.length) batches.push(batch);
-    const original = button.textContent;
+    const original = button.innerHTML;
     button.disabled = true; button.textContent = '上传中…'; status.textContent = '';
     let completed = 0, stored = 0, duplicate = 0, conflict = 0, invalid = 0;
     try {
@@ -2523,7 +2522,7 @@ async function shareLocalMappings(button) {
             status.textContent = '已处理 ' + completed + '/' + batches.length + ' 批，新增 ' + stored + ' 条，重复 ' + duplicate + ' 条，冲突 ' + conflict + ' 条，无效 ' + invalid + ' 条。新规则等待核验，尚未发布。';
         }
     } catch (error) { status.textContent = '已完成 ' + completed + '/' + batches.length + ' 批，新增 ' + stored + ' 条。' + (error.message || '上传失败') + '；本地规则未改变，可重新上传（接收端会去重）。'; }
-    finally { button.disabled = false; button.textContent = original; }
+    finally { button.disabled = false; button.innerHTML = original; }
 }
 
 function renderEnvItem(item, category, originalIndex) {

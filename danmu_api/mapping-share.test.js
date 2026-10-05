@@ -32,7 +32,7 @@ test('real route works with auth disabled and default TOKEN admin behavior',asyn
 test('generated UI parses, escapes untrusted rules and splits marker semicolons',()=>{
   new vm.Script(systemSettingsJsContent);
   const extract=name=>{const start=systemSettingsJsContent.indexOf('function '+name+'(');let pos=systemSettingsJsContent.indexOf('{',start),depth=1;while(depth){pos++;if(systemSettingsJsContent[pos]==='{')depth++;if(systemSettingsJsContent[pos]==='}')depth--;}return systemSettingsJsContent.slice(start,pos+1);};
-  const ctx=vm.createContext({escapeHtml:s=>s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;')});
+  const ctx=vm.createContext({uiIcon:()=>'',escapeHtml:s=>s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;')});
   vm.runInContext(extract('mappingShareLines')+';'+extract('renderMappingShareItem'),ctx);
   assert.equal(vm.runInContext("mappingShareLines('A -> B;C -> D').length",ctx),2);
   const html=vm.runInContext("renderMappingShareItem({key:'TITLE_MAPPING_TABLE',value:'<img src=x> -> Target'})",ctx);

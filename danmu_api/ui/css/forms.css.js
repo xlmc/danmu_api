@@ -513,6 +513,26 @@ input:checked + .slider:before {
 }
 
 /* ============ 映射表 ============ */
+/* Mapping editor actions share the theme and remain aligned on small screens. */
+.mapping-editor-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 12px;
+}
+.mapping-editor-actions > .btn {
+    min-height: 40px;
+    min-width: 132px;
+    justify-content: center;
+}
+.mapping-editor-actions .mapping-upload-button { margin-left: auto; }
+.mapping-share-help { margin: 10px 0 0; line-height: 1.6; }
+@media (max-width: 480px) {
+    .mapping-editor-actions { gap: 8px; }
+    .mapping-editor-actions > .btn { min-width: 0; padding: 8px 12px; }
+}
+
 .map-container {
     margin-top: 10px;
 }
