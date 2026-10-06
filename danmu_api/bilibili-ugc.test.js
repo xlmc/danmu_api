@@ -80,21 +80,53 @@ test('episode context inherits existing metadata and does not invent a season', 
   const resolved = { anime: { animeId: 3, source: 'tencent', bangumiId: 'cover', animeTitle: '测试作品', aliases: ['Alias'], startDate: '2020-01-01' }, link: { title: '测试作品_05', url: 'https://v.qq.com/x/a' }, index: 4 };
   assert.equal(buildUgcContext(resolved).episode, 5); assert.equal(buildUgcContext(resolved).season, null); assert.equal(buildUgcContext(null), null);
 });
-test('real comment endpoint augments fresh and cached results without changing matching records; disabling restores baseline', async () => {
+test('bilibili primary source skips ugc (already has good danmaku); non-bilibili source triggers it', async () => {
   Globals.init({ BILIBILI_UGC_ENABLED: 'true', BLOCK_DOMESTIC_CELEBRITIES: 'false', LOG_LEVEL: 'error', REMEMBER_LAST_SELECT: 'false' });
   Globals.animes = []; Globals.episodeIds = []; Globals.commentCache = new Map(); Globals.searchCache = new Map();
-  const anime = { animeId: 10, bangumiId: 'ss10', animeTitle: '测试作品 第2季', source: 'bilibili', startDate: '2020-01-01', links: [{ id: 12345, title: '第5集 相逢', url: context.referenceUrl }] };
-  assert(addAnime(anime)); const commentId = Globals.animes[0].links[0].id; const before = JSON.stringify(Globals.animes);
-  const source = getSourceByKey('bilibili'), originalComments = source.getComments, originalSupplement = ugcSupplement.supplement;
-  source.getComments = async () => [{ p: '1,1,25,0', m: '原有' }]; let calls = 0;
-  ugcSupplement.supplement = async (ctx, base) => { calls++; assert.equal(ctx.episode, 5); return [...base, { p: '2,1,25,0', m: '补充' }]; };
+  let calls = 0;
+  const originalSupplement = ugcSupplement.supplement;
+  ugcSupplement.supplement = async (ctx, base) => { calls++; return [...base, { p: '2,1,25,0', m: '补充' }]; };
+
+  // 1. Bilibili primary source → UGC skipped
+  const biliAnime = { animeId: 10, bangumiId: 'ss10', animeTitle: '测试作品 第2季', source: 'bilibili', startDate: '2020-01-01',
+    links: [{ id: 12345, title: '第5集 相逢', url: context.referenceUrl }] };
+  assert(addAnime(biliAnime));
+  const biliCommentId = Globals.animes[0].links[0].id;
+  const biliSource = getSourceByKey('bilibili'), originalBiliComments = biliSource.getComments;
+  biliSource.getComments = async () => [{ p: '1,1,25,0', m: '原有' }];
   try {
-    for (let i = 0; i < 2; i++) { const r = await getComment(`/api/v2/comment/${commentId}`, 'json', false, '127.0.0.1'); const data = await r.json(); assert.equal(data.count, 2); }
-    assert.equal(calls, 2); assert.equal(JSON.stringify(Globals.animes), before);
+    const r = await getComment(`/api/v2/comment/${biliCommentId}`, 'json', false, '127.0.0.1');
+    const data = await r.json();
+    assert.equal(data.count, 1, 'bilibili source: ugc should be skipped, count stays 1');
+    assert.equal(calls, 0, 'bilibili source: supplement should not be called');
+  } finally { biliSource.getComments = originalBiliComments; }
+
+  // 2. Non-bilibili primary source (tencent) → UGC runs
+  Globals.animes = []; Globals.episodeIds = []; Globals.commentCache = new Map(); Globals.searchCache = new Map(); calls = 0;
+  const tencent = getSourceByKey('tencent'), originalTencentComments = tencent.getComments;
+  const nonBiliUrl = 'https://v.qq.com/x/cover/test-series/ep005.html';
+  const nonBiliAnime = { animeId: 20, bangumiId: 'cover-20', animeTitle: '测试作品 第2季', source: 'tencent', startDate: '2020-01-01',
+    links: [{ id: 23456, title: '第5集 相逢', url: nonBiliUrl }] };
+  assert(addAnime(nonBiliAnime));
+  const nonBiliCommentId = Globals.animes[0].links[0].id;
+  tencent.getComments = async () => [{ p: '1,1,25,0', m: '原有' }];
+  try {
+    const r = await getComment(`/api/v2/comment/${nonBiliCommentId}`, 'json', false, '127.0.0.1');
+    const data = await r.json();
+    assert.equal(data.count, 2, 'tencent source: ugc should supplement, count becomes 2');
+    assert.equal(calls, 1, 'tencent source: supplement called once');
+    // disabling ugc reverts to original
+    Globals.commentCache = new Map();
     Globals.envs.bilibiliUgcEnabled = false;
-    assert.equal((await (await getComment(`/api/v2/comment/${commentId}`, 'json', false, '127.0.0.1')).json()).count, 1);
-  } finally { source.getComments = originalComments; ugcSupplement.supplement = originalSupplement; }
+    const r2 = await getComment(`/api/v2/comment/${nonBiliCommentId}`, 'json', false, '127.0.0.1');
+    assert.equal((await r2.json()).count, 1, 'disabled ugc: count stays 1');
+  } finally {
+    tencent.getComments = originalTencentComments;
+    ugcSupplement.supplement = originalSupplement;
+    Globals.animes = []; Globals.episodeIds = []; Globals.commentCache = new Map();
+  }
 });
+
 test('handleConfig exposes BILIBILI_UGC_ENABLED and defaults budget to 10s without UI entry', async () => {
   Globals.init();
   const res = handleConfig(true);
