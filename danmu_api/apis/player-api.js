@@ -2644,15 +2644,25 @@ async function supplementUgcForEpisode(commentId, url, comments, segmentFlag) {
   // Preserve existing user-selected timing. Do not align UGC against an unshifted video
   // and then silently mix it with manually shifted original comments.
   if (globals.danmuOffsetRules?.length || String(url).split(MERGE_DELIMITER).some(p => stripLinkOffset(p).offset)) return comments;
-  // UGC supplement targets non-Bilibili primary sources (renren/tencent/iqiyi/etc.) where the
-  // official danmaku pool is thin. When the episode already has a Bilibili URL the source itself
-  // provides sufficient danmaku, so supplement is unnecessary — skip it.
+  // Gate logic:
+  //   Non-Bilibili primary source (renren/tencent/iqiyi…) — always supplement via
+  //   candidate-as-reference: pick the top-danmaku Bilibili UGC candidate as audio anchor.
+  //   Bilibili primary source — supplement only when the pool is thin (e.g. childhood anime
+  //   with few comments). Use the Bilibili URL as the precise audio reference so alignment
+  //   is exact; when the pool is already rich, supplementing adds little and wastes budget.
+  const UGC_THIN_THRESHOLD = 1000; // bilibili episodes below this count are considered thin
   const parts = String(url).split(MERGE_DELIMITER);
-  const hasBilibiliSource = parts.map(p => p.replace(/^bilibili:/, '')).some(p => /^https:\/\/www\.bilibili\.com\/(video\/BV|bangumi\/play\/ep)/.test(p));
-  if (hasBilibiliSource) return comments;
-  // No bilibili URL: proceed with candidate-as-reference mode (referenceUrl stays as-is from
-  // buildUgcContext, pointing to the non-bilibili episode URL; the ugc engine will pick the
-  // best bilibili candidate as the audio anchor).
+  const ref = parts.map(p => p.replace(/^bilibili:/, '')).find(p => /^https:\/\/www\.bilibili\.com\/(video\/BV|bangumi\/play\/ep)/.test(p));
+  if (ref) {
+    // Bilibili primary source: skip if pool is already rich.
+    if (comments.length >= UGC_THIN_THRESHOLD) return comments;
+    // Thin Bilibili pool (e.g. classic/childhood anime): use the Bilibili URL as reference
+    // so the audio alignment is precise against the known episode.
+    context.referenceUrl = ref;
+    log('info', `[ugc] bilibili source thin (${comments.length} < ${UGC_THIN_THRESHOLD}), supplementing`);
+  }
+  // Non-Bilibili source: referenceUrl stays as-is from buildUgcContext; the ugc engine
+  // picks the best Bilibili UGC candidate as the audio anchor (candidate-as-reference).
   try {
     const augmented = await ugcSupplement.supplement(context, comments, { budgetMs: globals.bilibiliUgcBudgetMs });
     // Apply the existing blocked-word/format policy to additions only; original
@@ -2664,6 +2674,7 @@ async function supplementUgcForEpisode(commentId, url, comments, segmentFlag) {
     return [...comments, ...convertToDanmakuJson(additions, 'bilibili')].sort((a,b) => parseFloat(a.p) - parseFloat(b.p));
   } catch (e) { log('warn', `[ugc] supplemental failure: ${e.message}`); return comments; }
 }
+
 
 async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, includeDuration) {
   const commentId = parseInt(path.split("/").pop());
