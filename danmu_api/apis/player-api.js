@@ -2644,10 +2644,11 @@ async function supplementUgcForEpisode(commentId, url, comments, segmentFlag) {
   // Preserve existing user-selected timing. Do not align UGC against an unshifted video
   // and then silently mix it with manually shifted original comments.
   if (globals.danmuOffsetRules?.length || String(url).split(MERGE_DELIMITER).some(p => stripLinkOffset(p).offset)) return comments;
+  // Prefer an explicit Bilibili URL as reference; if unavailable (e.g. renren/tencent/iqiyi
+  // primary source), omit referenceUrl and let the UGC engine pick the best candidate as anchor.
   const parts = String(url).split(MERGE_DELIMITER);
   const ref = parts.map(p => p.replace(/^bilibili:/, '')).find(p => /^https:\/\/www\.bilibili\.com\/(video\/BV|bangumi\/play\/ep)/.test(p));
-  if (!ref) return comments;
-  context.referenceUrl = ref;
+  if (ref) context.referenceUrl = ref;
   try {
     const augmented = await ugcSupplement.supplement(context, comments, { budgetMs: globals.bilibiliUgcBudgetMs });
     // Apply the existing blocked-word/format policy to additions only; original

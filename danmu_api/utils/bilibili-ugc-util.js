@@ -164,12 +164,42 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
         result.candidates.push(...selectUgcPages(context, view.data || {}));
       } catch (e) { result.failures.push({ bvid: v.bvid, reason: e.message }); }
     }
-    let reference;
-    try { reference = await audioInfo(context.referenceUrl); }
-    catch (e) { result.failures.push({ reason: e.message }); return result; }
+    // Determine reference: prefer an explicit Bilibili URL; otherwise use the UGC candidate
+    // with the most danmaku as the audio anchor (candidate-as-reference mode).
+    const isBilibiliRef = /^https:\/\/www\.bilibili\.com\/(video\/BV|bangumi\/play\/ep)/.test(String(context.referenceUrl || ''));
+    let reference, referenceIsCandidate = false, referenceCandidate = null;
+    if (isBilibiliRef) {
+      try { reference = await audioInfo(context.referenceUrl); }
+      catch (e) { result.failures.push({ reason: e.message }); return result; }
+    } else {
+      // Pick the candidate with the most danmaku comments as the reference anchor.
+      const sorted = result.candidates.slice().sort((a, b) => (b.searchCount || 0) - (a.searchCount || 0));
+      for (const c of sorted.slice(0, 3)) {
+        signal?.throwIfAborted();
+        try {
+          reference = await audioInfo(c.url);
+          referenceIsCandidate = true;
+          referenceCandidate = c;
+          log('info', `[ugc] candidate-as-reference: ${c.url} (danmaku=${c.searchCount})`);
+          break;
+        } catch (e) { result.failures.push({ bvid: c.bvid, reason: `ref-${e.message}` }); }
+      }
+      if (!reference) { result.failures.push({ reason: 'no-bilibili-reference' }); return result; }
+    }
     const duration = Math.min(reference.duration, rangeSeconds ?? reference.duration);
     if (!(duration > 0)) return result;
     const ref = await audio(reference.urls, { seconds: duration, signal });
+    // When in candidate-as-reference mode, the anchor's own comments serve as base set.
+    if (referenceIsCandidate && referenceCandidate) {
+      try {
+        const raw = await source.getEpisodeDanmu(referenceCandidate.url);
+        const comments = source.formatComments(raw);
+        referenceCandidate.fetchedCount = comments.length;
+        if (comments.length) {
+          result.accepted.push({ cid: referenceCandidate.cid, comments, timeline: { status: 'verified', offsetSeconds: 0, validRange: [0, duration] } });
+        }
+      } catch (e) { result.failures.push({ bvid: referenceCandidate.bvid, reason: `ref-danmu-${e.message}` }); }
+    }
     for (const c of result.candidates.filter(c => c.cid !== reference.cid).slice(0, maxCandidates)) {
       if (signal?.aborted) break;
       try {
@@ -185,6 +215,7 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
     }
     return result;
   }
+
   async function supplement(context, base, options = {}) {
     const key = JSON.stringify(['ugc-v1', context, options.rangeSeconds ?? null, options.maxCandidates ?? 8]);
     const entry = cache.get(key);

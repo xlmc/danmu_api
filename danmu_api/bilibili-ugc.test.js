@@ -109,3 +109,34 @@ test('handleConfig exposes BILIBILI_UGC_ENABLED and defaults budget to 10s witho
   assert(!danmuVars.some(v => v.key === 'BILIBILI_UGC_BUDGET_MS'));
   assert.equal(Globals.envs.bilibiliUgcBudgetMs, 10000);
 });
+test('candidate-as-reference: non-bilibili primary source uses top-danmaku candidate as anchor', async () => {
+  // Simulate a tencent/renren primary source where referenceUrl is NOT a Bilibili URL.
+  const nonBiliContext = { ...context, referenceUrl: 'https://v.qq.com/x/cover/abc/episode.html' };
+  const dep = dependencies();
+  // The search returns a candidate with searchCount; it becomes the anchor.
+  dep.json = async url => {
+    if (url.includes('/search/type')) return { code: 0, data: { result: [{ bvid: 'BVcandidate', title: '测试作品 第2季 第5集', video_review: 10, stat: { danmaku: 500 } }] } };
+    if (url.includes('/view?bvid=BVcandidate')) return { code: 0, data: { bvid: 'BVcandidate', aid: 9, title: '测试作品 第2季 第5集', pages: [{ cid: 55, page: 1, part: '正片', duration: 40 }] } };
+    if (url.includes('/playurl')) return { code: 0, data: { dash: { audio: [{ baseUrl: 'https://media.test/audio', bandwidth: 1 }] } } };
+    return { code: 0, data: {} };
+  };
+  const service = createUgcSupplement(dep);
+  const base = [{ p: '1,1,25,0', m: '原有' }];
+  const result = await service.supplement(nonBiliContext, base);
+  // Anchor candidate's comments are included (offsetSeconds=0), plus any cross-aligned extras.
+  assert.ok(result.length >= 1, 'should include at least the anchor candidate comments');
+  assert.ok(result.some(c => c.m === '原有' || c.m === '一条也可用'), 'original or UGC comments included');
+});
+
+test('candidate-as-reference: no candidates means no supplement', async () => {
+  const nonBiliContext = { ...context, referenceUrl: 'https://v.qq.com/x/cover/abc/episode.html' };
+  const dep = dependencies();
+  dep.json = async url => {
+    if (url.includes('/search/type')) return { code: 0, data: { result: [] } };
+    return { code: 0, data: {} };
+  };
+  const service = createUgcSupplement(dep);
+  const base = [{ p: '1,1,25,0', m: '原有' }];
+  assert.strictEqual(await service.supplement(nonBiliContext, base), base);
+});
+

@@ -341,10 +341,6 @@ export async function getDomesticPersonMetadataForTitle(title) {
       if (!candidate) {
         log('warn', `[system] [tmdb] 未找到可靠的 TMDB 作品匹配，继续独立校验补充来源: ${title}`);
       }
-      if (candidate && !isDomesticTmdbProduction(candidate)) {
-        log('info', `[system] [tmdb] 「${title}」未识别为国产/港台作品，跳过国内明星屏蔽`);
-        return emptyPersonMetadata('not-domestic');
-      }
 
       const creditsPath = candidate?.media_type === 'tv' ? 'aggregate_credits' : 'credits';
       const isAnimation = candidate?.genre_ids?.includes(16) || candidate?.genres?.some(genre => genre.id === 16)
