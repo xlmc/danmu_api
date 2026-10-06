@@ -39,6 +39,19 @@ export async function resolveTmdbMatchIdentity({ title, year = null, season = nu
   };
 }
 
+function annualVariety(anime, identity) {
+  if (!/综艺|variety/i.test([anime.type, anime.typeDescription, anime.animeTitle].join(' '))) return null;
+  const title = String(anime.animeTitle || '').replace(/\s*from\s+.+$/i, '').replace(/【[^】]*】/g, '').replace(/[（(](?:19|20)\d{2}[）)]/g, '').trim();
+  const match = title.match(/^(.*?)[\s._-]*((?:19|20)\d{2})$/);
+  if (!match || !identity.aliases?.some(alias => normalize(alias) === normalize(match[1]))) return null;
+  const year = Number(match[2]);
+  const startYear = yearOf(anime.startDate);
+  if (startYear && startYear !== year) return null;
+  const seasons = (identity.seasons || []).filter(s => s.season > 0 && s.year === year);
+  if (seasons.length !== 1) return null;
+  return { title: match[1].trim(), year, season: seasons[0].season };
+}
+
 export function filterTmdbMatchCandidates(animes, identity, mapping = null, savedAnimes = []) {
   return animes.filter(anime => {
     const saved = savedAnimes.find(item => item.animeId === anime.animeId && item.source === anime.source && item.bangumiId === anime.bangumiId);
@@ -50,7 +63,9 @@ export function filterTmdbMatchCandidates(animes, identity, mapping = null, save
     if (identity.mediaType === 'tv' && ['movie', '电影'].includes(type)) return false;
     if (identity.mediaType === 'movie' && ['tv', 'tvseries', 'tv_series', '电视剧'].includes(type)) return false;
     const titles = mapping?.targetTitle ? [mapping.targetTitle] : identity.aliases;
-    return titles.some(title => filterMappingTargetCandidates([anime], { targetTitle: title }).length > 0);
+    const annual = !mapping?.targetTitle && annualVariety(anime, identity);
+    const candidate = annual ? { ...anime, animeTitle: annual.title } : anime;
+    return titles.some(title => filterMappingTargetCandidates([candidate], { targetTitle: title }).length > 0);
   });
 }
 
@@ -125,7 +140,8 @@ export function selectTmdbEpisode(animes, metadata, identity, episodesForAnime) 
   const key = varietyKey(metadata.title);
   if (!expectedTitles.length && !(generic && metadata.airDate)) return null;
   for (const anime of filterTmdbMatchCandidates(animes, identity)) {
-    const number = extractSeasonNumberFromAnimeTitle(anime.animeTitle).season ?? 1;
+    const annual = annualVariety(anime, identity);
+    const number = annual?.season ?? extractSeasonNumberFromAnimeTitle(anime.animeTitle).season ?? 1;
     if (number !== metadata.targetSeason) continue;
     const year = Number(String(anime.animeTitle).match(/[（(]((?:19|20)\d{2})[）)]/)?.[1]) ||
       Number(String(anime.startDate || '').slice(0, 4)) || null;

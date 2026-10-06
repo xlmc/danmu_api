@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildUgcContext, buildUgcQueries, selectUgcPages, mergeUgcComments, createUgcSupplement, ugcSupplement } from './utils/bilibili-ugc-util.js';
-import { validateAudioTimeline, validateAudioInWorker } from './utils/ugc-audio-util.js';
 import { Globals } from './configs/globals.js';
 import { addAnime } from './utils/cache-util.js';
 import { getComment } from './apis/player-api.js';
@@ -39,30 +38,15 @@ test('overlay offsets and clipping preserve original comments and within-CID mul
   assert.deepEqual(base, before); assert.deepEqual(rows.map(c => c.m), ['重复', '重复', '新增']); assert.equal(parseFloat(rows.at(-1).p), 2);
   assert.deepEqual(mergeUgcComments(base, [{ cid: 9, comments, timeline: { status: 'pending' } }]), base);
 });
-function sound(seconds) {
-  const sr = 2000, a = new Float32Array(sr * seconds); let seed = 7;
-  for (let i = 0; i < a.length; i++) { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; const t = i / sr; a[i] = .2 * Math.sin(2 * Math.PI * (130 * t + 6 * t * t)) + .3 * Math.sin(2 * Math.PI * (440 * t + Math.sin(t * 2))) + (seed / 4294967296 - .5) * (.1 + .3 * Math.sin(t) ** 2); }
-  return a;
-}
-test('continuous audio establishes fixed shift and handles extra tail without time stretching', async () => {
-  const ref = sound(40), candidate = new Float32Array(2000 * 65); candidate.set(ref, 2000 * 5);
-  const result = await validateAudioInWorker(ref, candidate, { duration: 40, maxOffset: 10 });
-  assert.equal(result.status, 'verified'); assert(Math.abs(result.offsetSeconds - 5) < .001); assert.deepEqual(result.validRange, [0, 40]);
-});
-test('cut content, short candidates and silence never get verified', () => {
-  const ref = sound(40), cut = new Float32Array(ref.length - 4000); cut.set(ref.subarray(0, 40000)); cut.set(ref.subarray(44000), 40000);
-  for (const candidate of [cut, ref.subarray(0, 20000), new Float32Array(ref.length)]) assert.notEqual(validateAudioTimeline(ref, candidate, { duration: 40, maxOffset: 10 }).status, 'verified');
-  assert.notEqual(validateAudioTimeline(new Float32Array(80000), new Float32Array(80000), { duration: 40 }).status, 'verified');
-});
-function dependencies({ fail = false, verdict = 'verified' } = {}) {
+function dependencies({ fail = false } = {}) {
   const source = { _getWbiMixinKey: async () => 'key', _getWbiSignedParams: p => p, getEpisodeDanmu: async () => [{ p: '5,1,25,0', m: '一条也可用' }], formatComments: x => x };
   const json = async url => {
     if (fail) throw Error('network unavailable');
     if (url.includes('/search/type')) return { code: 0, data: { result: [{ bvid: 'BVcandidate', title: '测试作品 第2季 第5集', video_review: 0 }] } };
     if (url.includes('/view?')) return { code: 0, data: url.includes('BVreference') ? video('参考', [{ cid: 77, page: 1, part: '参考', duration: 40 }]) : video('测试作品 第2季 第5集') };
-    return { code: 0, data: { dash: { audio: [{ baseUrl: 'https://media.test/audio', bandwidth: 1 }] } } };
+    throw Error('Forbidden request: ' + url);
   };
-  return { source, json, audio: async () => sound(40), validate: () => ({ status: verdict, offsetSeconds: 0, validRange: [0, 40] }) };
+  return { source, json };
 }
 test('search-to-CID-to-comments works even with zero reported count and caches separately', async () => {
   const service = createUgcSupplement(dependencies()), base = [{ p: '1,1,25,0', m: '原有' }];
@@ -70,9 +54,9 @@ test('search-to-CID-to-comments works even with zero reported count and caches s
   assert.equal(result.length, 2); assert.equal(result[1].m, '一条也可用'); assert.deepEqual(context, before);
   assert.deepEqual(await service.supplement(context, base), result);
 });
-test('network errors, pending timeline and bounded timeout return original comments', async () => {
+test('network errors and bounded timeout return original comments', async () => {
   const base = [{ p: '1,1,25,0', m: '原有' }];
-  for (const d of [dependencies({ fail: true }), dependencies({ verdict: 'pending' }), { ...dependencies(), json: () => new Promise(() => {}) }]) {
+  for (const d of [dependencies({ fail: true }), { ...dependencies(), json: () => new Promise(() => {}) }]) {
     assert.strictEqual(await createUgcSupplement(d).supplement(context, base, { budgetMs: 10 }), base);
   }
 });
@@ -181,31 +165,36 @@ test('candidate-as-reference: non-bilibili primary source uses top-danmaku candi
   assert.ok(result.some(c => c.m === '原有' || c.m === '一条也可用'), 'original or UGC comments included');
 });
 
-test('UGC diagnostics cover successful alignment, correlated final counts and cache reuse', async () => {
+test('UGC metadata-only path never requests media and logs truthful final counts', async () => {
   Globals.init({ LOG_LEVEL: 'info' }); Globals.logBuffer = [];
   try {
-    const service = createUgcSupplement(dependencies()), base = [{ p: '1,1,25,0', m: '原有' }];
+    const deps = dependencies(), requests = [], originalJson = deps.json;
+    deps.json = async url => { requests.push(url); return originalJson(url); };
+    deps.audio = () => { throw Error('Audio must never be downloaded'); };
+    deps.validate = () => { throw Error('Audio validation must never run'); };
+    const service = createUgcSupplement(deps), base = [{ p: '1,1,25,0', m: '原有' }];
     assert.equal((await service.supplement(context, base)).length, 2);
     const rows = Globals.logBuffer.filter(e => e.event?.startsWith('ugc.'));
-    for (const event of ['start', 'search.query', 'search.result', 'candidate.select', 'reference.ready', 'audio.ready', 'candidate.comments', 'alignment.result', 'end']) {
+    for (const event of ['start', 'search.query', 'search.result', 'candidate.select', 'mode', 'candidate.comments', 'candidate.accept', 'end']) {
       assert(rows.some(e => e.event === 'ugc.' + event), event);
     }
     assert.equal(new Set(rows.map(e => e.data.ugcId)).size, 1);
     assert(rows.every(e => e.categories.includes('match') && e.data.title === context.title && e.data.episode === 5));
     const end = rows.find(e => e.event === 'ugc.end');
     assert.equal(end.data.addedCount, 1); assert.equal(end.data.finalCount, 2);
-    assert.equal(rows.find(e => e.event === 'ugc.alignment.result').data.offsetSeconds, 0);
+    assert.equal(rows.find(e => e.event === 'ugc.candidate.accept').data.timelineVerified, false);
+    assert(requests.every(url => url.includes('/search/type') || url.includes('/view?')));
+    assert(!rows.some(e => e.event.startsWith('ugc.audio') || e.event.startsWith('ugc.alignment')));
     await service.supplement(context, base);
     assert(Globals.logBuffer.some(e => e.event === 'ugc.cache' && e.data.cacheState === 'hit'));
   } finally { Globals.init({}); }
 });
 
-test('UGC diagnostics distinguish timeout, network failure, rejected timeline and empty results', async () => {
+test('UGC diagnostics distinguish timeout, network failure and empty results', async () => {
   const base = [{ p: '1,1,25,0', m: '原有' }];
   for (const [deps, expected] of [
     [{ ...dependencies(), json: () => new Promise(() => {}) }, 'timeout'],
     [dependencies({ fail: true }), 'network unavailable'],
-    [dependencies({ verdict: 'pending' }), 'pending'],
     [{ ...dependencies(), json: async () => ({ code: 0, data: { result: [] } }) }, 'empty']
   ]) {
     const events = [], logger = (event, message, data, level) => events.push({ event, data, level });
@@ -214,7 +203,6 @@ test('UGC diagnostics distinguish timeout, network failure, rejected timeline an
     assert.equal(end.data.addedCount, 0); assert.equal(end.data.finalCount, 1);
     if (expected === 'timeout') { assert.equal(end.data.status, 'timeout'); assert.equal(end.level, 'warn'); }
     else if (expected === 'network unavailable') assert(end.data.failures.includes(expected));
-    else if (expected === 'pending') assert(events.some(e => e.event === 'alignment.result' && e.data.status === 'pending'));
     else assert.equal(end.data.candidates, 0);
   }
 });

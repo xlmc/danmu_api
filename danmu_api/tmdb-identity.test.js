@@ -284,6 +284,28 @@ test('unmatched ordinary episode uses TMDB title after default paths fail and re
   assert.deepEqual(result.searches,['示例']);
 });
 
+test('annual variety S06E15 resolves through TMDB to issue 8 upper and returns comments', async () => {
+  const catalog = fixtureAnime('披荆斩棘2026', 2026, 896231, 'variety');
+  catalog.animeTitle = '披荆斩棘2026(2026)【综艺】from tencent';
+  catalog.links[0].title = '【tencent】 第8期上：四公炙热半场';
+  catalog.links[1].title = '【tencent】 第8期下：四公炙热下半场';
+  const tmdb = { results: [{ id: 131040, name: '披荆斩棘', first_air_date: '2021-01-01' }],
+    details: { id: 131040, name: '披荆斩棘', first_air_date: '2021-01-01', seasons: [{ season_number: 5, air_date: '2025-01-01' }, { season_number: 6, air_date: '2026-01-01' }] },
+    episode: { season_number: 6, episode_number: 15, name: '第8期上:四公炙热半场', air_date: '2026-10-02' } };
+  const result = await adaptiveFixture('披荆斩棘 S06E15', () => [catalog], { tmdb });
+  assert.equal(result.data.isMatched, true, JSON.stringify(result.data));
+  assert.match(result.data.matches[0].episodeTitle, /第8期上/);
+  assert.equal(result.comments.comments[0].m, '试用弹幕');
+  for (const changed of [
+    { ...catalog, type: 'tvseries', animeTitle: '披荆斩棘2026(2026)【电视剧】from tencent' },
+    { ...catalog, startDate: '2025-01-01' },
+    { ...catalog, animeTitle: '披荆斩棘2025(2025)【综艺】from tencent', startDate: '2025-01-01' },
+    { ...catalog, links: [catalog.links[1]] }
+  ]) assert.equal((await adaptiveFixture('披荆斩棘 S06E15', () => [changed], { tmdb })).data.isMatched, false);
+  const ambiguous = { ...tmdb, details: { ...tmdb.details, seasons: [...tmdb.details.seasons, { season_number: 7, air_date: '2026-02-01' }] } };
+  assert.equal((await adaptiveFixture('披荆斩棘 S06E15', () => [catalog], { tmdb: ambiguous })).data.isMatched, false);
+});
+
 test('unmatched ordinary variety episode resolves issue and part without using its array index',async()=>{
   const catalog=specialCatalog();catalog.animeTitle=catalog.animeTitle.replace('现在就出发','示例');
   const result=await adaptiveFixture('示例 S04E01',()=>[catalog],{tmdb:ordinaryTmdb(

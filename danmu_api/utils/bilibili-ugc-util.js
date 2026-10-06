@@ -4,7 +4,6 @@ import { httpGet } from './http-util.js';
 import { logEvent } from './log-util.js';
 import { convertChineseNumber, extractAnimeInfo } from './common-util.js';
 import { decodeHtmlEntities } from './codec-util.js';
-import { decodeAudio, validateAudioInWorker } from './ugc-audio-util.js';
 
 const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', Referer: 'https://www.bilibili.com/' };
 const normalize = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]/gu, '');
@@ -100,7 +99,7 @@ export function mergeUgcComments(base, sources) {
   for (const c of output) remember(c, 'base');
   const cids = new Set();
   for (const { cid, comments, timeline } of sources) {
-    if (cids.has(cid) || timeline?.status !== 'verified') continue;
+    if (cids.has(cid) || !['verified', 'metadata-matched'].includes(timeline?.status)) continue;
     cids.add(cid);
     for (const c of comments) {
       let [rawTime, text] = getTimeAndText(c);
@@ -126,30 +125,8 @@ async function getJson(url) {
   return typeof r.data === 'string' ? JSON.parse(r.data) : r.data;
 }
 
-export function createUgcSupplement({ source = new BilibiliSource(), json = getJson, audio = decodeAudio, validate = validateAudioInWorker } = {}) {
+export function createUgcSupplement({ source = new BilibiliSource(), json = getJson } = {}) {
   const cache = new Map(), pending = new Map();
-  async function audioInfo(url) {
-    const u = new URL(url);
-    if (!['www.bilibili.com', 'bilibili.com'].includes(u.hostname)) throw new Error('no-bilibili-reference');
-    const bvid = u.pathname.match(/\/video\/(BV[\w]+)/)?.[1];
-    const epid = u.pathname.match(/\/bangumi\/play\/ep(\d+)/)?.[1];
-    let page, play;
-    if (epid) {
-      const season = await json(`https://api.bilibili.com/pgc/view/web/season?ep_id=${epid}`);
-      const ep = season.result?.episodes?.find(e => String(e.id) === epid);
-      if (!ep) throw new Error('reference-metadata-unavailable');
-      page = { cid: ep.cid, duration: ep.duration / 1000 };
-      play = await json(`https://api.bilibili.com/pgc/player/web/playurl?ep_id=${epid}&qn=16&fnval=16`);
-    } else if (bvid) {
-      const view = await json(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`);
-      page = view.data?.pages?.find(p => p.page === Number(u.searchParams.get('p') || 1));
-      if (!page) throw new Error('reference-metadata-unavailable');
-      play = await json(`https://api.bilibili.com/x/player/playurl?bvid=${bvid}&cid=${page.cid}&qn=16&fnval=16`);
-    } else throw new Error('no-bilibili-reference');
-    const track = (play.result || play.data)?.dash?.audio?.sort((a, b) => a.bandwidth - b.bandwidth)[0];
-    if (play.code !== 0 || !track || !(page.duration > 0)) throw new Error('reference-audio-unavailable');
-    return { ...page, urls: [track.baseUrl || track.base_url, ...(track.backupUrl || track.backup_url || [])].filter(Boolean) };
-  }
   async function resolve(context, { signal, maxCandidates = 8, rangeSeconds, logger = createUgcLogger(context) } = {}) {
     const result = { candidates: [], accepted: [], failures: [] };
     logger('search.start', '开始检索投稿', { maxCandidates });
@@ -192,90 +169,34 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
       }
     }
     logger('candidates.ready', '可用分P候选 ' + result.candidates.length + ' 个', { count: result.candidates.length });
-    const isBilibiliRef = /^https:\/\/www\.bilibili\.com\/(video\/BV|bangumi\/play\/ep)/.test(String(context.referenceUrl || ''));
-    let reference, referenceIsCandidate = false, referenceCandidate = null;
-    if (isBilibiliRef) {
-      logger('reference.start', '使用当前B站集作为音频参考', { mode: 'primary' });
-      try { reference = await audioInfo(context.referenceUrl); }
-      catch (e) {
-        result.failures.push({ reason: e.message });
-        logger('reference.failure', '当前集音频参考不可用：' + e.message, { reason: e.message }, 'warn');
-        return result;
-      }
-    } else {
-      const sorted = result.candidates.slice().sort((a, b) => (b.searchCount || 0) - (a.searchCount || 0));
-      for (const c of sorted.slice(0, 3)) {
-        signal?.throwIfAborted();
-        try {
-          logger('reference.start', '尝试UGC候选作为音频参考：' + c.bvid, { mode: 'candidate', bvid: c.bvid, cid: c.cid });
-          reference = await audioInfo(c.url);
-          referenceIsCandidate = true;
-          referenceCandidate = c;
-          break;
-        } catch (e) {
-          result.failures.push({ bvid: c.bvid, reason: 'ref-' + e.message });
-          logger('reference.failure', '候选音频参考不可用：' + c.bvid + '，' + e.message, { bvid: c.bvid, reason: e.message }, 'warn');
-        }
-      }
-      if (!reference) {
-        result.failures.push({ reason: 'no-bilibili-reference' });
-        logger('reference.failure', '没有可用的B站音频参考，保留原弹幕', { reason: 'no-bilibili-reference' }, 'warn');
-        return result;
-      }
-    }
-    const duration = Math.min(reference.duration, rangeSeconds ?? reference.duration);
-    if (!(duration > 0)) {
-      logger('reference.failure', '音频参考时长无效', { reason: 'invalid-duration', duration }, 'warn');
-      return result;
-    }
-    logger('reference.ready', '音频参考就绪，CID=' + reference.cid + '，时长=' + duration + '秒',
-      { mode: referenceIsCandidate ? 'candidate' : 'primary', cid: reference.cid, duration });
-    logger('audio.start', '开始下载并解码参考音频', { cid: reference.cid, duration });
-    const ref = await audio(reference.urls, { seconds: duration, signal });
-    logger('audio.ready', '参考音频解码完成', { cid: reference.cid });
-    if (referenceIsCandidate && referenceCandidate) {
-      try {
-        const raw = await source.getEpisodeDanmu(referenceCandidate.url);
-        const comments = source.formatComments(raw);
-        referenceCandidate.fetchedCount = comments.length;
-        logger('candidate.comments', '参考候选取得 ' + comments.length + ' 条弹幕', { bvid: referenceCandidate.bvid, cid: referenceCandidate.cid, count: comments.length });
-        if (comments.length) {
-          result.accepted.push({ cid: referenceCandidate.cid, comments, timeline: { status: 'verified', offsetSeconds: 0, validRange: [0, duration] } });
-          logger('candidate.anchor', '接受UGC参考候选弹幕，参考轴偏移=0秒', { cid: referenceCandidate.cid, offsetSeconds: 0, validRange: [0, duration], mode: 'candidate-anchor' });
-        }
-      } catch (e) {
-        result.failures.push({ bvid: referenceCandidate.bvid, reason: 'ref-danmu-' + e.message });
-        logger('candidate.failure', '参考候选弹幕获取失败：' + e.message, { bvid: referenceCandidate.bvid, reason: e.message }, 'warn');
-      }
-    }
-    const others = result.candidates.filter(c => c.cid !== reference.cid);
-    logger('alignment.start', '准备校验 ' + Math.min(others.length, maxCandidates) + ' 个候选时间轴', { count: others.length, limit: maxCandidates });
-    for (const c of others.slice(0, maxCandidates)) {
+    logger('mode', '仅匹配投稿元数据并获取弹幕，不请求音视频；时间轴未经音频校验', { mode: 'metadata-only', timelineVerified: false });
+    const selected = result.candidates.slice(0, maxCandidates), seen = new Set();
+    for (const c of selected) {
       if (signal?.aborted) break;
+      if (seen.has(c.cid)) continue;
+      seen.add(c.cid);
       const started = performance.now();
       try {
-        logger('candidate.fetch', '下载候选弹幕：' + c.bvid + ' P' + c.page, { bvid: c.bvid, cid: c.cid });
+        logger('candidate.fetch', '获取候选弹幕：' + c.bvid + ' P' + c.page, { bvid: c.bvid, cid: c.cid });
         const raw = await source.getEpisodeDanmu(c.url), comments = source.formatComments(raw);
+        signal?.throwIfAborted();
         c.fetchedCount = comments.length;
         logger('candidate.comments', '候选取得 ' + comments.length + ' 条弹幕', { bvid: c.bvid, cid: c.cid, count: comments.length });
         if (!comments.length) {
           c.timeline = { status: 'pending', reason: 'no-comments' };
-          logger('candidate.reject', '候选没有弹幕，跳过时间轴校验', { bvid: c.bvid, cid: c.cid, reason: 'no-comments' });
+          logger('candidate.reject', '候选没有弹幕', { bvid: c.bvid, cid: c.cid, reason: 'no-comments' });
           continue;
         }
-        logger('audio.start', '下载并解码候选音频：' + c.bvid, { bvid: c.bvid, cid: c.cid });
-        const info = await audioInfo(c.url);
-        const samples = await audio(info.urls, { seconds: duration + 121, signal });
-        logger('alignment.check', '开始音频时间轴校验：' + c.bvid, { bvid: c.bvid, cid: c.cid });
-        const timeline = await validate(ref, samples, { duration, signal }); c.timeline = timeline;
-        signal?.throwIfAborted();
-        logger('alignment.result', '候选时间轴状态=' + timeline.status + '，偏移=' + (timeline.offsetSeconds ?? '?') + '秒，原因=' + (timeline.reason || '无'),
-          { bvid: c.bvid, cid: c.cid, status: timeline.status, reason: timeline.reason, offsetSeconds: timeline.offsetSeconds, validRange: timeline.validRange, durationMs: Math.round(performance.now() - started) });
-        if (timeline.status === 'verified') result.accepted.push({ cid: c.cid, comments, timeline });
+        const duration = Math.min(c.duration, rangeSeconds ?? c.duration);
+        c.timeline = { status: 'metadata-matched', offsetSeconds: 0, validRange: [0, duration] };
+        result.accepted.push({ cid: c.cid, comments, timeline: c.timeline });
+        logger('candidate.accept', '候选身份匹配，保留原始弹幕时间戳；时间轴未经音频校验',
+          { bvid: c.bvid, cid: c.cid, status: 'metadata-matched', timelineVerified: false, offsetSeconds: 0, validRange: [0, duration], durationMs: Math.round(performance.now() - started) });
       } catch (e) {
-        c.timeline = { status: 'pending', reason: e.message };
-        logger('candidate.failure', '候选处理失败：' + c.bvid + '，' + e.message,
-          { bvid: c.bvid, cid: c.cid, reason: signal?.aborted ? 'timeout' : e.message, durationMs: Math.round(performance.now() - started) }, 'warn');
+        const reason = signal?.aborted ? 'timeout' : e.message;
+        c.timeline = { status: 'pending', reason };
+        result.failures.push({ bvid: c.bvid, reason });
+        logger('candidate.failure', '候选弹幕获取失败：' + c.bvid + '，' + reason, { bvid: c.bvid, cid: c.cid, reason }, 'warn');
         if (signal?.aborted) break;
       }
     }
@@ -287,7 +208,7 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
     const started = performance.now(), logger = options.logger || createUgcLogger(context);
     const budgetMs = options.budgetMs ?? 10000;
     logger('start', '开始UGC补充，原弹幕 ' + base.length + ' 条，预算 ' + budgetMs + 'ms', { originalCount: base.length, budgetMs });
-    const key = JSON.stringify(['ugc-v1', context, options.rangeSeconds ?? null, options.maxCandidates ?? 8]);
+    const key = JSON.stringify(['ugc-metadata-v2', context, options.rangeSeconds ?? null, options.maxCandidates ?? 8]);
     const entry = cache.get(key);
     let result, cacheState = 'miss';
     if (entry && entry.expires > Date.now()) {
