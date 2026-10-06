@@ -81,7 +81,7 @@ test('episode context inherits existing metadata and does not invent a season', 
   assert.equal(buildUgcContext(resolved).episode, 5); assert.equal(buildUgcContext(resolved).season, null); assert.equal(buildUgcContext(null), null);
 });
 test('ugc gate: bilibili thin triggers supplement; bilibili rich skips; non-bilibili always supplements', async () => {
-  Globals.init({ BILIBILI_UGC_ENABLED: 'true', BLOCK_DOMESTIC_CELEBRITIES: 'false', LOG_LEVEL: 'error', REMEMBER_LAST_SELECT: 'false' });
+  Globals.init({ BILIBILI_UGC_ENABLED: 'true', BLOCK_DOMESTIC_CELEBRITIES: 'false', LOG_LEVEL: 'info', REMEMBER_LAST_SELECT: 'false' });
   Globals.animes = []; Globals.episodeIds = []; Globals.commentCache = new Map(); Globals.searchCache = new Map();
   let calls = 0;
   const originalSupplement = ugcSupplement.supplement;
@@ -99,6 +99,7 @@ test('ugc gate: bilibili thin triggers supplement; bilibili rich skips; non-bili
     const r = await getComment(`/api/v2/comment/${biliCommentId}`, 'json', false, '127.0.0.1');
     assert.equal((await r.json()).count, 1000, 'bilibili rich: ugc skipped, count stays 1000');
     assert.equal(calls, 0, 'bilibili rich: supplement not called');
+    assert(Globals.logBuffer.some(e => e.event === 'ugc.skip' && e.data.reason === 'sufficient-comments'));
   } finally { biliSource.getComments = originalBiliComments; }
 
   // 2. Bilibili primary source, thin pool (<1000, e.g. childhood anime) → UGC runs
@@ -112,6 +113,9 @@ test('ugc gate: bilibili thin triggers supplement; bilibili rich skips; non-bili
     const r = await getComment(`/api/v2/comment/${biliCommentId2}`, 'json', false, '127.0.0.1');
     assert.equal((await r.json()).count, 1000, 'bilibili thin: 999 comments triggers ugc supplement');
     assert.equal(calls, 1, 'bilibili thin: supplement called once');
+    assert(Globals.logBuffer.some(e => e.event === 'ugc.trigger' && e.data.reason === 'thin-bilibili'));
+    assert(Globals.logBuffer.some(e => e.event === 'ugc.return' && e.data.addedCount === 1 && e.data.finalCount === 1000));
+    assert(Globals.logBuffer.some(e => e.event === 'ugc.response' && e.data.addedCount === 1 && e.data.finalCount === 1000));
   } finally { biliSource2.getComments = orig2; }
 
   // 3. Non-bilibili primary source (tencent) → UGC always runs
@@ -127,9 +131,15 @@ test('ugc gate: bilibili thin triggers supplement; bilibili rich skips; non-bili
     const r = await getComment(`/api/v2/comment/${nonBiliCommentId}`, 'json', false, '127.0.0.1');
     assert.equal((await r.json()).count, 2, 'non-bilibili: ugc supplements, count=2');
     assert.equal(calls, 1, 'non-bilibili: supplement called once');
+    Globals.envs.blockedWords = '补充'; Globals.commentCache = new Map();
+    assert.equal((await (await getComment(`/api/v2/comment/${nonBiliCommentId}`, 'json', false, '127.0.0.1')).json()).count, 1);
+    const filteredResponse = Globals.logBuffer.filter(e => e.event === 'ugc.response').at(-1);
+    assert.equal(filteredResponse.data.addedCount, 0); assert.equal(filteredResponse.data.finalCount, 1);
+    Globals.envs.blockedWords = '';
     Globals.commentCache = new Map();
     Globals.envs.bilibiliUgcEnabled = false;
     assert.equal((await (await getComment(`/api/v2/comment/${nonBiliCommentId}`, 'json', false, '127.0.0.1')).json()).count, 1, 'disabled: count=1');
+    assert(Globals.logBuffer.some(e => e.event === 'ugc.skip' && e.data.reason === 'disabled'));
   } finally {
     tencent.getComments = originalTencentComments;
     ugcSupplement.supplement = originalSupplement;
@@ -169,6 +179,68 @@ test('candidate-as-reference: non-bilibili primary source uses top-danmaku candi
   // Anchor candidate's comments are included (offsetSeconds=0), plus any cross-aligned extras.
   assert.ok(result.length >= 1, 'should include at least the anchor candidate comments');
   assert.ok(result.some(c => c.m === '原有' || c.m === '一条也可用'), 'original or UGC comments included');
+});
+
+test('UGC diagnostics cover successful alignment, correlated final counts and cache reuse', async () => {
+  Globals.init({ LOG_LEVEL: 'info' }); Globals.logBuffer = [];
+  try {
+    const service = createUgcSupplement(dependencies()), base = [{ p: '1,1,25,0', m: '原有' }];
+    assert.equal((await service.supplement(context, base)).length, 2);
+    const rows = Globals.logBuffer.filter(e => e.event?.startsWith('ugc.'));
+    for (const event of ['start', 'search.query', 'search.result', 'candidate.select', 'reference.ready', 'audio.ready', 'candidate.comments', 'alignment.result', 'end']) {
+      assert(rows.some(e => e.event === 'ugc.' + event), event);
+    }
+    assert.equal(new Set(rows.map(e => e.data.ugcId)).size, 1);
+    assert(rows.every(e => e.categories.includes('match') && e.data.title === context.title && e.data.episode === 5));
+    const end = rows.find(e => e.event === 'ugc.end');
+    assert.equal(end.data.addedCount, 1); assert.equal(end.data.finalCount, 2);
+    assert.equal(rows.find(e => e.event === 'ugc.alignment.result').data.offsetSeconds, 0);
+    await service.supplement(context, base);
+    assert(Globals.logBuffer.some(e => e.event === 'ugc.cache' && e.data.cacheState === 'hit'));
+  } finally { Globals.init({}); }
+});
+
+test('UGC diagnostics distinguish timeout, network failure, rejected timeline and empty results', async () => {
+  const base = [{ p: '1,1,25,0', m: '原有' }];
+  for (const [deps, expected] of [
+    [{ ...dependencies(), json: () => new Promise(() => {}) }, 'timeout'],
+    [dependencies({ fail: true }), 'network unavailable'],
+    [dependencies({ verdict: 'pending' }), 'pending'],
+    [{ ...dependencies(), json: async () => ({ code: 0, data: { result: [] } }) }, 'empty']
+  ]) {
+    const events = [], logger = (event, message, data, level) => events.push({ event, data, level });
+    assert.strictEqual(await createUgcSupplement(deps).supplement(context, base, { budgetMs: 50, logger }), base);
+    const end = events.find(e => e.event === 'end');
+    assert.equal(end.data.addedCount, 0); assert.equal(end.data.finalCount, 1);
+    if (expected === 'timeout') { assert.equal(end.data.status, 'timeout'); assert.equal(end.level, 'warn'); }
+    else if (expected === 'network unavailable') assert(end.data.failures.includes(expected));
+    else if (expected === 'pending') assert(events.some(e => e.event === 'alignment.result' && e.data.status === 'pending'));
+    else assert.equal(end.data.candidates, 0);
+  }
+});
+
+test('UGC pending task logs point to shared workflow and avoid repeating search', async () => {
+  const deps = dependencies(), originalJson = deps.json;
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  deps.json = async url => { await held; return originalJson(url); };
+  const events = [], logger = (event, message, data) => events.push({ event, data });
+  logger.ugcId = 'shared-test';
+  const service = createUgcSupplement(deps), base = [];
+  const first = service.supplement(context, base, { logger });
+  const second = service.supplement(context, base, { logger });
+  release();
+  assert.deepEqual(await first, await second);
+  assert.equal(events.filter(e => e.event === 'search.start').length, 1);
+  assert(events.some(e => e.event === 'cache' && e.data.cacheState === 'pending' && e.data.sharedUgcId === 'shared-test'));
+});
+
+test('UGC diagnostics explain rejected candidate identities', () => {
+  for (const [title, reason] of [['另一作品 第5集', 'title-mismatch'], ['测试作品 第1季 第5集', 'season-mismatch'], ['测试作品 2021年 第5集', 'year-mismatch'], ['测试作品 第2季 第4集', 'episode-unconfirmed-or-mismatch']]) {
+    const reasons = [];
+    assert.equal(selectUgcPages(context, video(title), reason => reasons.push(reason)).length, 0);
+    assert(reasons.includes(reason), title);
+  }
 });
 
 test('candidate-as-reference: no candidates means no supplement', async () => {

@@ -4,7 +4,7 @@ import { canonicalPlatformName } from '../utils/platform-util.js';
 import { runWithMatchTrace, traceMatchStep, getMatchTracePrefix } from '../utils/match-trace-util.js';
 import { globals } from '../configs/globals.js';
 import { runWithCommentTransform } from '../utils/comment-context.js';
-import { buildUgcContext, ugcSupplement } from '../utils/bilibili-ugc-util.js';
+import { buildUgcContext, createUgcLogger, ugcSupplement } from '../utils/bilibili-ugc-util.js';
 import { getPageTitle, jsonResponse, httpGet, sourceLogContext, runWithHttpCache, httpCacheContext } from '../utils/http-util.js';
 import { log } from '../utils/log-util.js'
 import { logEvent } from '../utils/log-util.js';
@@ -2637,44 +2637,60 @@ export function getComment(path, queryFormat, segmentFlag, clientIp, includeDura
   return runWithCommentTransform(() => getCommentResponse(path, queryFormat, segmentFlag, clientIp, includeDuration));
 }
 
-async function supplementUgcForEpisode(commentId, url, comments, segmentFlag) {
-  if (!globals.bilibiliUgcEnabled || segmentFlag || !Array.isArray(comments)) return comments;
+async function supplementUgcForEpisode(commentId, url, comments, segmentFlag, suppliedLogger = null) {
   const context = buildUgcContext(resolveEpisodeContextById(commentId));
-  if (!context) return comments;
-  // Preserve existing user-selected timing. Do not align UGC against an unshifted video
-  // and then silently mix it with manually shifted original comments.
-  if (globals.danmuOffsetRules?.length || String(url).split(MERGE_DELIMITER).some(p => stripLinkOffset(p).offset)) return comments;
-  // Gate logic:
-  //   Non-Bilibili primary source (renren/tencent/iqiyi…) — always supplement via
-  //   candidate-as-reference: pick the top-danmaku Bilibili UGC candidate as audio anchor.
-  //   Bilibili primary source — supplement only when the pool is thin (e.g. childhood anime
-  //   with few comments). Use the Bilibili URL as the precise audio reference so alignment
-  //   is exact; when the pool is already rich, supplementing adds little and wastes budget.
-  const UGC_THIN_THRESHOLD = 1000; // bilibili episodes below this count are considered thin
+  const logger = suppliedLogger || createUgcLogger(context || { title: findAnimeTitleById(commentId) });
+  const skip = reason => {
+    logger('skip', '跳过UGC补充，原因=' + reason, { commentId, reason, originalCount: Array.isArray(comments) ? comments.length : null });
+    return comments;
+  };
+  if (!globals.bilibiliUgcEnabled) return skip('disabled');
+  if (segmentFlag) return skip('segment-request');
+  if (!Array.isArray(comments)) return skip('invalid-comments');
+  if (!context) return skip('missing-episode-context');
+  // Preserve user-selected timing rather than mix aligned UGC with shifted originals.
+  if (globals.danmuOffsetRules?.length || String(url).split(MERGE_DELIMITER).some(p => stripLinkOffset(p).offset)) return skip('manual-offset');
+  const UGC_THIN_THRESHOLD = 1000;
   const parts = String(url).split(MERGE_DELIMITER);
   const ref = parts.map(p => p.replace(/^bilibili:/, '')).find(p => /^https:\/\/www\.bilibili\.com\/(video\/BV|bangumi\/play\/ep)/.test(p));
   if (ref) {
-    // Bilibili primary source: skip if pool is already rich.
-    if (comments.length >= UGC_THIN_THRESHOLD) return comments;
-    // Thin Bilibili pool (e.g. classic/childhood anime): use the Bilibili URL as reference
-    // so the audio alignment is precise against the known episode.
+    if (comments.length >= UGC_THIN_THRESHOLD) return skip('sufficient-comments');
     context.referenceUrl = ref;
-    log('info', `[ugc] bilibili source thin (${comments.length} < ${UGC_THIN_THRESHOLD}), supplementing`);
   }
-  // Non-Bilibili source: referenceUrl stays as-is from buildUgcContext; the ugc engine
-  // picks the best Bilibili UGC candidate as the audio anchor (candidate-as-reference).
+  logger('trigger', ref ? 'B站单集弹幕不足1000条，触发UGC补充' : '非B站主源，触发UGC补充',
+    { commentId, reason: ref ? 'thin-bilibili' : 'non-bilibili', originalCount: comments.length, threshold: UGC_THIN_THRESHOLD, referenceMode: ref ? 'primary' : 'candidate' });
+  const started = performance.now();
   try {
-    const augmented = await ugcSupplement.supplement(context, comments, { budgetMs: globals.bilibiliUgcBudgetMs });
-    // Apply the existing blocked-word/format policy to additions only; original
-    // comments have already passed their own source pipeline.
+    const augmented = await ugcSupplement.supplement(context, comments, { budgetMs: globals.bilibiliUgcBudgetMs, logger });
     const original = new Set(comments);
+    const originalKeys = new Set(comments.map(c => c.p + '\u0000' + c.m));
+    const additions = augmented === comments ? [] : augmented.filter(c => !original.has(c) && !originalKeys.has(c.p + '\u0000' + c.m));
+    const filtered = convertToDanmakuJson(additions, 'bilibili');
+    logger('return', 'UGC合并结果（人物过滤前）：原弹幕 ' + comments.length + ' 条，实际新增 ' + filtered.length + ' 条，最终 ' + (comments.length + filtered.length) + ' 条，耗时 ' + Math.round(performance.now() - started) + 'ms',
+      { commentId, originalCount: comments.length, mergedAddedCount: additions.length, filteredCount: additions.length - filtered.length, addedCount: filtered.length, finalCount: comments.length + filtered.length, durationMs: Math.round(performance.now() - started) });
     if (augmented === comments) return comments;
-    const originalKeys = new Set(comments.map(c => `${c.p}\u0000${c.m}`));
-    const additions = augmented.filter(c => !original.has(c) && !originalKeys.has(`${c.p}\u0000${c.m}`));
-    return [...comments, ...convertToDanmakuJson(additions, 'bilibili')].sort((a,b) => parseFloat(a.p) - parseFloat(b.p));
-  } catch (e) { log('warn', `[ugc] supplemental failure: ${e.message}`); return comments; }
+    return [...comments, ...filtered].sort((a,b) => parseFloat(a.p) - parseFloat(b.p));
+  } catch (e) {
+    logger('return', 'UGC异常回退，保留原弹幕：' + e.message,
+      { commentId, status: 'failed', reason: e.message, originalCount: comments.length, addedCount: 0, finalCount: comments.length, durationMs: Math.round(performance.now() - started) }, 'warn');
+    return comments;
+  }
 }
 
+
+
+async function supplementAndFilterForEpisode(commentId, url, comments, animeTitle, pendingMetadata) {
+  const context = buildUgcContext(resolveEpisodeContextById(commentId));
+  const logger = createUgcLogger(context || { title: animeTitle });
+  const started = performance.now();
+  const supplemented = await supplementUgcForEpisode(commentId, url, comments, false, logger);
+  const filtered = await applyDomesticCelebrityFilter(supplemented, animeTitle, pendingMetadata);
+  const originalKeys = new Set(comments.map(c => c.p + '\u0000' + c.m));
+  const addedCount = filtered.filter(c => !originalKeys.has(c.p + '\u0000' + c.m)).length;
+  logger('response', '最终弹幕返回 ' + filtered.length + ' 条，其中UGC新增 ' + addedCount + ' 条，合并后过滤 ' + (supplemented.length - filtered.length) + ' 条',
+    { commentId, originalCount: comments.length, augmentedCount: supplemented.length, filteredCount: supplemented.length - filtered.length, addedCount, finalCount: filtered.length, durationMs: Math.round(performance.now() - started) });
+  return filtered;
+}
 
 async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, includeDuration) {
   const commentId = parseInt(path.split("/").pop());
@@ -2698,6 +2714,8 @@ async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, incl
   }
   log("info", `[system] [LogVar-API] Fetched comment ID: ${commentId}`);
 
+  if (segmentFlag) createUgcLogger(buildUgcContext(resolveEpisodeContextById(commentId)) || { title: animeTitle })('skip', '分段请求跳过UGC补充', { commentId, reason: 'segment-request' });
+
   // Start metadata before upstream comments; still await the complete filter before returning.
   const pendingMetadata = !segmentFlag && animeTitle && await shouldBlockDomesticCelebrities(animeTitle)
     ? getDomesticPersonMetadataForTitle(animeTitle) : null;
@@ -2706,8 +2724,7 @@ async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, incl
   const cacheKey = resolveCommentCacheKey(url);
   const cachedComments = segmentFlag ? null : getCommentCache(cacheKey);
   if (cachedComments !== null) {
-    const supplemented = await supplementUgcForEpisode(commentId, url, cachedComments, segmentFlag);
-    const filteredCachedComments = await applyDomesticCelebrityFilter(supplemented, animeTitle, pendingMetadata);
+    const filteredCachedComments = await supplementAndFilterForEpisode(commentId, url, cachedComments, animeTitle, pendingMetadata);
     const responseData = buildDanmuResponse(
       { count: filteredCachedComments.length, comments: filteredCachedComments },
       shouldAttachDuration ? await resolveMergedDuration(url) : null
@@ -2878,8 +2895,7 @@ async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, incl
         setCommentCache(cacheKey, danmus);
     }
     // 缓存原始结果，确保关闭演员屏蔽开关后不会继续返回已过滤的旧缓存。
-    danmus = await supplementUgcForEpisode(commentId, url, danmus, segmentFlag);
-    danmus = await applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata);
+    danmus = await supplementAndFilterForEpisode(commentId, url, danmus, animeTitle, pendingMetadata);
   }
 
   const responseData = buildDanmuResponse(
@@ -2895,6 +2911,7 @@ export function getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDurat
 }
 
 async function getCommentByUrlResponse(videoUrl, queryFormat, segmentFlag, includeDuration, animeTitleHint) {
+  createUgcLogger({ title: animeTitleHint })('skip', '直接URL请求不执行UGC补充，请使用已匹配剧集ID入口', { reason: 'url-request' });
   try {
     // 验证URL参数
     if (!videoUrl || typeof videoUrl !== 'string') {
@@ -3028,6 +3045,7 @@ export function getSegmentComment(segment, queryFormat) {
 }
 
 async function getSegmentCommentResponse(segment, queryFormat) {
+  createUgcLogger({ title: segment?.animeTitle })('skip', '分段弹幕请求不执行UGC补充', { reason: 'segment-request' });
   try {
     let url = segment.url;
     let platform = canonicalPlatformName(segment.type);

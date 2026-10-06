@@ -26,6 +26,21 @@ test('分类与来源是独立维度，旧标签不猜测未声明来源', () =>
   assert.equal(getLogMetadata('[imgo] 搜索').source, 'mango');
 });
 
+test('UGC JSON and legacy text logs appear in matching filter without a fake source', () => {
+  const message = '[ugc] [ugc-id=test-1] 「作品」第5集 UGC结束';
+  const metadata = getLogMetadata(message);
+  assert.deepEqual(metadata.categories, ['match']);
+  assert.equal(metadata.source, null);
+  const context = vm.createContext({ window: {} });
+  vm.runInContext(logviewJsContent, context);
+  context.entries = [{ message, ...metadata }, { message }];
+  vm.runInContext("let logs = entries.map(normalizeLogEntry); logViewState.category = 'match';", context);
+  assert.equal(vm.runInContext('filterLogEntries().length', context), 2);
+  assert.equal(vm.runInContext('logs[1].source', context), null);
+  vm.runInContext("logViewState.category = 'system';", context);
+  assert.equal(vm.runInContext('filterLogEntries().length', context), 0);
+});
+
 test('真实日志接口兼容文本，JSON保留结构与脱敏，未授权请求被拒绝', async () => {
   const env = { TOKEN: 'test-log-user', ADMIN_TOKEN: 'test-log-admin', USE_BANGUMI_DATA: 'false', LOG_LEVEL: 'debug' };
   Globals.init(env); Globals.logBuffer = [];

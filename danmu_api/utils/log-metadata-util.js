@@ -7,6 +7,7 @@ export function getLogMetadata(message) {
   const prefix = String(message).match(/^(?:\s*\[[^\]]+\])+/)?.[0] || '';
   const tags = [...prefix.matchAll(/\[([^\]]+)\]/g)].map(m => m[1].toLowerCase());
   const categories = [];
+  if (tags.includes('ugc')) categories.push('match');
   if (tags.some(t => /^(match|auto-match|title-mapping|remote-mapping)/.test(t))) {
     if (tags.some(t => /mapping/.test(t))) categories.push('mapping');
     if (tags.some(t => /^match(?:-|$)/.test(t) || t === 'auto-match-mapping')) categories.push('match');

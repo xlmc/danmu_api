@@ -15,6 +15,8 @@ function getLogCategory(message) {
     
     const tags = prefixMatch[0].match(/\\[([^\\]]+)\\]/g).map(t => t.replace(/[\\[\\]]/g, '').trim());
     
+    if (tags.some(t => t.toLowerCase() === 'ugc')) return 'match';
+
     // 归类合并工具日志
     // 只要行首包含 Merge，或者包含合并映射独有的子标签，强行将其收束至 Merge 专属分类
     if (tags.some(t => t.toLowerCase() === 'merge' || ['匹配', '落单', '补全', '合集', '略过', 'Merge-Check'].some(key => t.includes(key)))) {

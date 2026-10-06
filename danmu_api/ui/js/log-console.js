@@ -16,6 +16,7 @@ function logDuration(value) { return value == null ? '—' : value < 1000 ? valu
 function inferLogCategories(message) {
   const category = getLogCategory(message);
   if (['remote-mapping','title-mapping','auto-match-mapping'].includes(category)) return ['mapping'];
+  if (category === 'match') return ['match'];
   if (category === 'blocked-words') return ['filter'];
   if (category === 'cache') return ['cache'];
   if (category === 'merge') return ['merge'];
@@ -28,7 +29,7 @@ function normalizeLogEntry(entry, index) {
   const requestId = entry.requestId || entry.message?.match(/\[match-id=([^\]]+)\]/)?.[1] || '';
   return { ...entry, id: entry.id || 'legacy-' + index + '-' + entry.timestamp,
     type: entry.level || entry.type || 'info', categories: entry.categories || inferLogCategories(entry.message || ''),
-    source: Object.hasOwn(entry,'source') ? entry.source : (['system','_inherit_','blocked-words','cache','merge','ai','title-mapping','remote-mapping'].includes(category) ? null : category),
+    source: Object.hasOwn(entry,'source') ? entry.source : (['system','_inherit_','match','blocked-words','cache','merge','ai','title-mapping','remote-mapping'].includes(category) ? null : category),
     requestId: /^[a-zA-Z0-9_-]{1,64}$/.test(requestId) ? requestId : null, tags: entry.tags || [] };
 }
 function addLog(message, type = 'info') {

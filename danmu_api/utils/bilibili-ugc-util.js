@@ -1,7 +1,7 @@
 import BilibiliSource from '../sources/bilibili.js';
 import { globals } from '../configs/globals.js';
 import { httpGet } from './http-util.js';
-import { log } from './log-util.js';
+import { logEvent } from './log-util.js';
 import { convertChineseNumber, extractAnimeInfo } from './common-util.js';
 import { decodeHtmlEntities } from './codec-util.js';
 import { decodeAudio, validateAudioInWorker } from './ugc-audio-util.js';
@@ -12,6 +12,16 @@ const clean = s => decodeHtmlEntities(String(s || '').replace(/<[^>]*>/g, ''));
 const number = s => /^\d+$/.test(s) ? Number(s) : convertChineseNumber(s);
 const excluded = /reaction|第一次看|首看|一口气看|解说|讲解|混剪|预告|花絮|片段|测评|玩具|有声|小说|网盘|资源分享|\bMAD\b|\bCUT\b|纯\s*(?:OP|ED)/iu;
 const versions = /精编|(?<!未)删减|重制|英文|日语|粤语|配音|特别版|特別版|番外|续集/g;
+
+let ugcLogSequence = 0;
+export function createUgcLogger(context = {}) {
+  const ugcId = Date.now().toString(36) + '-' + (++ugcLogSequence).toString(36);
+  const logger = (event, message, data = {}, level = 'info') => logEvent(level, 'ugc.' + event,
+    '[ugc] [ugc-id=' + ugcId + '] 「' + (context.title || '未知作品') + '」第' + (context.episode ?? '?') + '集 ' + message,
+    { ...data, ugcId, identity: context.identity, title: context.title, season: context.season, episode: context.episode });
+  logger.ugcId = ugcId;
+  return logger;
+}
 
 export function buildUgcContext(resolved) {
   if (!resolved?.anime || !resolved.link) return null;
@@ -42,19 +52,21 @@ function episodeNumber(text) {
   return m ? number(m[1] || m[2] || m[3]) : null;
 }
 
-export function selectUgcPages(context, video) {
+export function selectUgcPages(context, video, onReject = () => {}) {
+  const reject = (reason, page) => { onReject(reason, page); return []; };
   const title = clean(video.title), aliases = [context.title, ...(context.aliases || [])];
-  if (!aliases.some(name => normalize(name).length >= 2 && normalize(title).includes(normalize(name)))) return [];
+  if (!aliases.some(name => normalize(name).length >= 2 && normalize(title).includes(normalize(name)))) return reject('title-mismatch');
   const season = title.match(/第\s*([\d一二三四五六七八九十百]+)\s*季|\bS(\d+)\b/i);
-  if (season && (!context.season || number(season[1] || season[2]) !== context.season)) return [];
+  if (season && (!context.season || number(season[1] || season[2]) !== context.season)) return reject('season-mismatch');
   const year = title.match(/\b((?:19|20)\d{2})\s*(?:年|版)/);
-  if (year && context.year && Number(year[1]) !== context.year) return [];
+  if (year && context.year && Number(year[1]) !== context.year) return reject('year-mismatch');
   const contextText = [context.title, ...context.aliases || [], context.episodeTitle].join(' ');
-  if ([...title.matchAll(versions)].some(m => !contextText.includes(m[0]))) return [];
+  if ([...title.matchAll(versions)].some(m => !contextText.includes(m[0]))) return reject('version-mismatch');
   const titleEpisode = episodeNumber(title), pages = video.pages || [];
+  if (!pages.length) return reject('no-pages');
   return pages.flatMap(p => {
-    if (excluded.test(`${title} ${p.part}`)) return [];
-    if ([...String(p.part).matchAll(versions)].some(m => !contextText.includes(m[0]))) return [];
+    if (excluded.test(`${title} ${p.part}`)) return reject('non-content', p);
+    if ([...String(p.part).matchAll(versions)].some(m => !contextText.includes(m[0]))) return reject('version-mismatch', p);
     const pageEpisode = episodeNumber(p.part);
     let bareEpisodeTitle = normalize(String(context.episodeTitle || '').replace(/【[^】]+】/g, '').replace(/第\s*[\d一二三四五六七八九十百]+\s*[集话期回]/g, ''));
     for (const name of aliases) bareEpisodeTitle = bareEpisodeTitle.replace(normalize(name), '');
@@ -62,10 +74,10 @@ export function selectUgcPages(context, video) {
     // A page's position is not an episode number. Trailer/OP pages often precede E01.
     const episode = pageEpisode ?? (pages.length === 1 ? titleEpisode : null);
     const movie = /电影|剧场版/.test(context.type || '') && pages.length === 1 && episode === null;
-    if (episode !== context.episode && !named && !movie) return [];
-    if (pageEpisode !== null && pageEpisode !== context.episode) return [];
-    if (pages.length === 1 && titleEpisode !== null && titleEpisode !== context.episode) return [];
-    if (!(p.duration > 0) || !p.cid || !video.bvid) return [];
+    if (episode !== context.episode && !named && !movie) return reject('episode-unconfirmed-or-mismatch', p);
+    if (pageEpisode !== null && pageEpisode !== context.episode) return reject('episode-mismatch', p);
+    if (pages.length === 1 && titleEpisode !== null && titleEpisode !== context.episode) return reject('episode-mismatch', p);
+    if (!(p.duration > 0) || !p.cid || !video.bvid) return reject('metadata-incomplete', p);
     return [{ bvid: video.bvid, aid: video.aid, cid: p.cid, page: p.page, duration: p.duration, title, part: p.part,
       url: `https://www.bilibili.com/video/${video.bvid}/?p=${p.page}`, searchCount: video.stat?.danmaku || 0,
       evidence: { title, part: p.part, explicitEpisode: episode, episodeTitleMatched: named } }];
@@ -138,109 +150,186 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
     if (play.code !== 0 || !track || !(page.duration > 0)) throw new Error('reference-audio-unavailable');
     return { ...page, urls: [track.baseUrl || track.base_url, ...(track.backupUrl || track.backup_url || [])].filter(Boolean) };
   }
-  async function resolve(context, { signal, maxCandidates = 8, rangeSeconds } = {}) {
+  async function resolve(context, { signal, maxCandidates = 8, rangeSeconds, logger = createUgcLogger(context) } = {}) {
     const result = { candidates: [], accepted: [], failures: [] };
+    logger('search.start', '开始检索投稿', { maxCandidates });
     const videos = new Map(), key = await source._getWbiMixinKey();
     for (const keyword of buildUgcQueries(context)) {
       for (const order of ['totalrank', 'dm']) {
         signal?.throwIfAborted();
+        logger('search.query', '检索关键词：' + keyword + '，排序=' + order, { keyword, order });
         const params = source._getWbiSignedParams({ keyword, search_type: 'video', page: 1, page_size: 20, order }, key);
-        const data = await json(`https://api.bilibili.com/x/web-interface/wbi/search/type?${new URLSearchParams(params)}`);
-        if (data.code !== 0) throw new Error(`ugc-search-${data.code}`);
-        for (const v of data.data?.result || []) if (v.bvid) videos.set(v.bvid, v);
+        const data = await json('https://api.bilibili.com/x/web-interface/wbi/search/type?' + new URLSearchParams(params));
+        if (data.code !== 0) throw new Error('ugc-search-' + data.code);
+        const rows = data.data?.result || [];
+        for (const v of rows) if (v.bvid) videos.set(v.bvid, v);
+        logger('search.result', '本次检索返回 ' + rows.length + ' 个投稿', { keyword, order, count: rows.length });
       }
     }
     const ordered = [...videos.values()].filter(v => {
       const title = clean(v.title), ep = episodeNumber(title);
-      return !excluded.test(title) && [context.title, ...context.aliases || []].some(name => normalize(title).includes(normalize(name))) &&
-        (ep === null || ep === context.episode || /合集|全集|全\s*\d+|1\s*[-~～]\s*\d+/.test(title));
+      const reason = excluded.test(title) ? 'non-content'
+        : ![context.title, ...context.aliases || []].some(name => normalize(title).includes(normalize(name))) ? 'title-mismatch'
+        : !(ep === null || ep === context.episode || /合集|全集|全\s*\d+|1\s*[-~～]\s*\d+/.test(title)) ? 'episode-mismatch' : null;
+      if (reason) logger('candidate.reject', '投稿初筛拒绝：' + v.bvid + '，原因=' + reason, { bvid: v.bvid, candidateTitle: title, reason });
+      return !reason;
     }).sort((a, b) => (b.video_review || 0) - (a.video_review || 0));
-    // Bound metadata requests; count ranks work but never makes a source eligible.
+    logger('search.end', '检索去重 ' + videos.size + ' 个，初筛通过 ' + ordered.length + ' 个', { discovered: videos.size, eligible: ordered.length, metadataLimit: 30 });
     for (const v of ordered.slice(0, 30)) {
       signal?.throwIfAborted();
-      if (excluded.test(clean(v.title))) continue;
       try {
-        const view = await json(`https://api.bilibili.com/x/web-interface/view?bvid=${v.bvid}`);
-        result.candidates.push(...selectUgcPages(context, view.data || {}));
-      } catch (e) { result.failures.push({ bvid: v.bvid, reason: e.message }); }
+        logger('candidate.detail', '读取投稿分P：' + v.bvid, { bvid: v.bvid });
+        const view = await json('https://api.bilibili.com/x/web-interface/view?bvid=' + v.bvid);
+        const selected = selectUgcPages(context, view.data || {}, (reason, page) => logger('candidate.reject',
+          '投稿身份校验拒绝：' + v.bvid + '，原因=' + reason,
+          { bvid: v.bvid, cid: page?.cid, page: page?.page, candidateTitle: clean(view.data?.title), reason }));
+        result.candidates.push(...selected);
+        for (const c of selected) logger('candidate.select', '候选通过身份校验：' + c.bvid + ' P' + c.page + '，CID=' + c.cid,
+          { bvid: c.bvid, cid: c.cid, page: c.page, duration: c.duration, reportedComments: c.searchCount });
+      } catch (e) {
+        result.failures.push({ bvid: v.bvid, reason: e.message });
+        logger('candidate.failure', '投稿详情获取失败：' + v.bvid + '，' + e.message, { bvid: v.bvid, reason: e.message }, 'warn');
+      }
     }
-    // Determine reference: prefer an explicit Bilibili URL; otherwise use the UGC candidate
-    // with the most danmaku as the audio anchor (candidate-as-reference mode).
+    logger('candidates.ready', '可用分P候选 ' + result.candidates.length + ' 个', { count: result.candidates.length });
     const isBilibiliRef = /^https:\/\/www\.bilibili\.com\/(video\/BV|bangumi\/play\/ep)/.test(String(context.referenceUrl || ''));
     let reference, referenceIsCandidate = false, referenceCandidate = null;
     if (isBilibiliRef) {
+      logger('reference.start', '使用当前B站集作为音频参考', { mode: 'primary' });
       try { reference = await audioInfo(context.referenceUrl); }
-      catch (e) { result.failures.push({ reason: e.message }); return result; }
+      catch (e) {
+        result.failures.push({ reason: e.message });
+        logger('reference.failure', '当前集音频参考不可用：' + e.message, { reason: e.message }, 'warn');
+        return result;
+      }
     } else {
-      // Pick the candidate with the most danmaku comments as the reference anchor.
       const sorted = result.candidates.slice().sort((a, b) => (b.searchCount || 0) - (a.searchCount || 0));
       for (const c of sorted.slice(0, 3)) {
         signal?.throwIfAborted();
         try {
+          logger('reference.start', '尝试UGC候选作为音频参考：' + c.bvid, { mode: 'candidate', bvid: c.bvid, cid: c.cid });
           reference = await audioInfo(c.url);
           referenceIsCandidate = true;
           referenceCandidate = c;
-          log('info', `[ugc] candidate-as-reference: ${c.url} (danmaku=${c.searchCount})`);
           break;
-        } catch (e) { result.failures.push({ bvid: c.bvid, reason: `ref-${e.message}` }); }
+        } catch (e) {
+          result.failures.push({ bvid: c.bvid, reason: 'ref-' + e.message });
+          logger('reference.failure', '候选音频参考不可用：' + c.bvid + '，' + e.message, { bvid: c.bvid, reason: e.message }, 'warn');
+        }
       }
-      if (!reference) { result.failures.push({ reason: 'no-bilibili-reference' }); return result; }
+      if (!reference) {
+        result.failures.push({ reason: 'no-bilibili-reference' });
+        logger('reference.failure', '没有可用的B站音频参考，保留原弹幕', { reason: 'no-bilibili-reference' }, 'warn');
+        return result;
+      }
     }
     const duration = Math.min(reference.duration, rangeSeconds ?? reference.duration);
-    if (!(duration > 0)) return result;
+    if (!(duration > 0)) {
+      logger('reference.failure', '音频参考时长无效', { reason: 'invalid-duration', duration }, 'warn');
+      return result;
+    }
+    logger('reference.ready', '音频参考就绪，CID=' + reference.cid + '，时长=' + duration + '秒',
+      { mode: referenceIsCandidate ? 'candidate' : 'primary', cid: reference.cid, duration });
+    logger('audio.start', '开始下载并解码参考音频', { cid: reference.cid, duration });
     const ref = await audio(reference.urls, { seconds: duration, signal });
-    // When in candidate-as-reference mode, the anchor's own comments serve as base set.
+    logger('audio.ready', '参考音频解码完成', { cid: reference.cid });
     if (referenceIsCandidate && referenceCandidate) {
       try {
         const raw = await source.getEpisodeDanmu(referenceCandidate.url);
         const comments = source.formatComments(raw);
         referenceCandidate.fetchedCount = comments.length;
+        logger('candidate.comments', '参考候选取得 ' + comments.length + ' 条弹幕', { bvid: referenceCandidate.bvid, cid: referenceCandidate.cid, count: comments.length });
         if (comments.length) {
           result.accepted.push({ cid: referenceCandidate.cid, comments, timeline: { status: 'verified', offsetSeconds: 0, validRange: [0, duration] } });
+          logger('candidate.anchor', '接受UGC参考候选弹幕，参考轴偏移=0秒', { cid: referenceCandidate.cid, offsetSeconds: 0, validRange: [0, duration], mode: 'candidate-anchor' });
         }
-      } catch (e) { result.failures.push({ bvid: referenceCandidate.bvid, reason: `ref-danmu-${e.message}` }); }
+      } catch (e) {
+        result.failures.push({ bvid: referenceCandidate.bvid, reason: 'ref-danmu-' + e.message });
+        logger('candidate.failure', '参考候选弹幕获取失败：' + e.message, { bvid: referenceCandidate.bvid, reason: e.message }, 'warn');
+      }
     }
-    for (const c of result.candidates.filter(c => c.cid !== reference.cid).slice(0, maxCandidates)) {
+    const others = result.candidates.filter(c => c.cid !== reference.cid);
+    logger('alignment.start', '准备校验 ' + Math.min(others.length, maxCandidates) + ' 个候选时间轴', { count: others.length, limit: maxCandidates });
+    for (const c of others.slice(0, maxCandidates)) {
       if (signal?.aborted) break;
+      const started = performance.now();
       try {
+        logger('candidate.fetch', '下载候选弹幕：' + c.bvid + ' P' + c.page, { bvid: c.bvid, cid: c.cid });
         const raw = await source.getEpisodeDanmu(c.url), comments = source.formatComments(raw);
         c.fetchedCount = comments.length;
-        if (!comments.length) { c.timeline = { status: 'pending', reason: 'no-comments' }; continue; }
+        logger('candidate.comments', '候选取得 ' + comments.length + ' 条弹幕', { bvid: c.bvid, cid: c.cid, count: comments.length });
+        if (!comments.length) {
+          c.timeline = { status: 'pending', reason: 'no-comments' };
+          logger('candidate.reject', '候选没有弹幕，跳过时间轴校验', { bvid: c.bvid, cid: c.cid, reason: 'no-comments' });
+          continue;
+        }
+        logger('audio.start', '下载并解码候选音频：' + c.bvid, { bvid: c.bvid, cid: c.cid });
         const info = await audioInfo(c.url);
         const samples = await audio(info.urls, { seconds: duration + 121, signal });
+        logger('alignment.check', '开始音频时间轴校验：' + c.bvid, { bvid: c.bvid, cid: c.cid });
         const timeline = await validate(ref, samples, { duration, signal }); c.timeline = timeline;
         signal?.throwIfAborted();
+        logger('alignment.result', '候选时间轴状态=' + timeline.status + '，偏移=' + (timeline.offsetSeconds ?? '?') + '秒，原因=' + (timeline.reason || '无'),
+          { bvid: c.bvid, cid: c.cid, status: timeline.status, reason: timeline.reason, offsetSeconds: timeline.offsetSeconds, validRange: timeline.validRange, durationMs: Math.round(performance.now() - started) });
         if (timeline.status === 'verified') result.accepted.push({ cid: c.cid, comments, timeline });
-      } catch (e) { c.timeline = { status: 'pending', reason: e.message }; if (signal?.aborted) break; }
+      } catch (e) {
+        c.timeline = { status: 'pending', reason: e.message };
+        logger('candidate.failure', '候选处理失败：' + c.bvid + '，' + e.message,
+          { bvid: c.bvid, cid: c.cid, reason: signal?.aborted ? 'timeout' : e.message, durationMs: Math.round(performance.now() - started) }, 'warn');
+        if (signal?.aborted) break;
+      }
     }
+    result.timedOut = Boolean(signal?.aborted);
     return result;
   }
 
   async function supplement(context, base, options = {}) {
+    const started = performance.now(), logger = options.logger || createUgcLogger(context);
+    const budgetMs = options.budgetMs ?? 10000;
+    logger('start', '开始UGC补充，原弹幕 ' + base.length + ' 条，预算 ' + budgetMs + 'ms', { originalCount: base.length, budgetMs });
     const key = JSON.stringify(['ugc-v1', context, options.rangeSeconds ?? null, options.maxCandidates ?? 8]);
     const entry = cache.get(key);
-    let result;
-    if (entry && entry.expires > Date.now()) result = entry.result;
-    else {
+    let result, cacheState = 'miss';
+    if (entry && entry.expires > Date.now()) {
+      result = entry.result; cacheState = 'hit';
+      logger('cache', '命中UGC校验缓存', { cacheState });
+    } else {
       let task = pending.get(key);
-      if (!task) {
+      if (task) {
+        cacheState = 'pending';
+        logger('cache', '复用同集正在执行的UGC任务，关联流程=' + (task.ugcId || '未知'), { cacheState, sharedUgcId: task.ugcId });
+      } else {
+        logger('cache', 'UGC缓存未命中，启动检索校验', { cacheState });
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), options.budgetMs ?? 10000);
-        task = resolve(context, { ...options, signal: controller.signal }).catch(e => ({ candidates: [], accepted: [], failures: [{ reason: e.message }] })).then(result => {
+        const timeout = setTimeout(() => controller.abort(), budgetMs);
+        task = resolve(context, { ...options, logger, signal: controller.signal }).catch(e => {
+          logger('failure', 'UGC流程失败：' + e.message, { reason: controller.signal.aborted ? 'timeout' : e.message }, 'warn');
+          return { candidates: [], accepted: [], failures: [{ reason: controller.signal.aborted ? 'timeout' : e.message }] };
+        }).then(result => {
           if (cache.size >= 128) cache.delete(cache.keys().next().value);
           cache.set(key, { result, expires: Date.now() + (result.accepted.length ? 3600000 : 60000) }); return result;
         }).finally(() => { clearTimeout(timeout); pending.delete(key); });
+        task.ugcId = logger.ugcId;
         pending.set(key, task);
       }
-      // Deadline protects the original response even when an upstream ignores AbortSignal.
       result = await Promise.race([task, new Promise(resolve => {
-        const t = setTimeout(() => resolve(null), options.budgetMs ?? 10000);
+        const t = setTimeout(() => resolve(null), budgetMs);
         task.finally(() => clearTimeout(t));
       })]);
     }
-    if (!result) return base;
-    log('info', `[ugc] candidates=${result.candidates.length}, accepted=${result.accepted.length}, failures=${result.failures.map(x => x.reason).join(',')}`);
-    return result.accepted.length ? mergeUgcComments(base, result.accepted) : base;
+    const durationMs = Math.round(performance.now() - started);
+    if (!result) {
+      logger('end', 'UGC超时，保留原弹幕；新增0条，耗时 ' + durationMs + 'ms',
+        { status: 'timeout', originalCount: base.length, addedCount: 0, finalCount: base.length, durationMs, budgetMs, cacheState }, 'warn');
+      return base;
+    }
+    const merged = result.accepted.length ? mergeUgcComments(base, result.accepted) : base;
+    const failures = [...result.failures.map(x => x.reason), ...result.candidates.map(c => c.timeline?.reason).filter(Boolean)];
+    if (result.timedOut && !failures.includes('timeout')) failures.push('timeout');
+    const status = failures.includes('timeout') ? 'timeout' : merged.length > base.length ? 'supplemented' : 'unchanged';
+    logger('end', 'UGC结束：候选 ' + result.candidates.length + ' 个，接受 ' + result.accepted.length + ' 个，新增 ' + (merged.length - base.length) + ' 条，耗时 ' + durationMs + 'ms' + (failures.length ? '，失败原因=' + failures.join(',') : ''),
+      { status, candidates: result.candidates.length, accepted: result.accepted.length, failures, originalCount: base.length, addedCount: merged.length - base.length, finalCount: merged.length, durationMs, cacheState }, status === 'timeout' ? 'warn' : 'info');
+    return merged;
   }
   return { resolve, supplement, clear: () => cache.clear() };
 }
