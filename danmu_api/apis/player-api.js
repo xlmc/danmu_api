@@ -4,6 +4,7 @@ import { canonicalPlatformName } from '../utils/platform-util.js';
 import { runWithMatchTrace, traceMatchStep, getMatchTracePrefix } from '../utils/match-trace-util.js';
 import { globals } from '../configs/globals.js';
 import { runWithCommentTransform } from '../utils/comment-context.js';
+import { buildUgcContext, ugcSupplement } from '../utils/bilibili-ugc-util.js';
 import { getPageTitle, jsonResponse, httpGet, sourceLogContext, runWithHttpCache, httpCacheContext } from '../utils/http-util.js';
 import { log } from '../utils/log-util.js'
 import { logEvent } from '../utils/log-util.js';
@@ -13,7 +14,7 @@ import { setLocalRedisKey, updateLocalRedisCaches } from "../utils/local-redis-u
 import {
     setCommentCache, addAnime, findAnimeIdByCommentId, findTitleById, findUrlById, getCommentCache, getPreferAnimeId,
     getSearchCache, removeEarliestAnime, resolveAnimeById, resolveAnimeByIdFromDetailStore, setPreferByAnimeId, setPreferForTitle, setSearchCache, storeAnimeIdsToMap, writeCacheToFile,
-    updateLocalCaches, setLastSearch, getLastSearch, findAnimeTitleById, findIndexById, hasSeasonSpecificPreference, getAddAnimeError, mergeAddAnimeError
+    updateLocalCaches, setLastSearch, getLastSearch, findAnimeTitleById, findIndexById, hasSeasonSpecificPreference, getAddAnimeError, mergeAddAnimeError, resolveEpisodeContextById
 } from "../utils/cache-util.js";
 
 import { formatDanmuResponse, convertToDanmakuJson, filterDanmusByBlockedWords, filterDanmusByBlockedNames } from "../utils/danmu-util.js";
@@ -2636,6 +2637,29 @@ export function getComment(path, queryFormat, segmentFlag, clientIp, includeDura
   return runWithCommentTransform(() => getCommentResponse(path, queryFormat, segmentFlag, clientIp, includeDuration));
 }
 
+async function supplementUgcForEpisode(commentId, url, comments, segmentFlag) {
+  if (!globals.bilibiliUgcEnabled || segmentFlag || !Array.isArray(comments)) return comments;
+  const context = buildUgcContext(resolveEpisodeContextById(commentId));
+  if (!context) return comments;
+  // Preserve existing user-selected timing. Do not align UGC against an unshifted video
+  // and then silently mix it with manually shifted original comments.
+  if (globals.danmuOffsetRules?.length || String(url).split(MERGE_DELIMITER).some(p => stripLinkOffset(p).offset)) return comments;
+  const parts = String(url).split(MERGE_DELIMITER);
+  const ref = parts.map(p => p.replace(/^bilibili:/, '')).find(p => /^https:\/\/www\.bilibili\.com\/(video\/BV|bangumi\/play\/ep)/.test(p));
+  if (!ref) return comments;
+  context.referenceUrl = ref;
+  try {
+    const augmented = await ugcSupplement.supplement(context, comments, { budgetMs: globals.bilibiliUgcBudgetMs });
+    // Apply the existing blocked-word/format policy to additions only; original
+    // comments have already passed their own source pipeline.
+    const original = new Set(comments);
+    if (augmented === comments) return comments;
+    const originalKeys = new Set(comments.map(c => `${c.p}\u0000${c.m}`));
+    const additions = augmented.filter(c => !original.has(c) && !originalKeys.has(`${c.p}\u0000${c.m}`));
+    return [...comments, ...convertToDanmakuJson(additions, 'bilibili')].sort((a,b) => parseFloat(a.p) - parseFloat(b.p));
+  } catch (e) { log('warn', `[ugc] supplemental failure: ${e.message}`); return comments; }
+}
+
 async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, includeDuration) {
   const commentId = parseInt(path.split("/").pop());
   let animeTitle = findAnimeTitleById(commentId);
@@ -2666,7 +2690,8 @@ async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, incl
   const cacheKey = resolveCommentCacheKey(url);
   const cachedComments = segmentFlag ? null : getCommentCache(cacheKey);
   if (cachedComments !== null) {
-    const filteredCachedComments = await applyDomesticCelebrityFilter(cachedComments, animeTitle, pendingMetadata);
+    const supplemented = await supplementUgcForEpisode(commentId, url, cachedComments, segmentFlag);
+    const filteredCachedComments = await applyDomesticCelebrityFilter(supplemented, animeTitle, pendingMetadata);
     const responseData = buildDanmuResponse(
       { count: filteredCachedComments.length, comments: filteredCachedComments },
       shouldAttachDuration ? await resolveMergedDuration(url) : null
@@ -2837,6 +2862,7 @@ async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, incl
         setCommentCache(cacheKey, danmus);
     }
     // 缓存原始结果，确保关闭演员屏蔽开关后不会继续返回已过滤的旧缓存。
+    danmus = await supplementUgcForEpisode(commentId, url, danmus, segmentFlag);
     danmus = await applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata);
   }
 

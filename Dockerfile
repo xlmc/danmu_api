@@ -4,6 +4,9 @@ FROM node:22-alpine
 # 设置工作目录为项目根目录
 WORKDIR /app
 
+# Optional UGC timeline verification uses a bounded audio decode.
+RUN apk add --no-cache ffmpeg
+
 # 复制 package.json 和 package-lock.json（如果存在）
 COPY package*.json ./
 

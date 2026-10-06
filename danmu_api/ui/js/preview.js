@@ -50,7 +50,8 @@ const previewGroupDefinitions = {
         { name: '过滤与数量', keys: ['BLOCKED_WORDS', 'BLOCK_DOMESTIC_CELEBRITIES', 'PERSON_FILTER_EXCLUDED_TITLES', 'GROUP_MINUTE', 'DANMU_LIMIT'] },
         { name: '显示与转换', keys: ['DANMU_SIMPLIFIED_TRADITIONAL', 'CONVERT_TOP_BOTTOM_TO_SCROLL', 'CONVERT_COLOR', 'COLOR_POOL', 'GRADIENT_ENABLED', 'GRADIENT_CHANCE', 'LIKE_SWITCH'] },
         { name: '输出格式', keys: ['DANMU_OUTPUT_FORMAT', ] },
-        { name: '时间与来源适配', keys: ['DANMU_OFFSET', 'HONGGUO_MERGE_ALL_EPISODES'] }
+        { name: '时间与来源适配', keys: ['DANMU_OFFSET', 'HONGGUO_MERGE_ALL_EPISODES'] },
+        { name: 'UGC 弹幕补充', keys: ['BILIBILI_UGC_ENABLED'] }
     ],
     cache: [
         { name: '文件缓存', keys: ['LOCAL_CACHE_ENABLED'] },
