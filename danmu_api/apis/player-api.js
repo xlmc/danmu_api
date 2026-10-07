@@ -4,7 +4,7 @@ import { canonicalPlatformName } from '../utils/platform-util.js';
 import { runWithMatchTrace, traceMatchStep, getMatchTracePrefix } from '../utils/match-trace-util.js';
 import { globals } from '../configs/globals.js';
 import { runWithCommentTransform } from '../utils/comment-context.js';
-import { buildUgcContext, createUgcLogger, ugcSupplement } from '../utils/bilibili-ugc-util.js';
+import { buildUgcContext, createUgcLogger, ugcSupplement, isUgcApplicable, buildUgcRequestContext, pickUgcEpisode } from '../utils/bilibili-ugc-util.js';
 import { getPageTitle, jsonResponse, httpGet, sourceLogContext, runWithHttpCache, httpCacheContext } from '../utils/http-util.js';
 import { log } from '../utils/log-util.js'
 import { logEvent } from '../utils/log-util.js';
@@ -12,7 +12,7 @@ import { simplized } from '../utils/zh-util.js';
 
 import { setLocalRedisKey, updateLocalRedisCaches } from "../utils/local-redis-util.js";
 import {
-    setCommentCache, addAnime, findAnimeIdByCommentId, findTitleById, findUrlById, getCommentCache, getPreferAnimeId,
+    setCommentCache, addAnime, addEpisode, findAnimeIdByCommentId, findTitleById, findUrlById, getCommentCache, getPreferAnimeId,
     getSearchCache, removeEarliestAnime, resolveAnimeById, resolveAnimeByIdFromDetailStore, setPreferByAnimeId, setPreferForTitle, setSearchCache, storeAnimeIdsToMap, writeCacheToFile,
     updateLocalCaches, setLastSearch, getLastSearch, findAnimeTitleById, findIndexById, hasSeasonSpecificPreference, getAddAnimeError, mergeAddAnimeError, resolveEpisodeContextById
 } from "../utils/cache-util.js";
@@ -2153,6 +2153,50 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       }
     };
 
+    // 官方平台在适用画像下都没命中时，用 B站投稿兜底出一个可分集，让播放器仍有弹幕可取。
+    // 只面向番剧/国外剧/国外平台（见 isUgcApplicable）；预算用完就放弃，返回未匹配。
+    const tryUgcFallback = async () => {
+      if (!globals.bilibiliUgcEnabled || !Number.isInteger(originalEpisode) || originalEpisode < 1) return null;
+      const context = buildUgcRequestContext({
+        title: tmdbIdentity?.title || originalTitle, aliases: tmdbIdentity?.aliases || [],
+        year: originalYear, season: originalSeason, episode: originalEpisode, tmdbIdentity
+      });
+      if (!context) return null;
+      // 官方目录里同名条目给出适用画像：候选项类型、命中来源、B站是否已有正片。
+      const wanted = normalizeTitleForMatch(String(context.title));
+      const related = wanted ? globals.animes.filter(anime =>
+        normalizeTitleForMatch(String(anime.animeTitle).replace(/\s*from\s+.+$/i, '')).includes(wanted)) : [];
+      const types = [...new Set(related.map(anime => anime.type || anime.typeDescription).filter(Boolean))];
+      const sources = [...new Set(related.map(anime => anime.source).filter(Boolean))];
+      if (!isUgcApplicable({ identity: tmdbIdentity, sources, types, hasBilibiliPgc: sources.includes('bilibili') })) {
+        log('info', '[system] [match] UGC 兜底不适用当前作品，跳过');
+        return null;
+      }
+      const logger = createUgcLogger(context);
+      logger('match.start', '官方源未命中，尝试 B站投稿兜底', { season: originalSeason, episode: originalEpisode });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), globals.bilibiliUgcMatchBudgetMs);
+      let found = null;
+      try {
+        found = await ugcSupplement.search(context, { signal: controller.signal, logger });
+      } catch (error) {
+        logger('match.failure', 'UGC 兜底检索失败：' + error.message, { reason: controller.signal.aborted ? 'timeout' : error.message }, 'warn');
+        return null;
+      } finally { clearTimeout(timer); }
+      const candidate = pickUgcEpisode(found?.candidates || []);
+      if (!candidate) { logger('match.none', 'UGC 兜底没有可用分集'); return null; }
+      const episode = addEpisode(candidate.url, candidate.part);
+      logger('match.hit', 'UGC 兜底命中：' + candidate.bvid + ' P' + candidate.page + '，投稿弹幕 ' + candidate.searchCount + ' 条',
+        { bvid: candidate.bvid, cid: candidate.cid, episodeId: episode.id, searchCount: candidate.searchCount, episodeTitleMatched: Boolean(candidate.evidence?.episodeTitleMatched) });
+      const ugcAnimeId = 900000000 + [...String(candidate.bvid)].reduce((acc, ch) => (acc * 31 + ch.codePointAt(0)) % 99999999, 7);
+      return {
+        resAnime: { animeId: ugcAnimeId, source: 'bilibili', bangumiId: 'ugc', type: 'B站投稿', typeDescription: 'B站投稿',
+          animeTitle: `${context.title}${originalYear ? `(${originalYear})` : ''}【B站投稿】`, imageUrl: '' },
+        resEpisode: { episodeId: episode.id, episodeTitle: candidate.part || candidate.title || '', url: candidate.url },
+        spilloverMatched: false, title: context.title, season: originalSeason, episode: originalEpisode
+      };
+    };
+
     // S00 uses TMDB's special numbering. Resolve the episode before starting
     // ordinary platform groups; explicit preferences and mappings stay first.
     if (!succeeded(attempt) && originalSeason === 0 && !tmdbIdentity && (globals.tmdbApiKey || globals.proxyUrl)) {
@@ -2220,6 +2264,11 @@ async function matchAnimeWithTrace(url, req, clientIp) {
 
     // Ordinary episodes enter this fallback only after default matching fails.
     if (!succeeded(attempt) && tmdbIdentity && originalSeason !== 0) await tryTmdbEpisodePath();
+
+    if (!succeeded(attempt) && originalSeason !== 0) {
+      const ugcAttempt = await traceMatchStep(log, 'B站投稿兜底', tryUgcFallback);
+      if (ugcAttempt) { attempt = ugcAttempt; matchStage = 'B站投稿兜底'; }
+    }
 
     attempt ||= { resAnime: null, resEpisode: null, spilloverMatched: false, title: originalTitle, season: originalSeason, episode: originalEpisode };
 

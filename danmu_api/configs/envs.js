@@ -591,6 +591,7 @@ export class Envs {
       'HONGGUO_MERGE_ALL_EPISODES': { category: 'danmu', type: 'boolean', description: '红果短剧合并全集弹幕，默认关闭' },
       'DANMU_OFFSET': { category: 'danmu', type: 'text', sources: this.ALLOWED_SOURCES, description: '弹幕时间偏移配置，格式：剧名:秒 或 剧名/季:秒 或 剧名/季/集:秒，支持指定来源：剧名@来源:秒 或 剧名/季@来源1&来源2:秒，多条用逗号分隔，正数表示弹幕延后（向右），负数表示弹幕提前（向左）。支持百分比模式：在路径或来源末尾追加 %，如 东方/S03/E02@tencent%:11，按公式 原时间 * (视频时长 + 偏移秒数) / 视频时长 缩放全部弹幕时间。示例：overlord/S01:90,re-zero/S02@bilibili:120,re-zero/S02/E03@tencent&bilibili:10,东方/S03/E02@tencent%:11' },
       'BILIBILI_UGC_ENABLED': { category: 'danmu', type: 'boolean', description: 'B站 UGC 多源弹幕补充开关。开启后自动检索并验证相同剧集的优质投稿，对齐时间轴后叠加弹幕。' },
+      'BILIBILI_UGC_MATCH_BUDGET_MS': { category: 'danmu', type: 'text', description: '官方平台未命中时用 B站投稿兜底的检索预算（毫秒，默认 5000，范围 1000~60000）。只对番剧、国外剧和弹幕少的国外平台生效；超时即放弃并返回未匹配。' },
 
       // 缓存配置
       'LOCAL_CACHE_ENABLED': { category: 'cache', type: 'boolean', description: '通用文件缓存开关，默认开启且仍需已有 .cache 目录；关闭后不读取或写入通用文件缓存，包括收藏与定时计划；已配置 Upstash 时仍可持久化。不影响本地弹幕文件、Bangumi Data 或 Redis' },
@@ -624,6 +625,7 @@ export class Envs {
       selfVersion: this.get('XDANMU_VERSION', '', 'string'),
       bilibiliUgcEnabled: this.get('BILIBILI_UGC_ENABLED', false, 'boolean'),
       bilibiliUgcBudgetMs: Math.max(1000, Math.min(120000, this.get('BILIBILI_UGC_BUDGET_MS', 10000, 'number'))),
+      bilibiliUgcMatchBudgetMs: Math.max(1000, Math.min(60000, this.get('BILIBILI_UGC_MATCH_BUDGET_MS', 5000, 'number'))),
       youkuConcurrency: Math.min(this.get('YOUKU_CONCURRENCY', 8, 'number'), 16), // 优酷并发配置
       platformOrderArr: this.resolvePlatformOrder(), // 自动匹配优选平台
       animeTitleFilter: this.resolveAnimeTitleFilter(), // 剧名正则过滤

@@ -1,11 +1,63 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildUgcContext, buildUgcQueries, selectUgcPages, mergeUgcComments, createUgcSupplement, ugcSupplement } from './utils/bilibili-ugc-util.js';
+import { buildUgcContext, buildUgcQueries, selectUgcPages, mergeUgcComments, createUgcSupplement, ugcSupplement, isUgcApplicable, pickUgcEpisode, buildUgcRequestContext } from './utils/bilibili-ugc-util.js';
 import { Globals } from './configs/globals.js';
 import { addAnime } from './utils/cache-util.js';
 import { getComment } from './apis/player-api.js';
 import { getSourceByKey } from './sources/registry.js';
 import { handleConfig } from './apis/system-api.js';
+
+// UGC 的适用范围：番剧/国外剧、以及弹幕本来就少的国外平台；
+// 国内官方平台命中的国产剧/综艺不参与，画像未知时保守不参与。
+// 判据大多不依赖 TMDB：先看「B站有没有正片」「命中的是不是国外平台」「候选类型是不是番剧」，
+// 只有这些都用不上时才查 TMDB 画像。
+test('UGC applies without TMDB from the matched source and catalog type', () => {
+  for (const source of ['bahamut', 'hanjutv', 'renren'])
+    assert.equal(isUgcApplicable({ source }), true, source + ' 是弹幕少的国外平台');
+  assert.equal(isUgcApplicable({ source: 'iqiyi', type: '动漫' }), true, '候选类型即番剧');
+  assert.equal(isUgcApplicable({ source: 'tencent', types: ['综艺', '动漫'] }), true, '多候选里含番剧');
+  assert.equal(isUgcApplicable({ source: 'bilibili', type: '国创' }), false, '国内平台非番剧');
+  assert.equal(isUgcApplicable({ source: 'iqiyi', type: '综艺' }), false, '国产综艺');
+  assert.equal(isUgcApplicable({ sources: ['renren', 'bahamut'] }), true, '多来源里任一国外平台即适用');
+  assert.equal(isUgcApplicable({ sources: ['tencent', 'iqiyi'], type: '电视剧' }), false, '全是国内官方平台');
+  assert.equal(isUgcApplicable({ source: 'tencent', type: '电视剧' }), false, '国产剧');
+});
+
+test('UGC falls back to the TMDB profile when neither source nor type decides', () => {
+  assert.equal(isUgcApplicable({ identity: { isAnimation: true, originalLanguage: 'ja', originCountry: ['JP'] } }), true, 'TMDB 判定为动画');
+  assert.equal(isUgcApplicable({ identity: { originalLanguage: 'en', originCountry: ['US'] } }), true, 'TMDB 判定为国外剧');
+  assert.equal(isUgcApplicable({ source: 'tencent', identity: { originalLanguage: 'zh', originCountry: ['CN'], isAnimation: false } }), false, 'TMDB 判定为国产非动画');
+  assert.equal(isUgcApplicable({ source: 'iqiyi' }), false, '无从判断时保守不参与');
+  assert.equal(isUgcApplicable({ identity: {} }), false, '空画像');
+  assert.equal(isUgcApplicable(), false);
+});
+
+test('matched UGC candidate prefers the exact episode title, then the busiest submission', () => {
+  const candidate = (bvid, searchCount, episodeTitleMatched) => ({ bvid, searchCount, evidence: { episodeTitleMatched } });
+  assert.equal(pickUgcEpisode([]), null);
+  assert.equal(pickUgcEpisode([candidate('a', 10, false), candidate('b', 90, false)]).bvid, 'b', '都不同名时取弹幕多的');
+  assert.equal(pickUgcEpisode([candidate('a', 500, false), candidate('b', 10, true)]).bvid, 'b', '标题完全一致优先');
+  assert.equal(pickUgcEpisode([candidate('a', 500, true), candidate('b', 10, true)]).bvid, 'a', '都一致时再比弹幕数');
+  assert.equal(pickUgcEpisode([{ bvid: 'c', searchCount: undefined }]).bvid, 'c', '缺弹幕数也能选中');
+});
+
+// 匹配阶段没有官方分集，只能用请求身份构造 context：集号来自 SxxExx，别名参与检索。
+test('request-side UGC context carries the episode identity without a catalog match', () => {
+  const ctx = buildUgcRequestContext({ title: '假面骑士麦斯', aliases: ['仮面ライダーマイス'], year: 2026, season: 1, episode: 4 });
+  assert.equal(ctx.title, '假面骑士麦斯'); assert.equal(ctx.episode, 4); assert.equal(ctx.season, 1);
+  assert.deepEqual(ctx.aliases, ['仮面ライダーマイス']);
+  assert.equal(buildUgcQueries(ctx).some(q => q.includes('仮面ライダーマイス')), true);
+  assert.equal(buildUgcRequestContext({ title: '假面骑士麦斯' }), null, '缺集号不构造');
+  assert.equal(buildUgcRequestContext({ title: '假面骑士麦斯', episode: 0 }), null);
+  assert.equal(buildUgcRequestContext({ episode: 4 }), null, '缺标题不构造');
+});
+
+test('UGC is skipped when bilibili already has the official episode', () => {
+  assert.equal(isUgcApplicable({ hasBilibiliPgc: true, type: '动漫' }), false);
+  assert.equal(isUgcApplicable({ hasBilibiliPgc: true, source: 'bahamut' }), false);
+  assert.equal(isUgcApplicable({ hasBilibiliPgc: true, identity: { isAnimation: true, originalLanguage: 'ja' } }), false);
+  assert.equal(isUgcApplicable({ hasBilibiliPgc: false, source: 'bahamut' }), true);
+});
 
 const context = { identity: 'existing:1', title: '测试作品', aliases: ['Test Series'], year: 2020, season: 2, episode: 5, episodeTitle: '第5集 相逢', referenceUrl: 'https://www.bilibili.com/video/BVreference/' };
 const video = (title, pages = [{ cid: 55, page: 1, part: '正片', duration: 40 }]) => ({ bvid: 'BVcandidate', aid: 9, title, pages });

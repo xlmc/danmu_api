@@ -35,6 +35,10 @@ export async function resolveTmdbMatchIdentity({ title, year = null, season = nu
   return {
     key: `${mediaType}:${selected.id}`, tmdbId: String(selected.id), mediaType,
     title: detail.name || detail.title, aliases, year: identityYear, seasonYear,
+    // UGC 适用画像用：动画(genre 16)、原始语言与出品地区。
+    isAnimation: [...(detail.genre_ids || []), ...(detail.genres || []).map(genre => genre?.id)].includes(16),
+    originalLanguage: String(detail.original_language || '').toLowerCase() || null,
+    originCountry: Array.isArray(detail.origin_country) ? detail.origin_country : [],
     seasons: (detail.seasons || []).map(item => ({ season: item.season_number, year: yearOf(item.air_date) }))
   };
 }

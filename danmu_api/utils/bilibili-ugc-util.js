@@ -4,6 +4,7 @@ import { httpGet } from './http-util.js';
 import { logEvent } from './log-util.js';
 import { convertChineseNumber, extractAnimeInfo } from './common-util.js';
 import { decodeHtmlEntities } from './codec-util.js';
+import { isDomesticTmdbProduction } from './tmdb-util.js';
 
 const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', Referer: 'https://www.bilibili.com/' };
 const normalize = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]/gu, '');
@@ -102,6 +103,56 @@ export function buildUgcQueries(context) {
     [...units.map(unit => `${name}${season} 第${n}${unit}`), `${name}${season} ${padded}`, `${name}${season} 合集`]))];
 }
 
+// 匹配阶段还没有官方分集，只能用请求本身给出的身份构造 UGC context；
+// 集号来自请求的 SxxExx，集标题有则更有利于分P身份校验。
+export function buildUgcRequestContext({ title, aliases = [], year = null, season = null, episode = null, episodeTitle = '', type = '', tmdbIdentity = null } = {}) {
+  const baseTitle = String(title || '').trim();
+  if (!baseTitle || !Number.isInteger(episode) || episode < 1) return null;
+  return {
+    identity: 'request:' + baseTitle,
+    title: baseTitle, aliases: [...aliases].filter(Boolean),
+    year: Number.isInteger(year) ? year : null,
+    season: Number.isInteger(season) ? season : null,
+    episode, episodeSource: 'request',
+    episodeTitle: String(episodeTitle || ''),
+    referenceUrl: null, type: String(type || ''), tmdbIdentity: tmdbIdentity || null
+  };
+}
+
+// 匹配只能返回一个分集：优先标题与目标集完全一致的候选，多个再比弹幕数。
+export function pickUgcEpisode(candidates = []) {
+  if (!candidates.length) return null;
+  const exact = candidates.filter(candidate => candidate.evidence?.episodeTitleMatched);
+  const pool = exact.length ? exact : candidates;
+  return [...pool].sort((a, b) => (Number(b.searchCount) || 0) - (Number(a.searchCount) || 0))[0];
+}
+
+// UGC 面向官方平台没有正片、或弹幕本来就少的作品：番剧/国外剧、国外平台。
+// 判据按优先级独立生效，前四条都不依赖 TMDB；只有候选与来源都看不出类型时，
+// 才用 TMDB 画像（动画 genre 16 / 非国产）补判；仍然判不出来就保守不参与。
+const UGC_OVERSEAS_SOURCES = new Set(['bahamut', 'hanjutv', 'renren']);
+const DOMESTIC_OFFICIAL_SOURCES = new Set(['bilibili', 'tencent', 'iqiyi', 'youku', 'imgo', 'sohu', 'leshi', 'migu', 'hongguo']);
+const ANIMATION_TYPE = /动漫|番剧|动画|anime/i;
+export function isUgcApplicable({ identity = null, source = null, sources = [], type = '', types = [], hasBilibiliPgc = false } = {}) {
+  const sourceKeys = [source, ...sources].map(value => String(value || '').toLowerCase()).filter(Boolean);
+  // 1) B站已有正片：弹幕充足，投稿没有增益。
+  if (hasBilibiliPgc) return false;
+  // 2) 命中的是弹幕本就少的国外平台（巴哈/韩剧TV/人人）。
+  if (sourceKeys.some(key => UGC_OVERSEAS_SOURCES.has(key))) return true;
+  const typeText = [type, ...types].filter(Boolean).join(' ');
+  // 3) 候选自带的类型就是番剧/动画。
+  if (ANIMATION_TYPE.test(typeText)) return true;
+  // 4) 只在国内官方平台上、且候选类型不是动画：官方弹幕足够，不需要投稿。
+  if (typeText && sourceKeys.length && sourceKeys.every(key => DOMESTIC_OFFICIAL_SOURCES.has(key))) return false;
+  // 5) 前面都判不出来时才看 TMDB 画像。
+  if (!identity) return false;
+  if (identity.isAnimation === true) return true;
+  const originCountry = Array.isArray(identity.originCountry) ? identity.originCountry : [];
+  const originalLanguage = String(identity.originalLanguage || '');
+  if (!originCountry.length && !originalLanguage) return false;
+  return !isDomesticTmdbProduction({ origin_country: originCountry, original_language: originalLanguage });
+}
+
 function episodeNumber(text) {
   const m = String(text).normalize('NFKC').match(/第\s*([\d一二三四五六七八九十百零两]+)\s*[集话期回]|(?:\bEP?\s*|[\[【(（])0*(\d{1,3})(?:\b|[\]】)）])|(?:^|\s|_)0*(\d{1,3})\s*(?:[集话期回]|[.、_\s]|$)/iu);
   return m ? number(m[1] || m[2] || m[3]) : null;
@@ -187,9 +238,10 @@ async function getJson(url) {
 
 export function createUgcSupplement({ source = new BilibiliSource(), json = getJson } = {}) {
   const cache = new Map(), pending = new Map();
-  async function resolve(context, { signal, maxCandidates = 8, rangeSeconds, logger = createUgcLogger(context) } = {}) {
-    const result = { candidates: [], accepted: [], failures: [] };
-    logger('search.start', '开始检索投稿', { maxCandidates });
+  // 检索投稿并做身份校验（不取弹幕）：匹配阶段的 UGC 兜底源只用这一段。
+  async function search(context, { signal, logger = createUgcLogger(context) } = {}) {
+    const result = { candidates: [], failures: [] };
+    logger('search.start', '开始检索投稿');
     const videos = new Map(), key = await source._getWbiMixinKey();
     const queries = buildUgcQueries(context).flatMap(keyword => ['totalrank', 'dm'].map(order => ({ keyword, order })));
     await mapConcurrent(queries, SEARCH_CONCURRENCY, async ({ keyword, order }) => {
@@ -235,6 +287,14 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
       if (detail.failure) result.failures.push(detail.failure);
     }
     logger('candidates.ready', '可用分P候选 ' + result.candidates.length + ' 个', { count: result.candidates.length });
+    return result;
+  }
+
+  async function resolve(context, { signal, maxCandidates = 8, rangeSeconds, logger = createUgcLogger(context) } = {}) {
+    const result = { candidates: [], accepted: [], failures: [] };
+    const found = await search(context, { signal, logger });
+    result.candidates = found.candidates;
+    result.failures = found.failures;
     logger('mode', '仅匹配投稿元数据并获取弹幕，不请求音视频；时间轴未经音频校验', { mode: 'metadata-only', timelineVerified: false });
     const seen = new Set();
     const selected = result.candidates.slice(0, maxCandidates).filter(c => {
@@ -328,7 +388,7 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
       { status, candidates: result.candidates.length, accepted: result.accepted.length, failures, originalCount: base.length, addedCount: merged.length - base.length, finalCount: merged.length, durationMs, cacheState }, status === 'timeout' ? 'warn' : 'info');
     return merged;
   }
-  return { resolve, supplement, clear: () => cache.clear() };
+  return { search, resolve, supplement, clear: () => cache.clear() };
 }
 
 export const ugcSupplement = createUgcSupplement();

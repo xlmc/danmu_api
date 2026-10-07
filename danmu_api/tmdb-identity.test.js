@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveTmdbMatchIdentity, filterTmdbMatchCandidates, findSavedTmdbIdentity, resolveTmdbEpisodeMetadata, selectTmdbEpisode, selectVarietyEpisodeByKey, varietyKey } from './utils/tmdb-match-util.js';
 import { extractVarietyFragment } from './apis/player-api.js';
+import { ugcSupplement } from './utils/bilibili-ugc-util.js';
 import { parseAutoMatchMappingRules, collectAutoMatchCandidates } from './utils/auto-match-mapping-util.js';
 import { Globals } from './configs/globals.js';
 import { handleRequest } from './worker.js';
@@ -15,9 +16,11 @@ test('TMDB query carries its typed ID and aliases forward without intermediary p
   const calls = [];
   const identity = await resolveTmdbMatchIdentity({title:'Example',season:2,episode:1,year:2025}, {
     search: async (title,type,options) => {calls.push([title,type,options]);return {data:{results:[{id:12,name:'示例',original_name:'Example',first_air_date:'2020-01-01'}]}};},
-    details: async (type,id) => {calls.push([type,id]);return {id,name:'示例',original_name:'Example',first_air_date:'2020-01-01',seasons:[{season_number:2,air_date:'2025-01-01'}],alternative_titles:{results:[{title:'別名'}]}};}
+    details: async (type,id) => {calls.push([type,id]);return {id,name:'示例',original_name:'Example',first_air_date:'2020-01-01',seasons:[{season_number:2,air_date:'2025-01-01'}],alternative_titles:{results:[{title:'別名'}]},original_language:'ja',origin_country:['JP'],genres:[{id:16,name:'动画'}]};}
   });
   assert.equal(identity.key,'tv:12');assert.equal(identity.tmdbId,'12');assert.equal(identity.seasonYear,2025);
+  // UGC 适用画像随身份带出：动画(genre 16)、原始语言、出品地区
+  assert.equal(identity.isAnimation,true);assert.equal(identity.originalLanguage,'ja');assert.deepEqual(identity.originCountry,['JP']);
   assert.ok(identity.aliases.includes('別名'));assert.deepEqual(calls,[['Example','tv',{page:1}],['tv',12]]);
 });
 
@@ -394,6 +397,44 @@ test('player match request A resolves through the file name with TMDB disabled',
   assert.ok(!/下班吃饭啦/.test(result.data.matches[0].episodeTitle), 'must not bind to the third catalog entry');
   assert.equal(result.comments.comments[0].m, '试用弹幕');
   assert.deepEqual(result.requests, [], 'A 不需要任何网络请求（含 TMDB）');
+});
+
+// 官方平台没有可匹配分集时，番剧/国外平台走 B站投稿兜底：返回一个可分集，播放器再去取弹幕。
+test('unmatched overseas show falls back to a B station submission', async () => {
+  const catalog = () => { const anime = fixtureAnime('假面骑士麦斯', 2026, 778899, '动漫');
+    anime.source = 'bahamut'; anime.animeTitle = '假面骑士麦斯(2026)【动漫】from bahamut';
+    anime.links = [1, 2, 3].map(i => ({ url: `https://ani.gamer.com.tw/animeRef.php?sn=${i}`, title: `【bahamut】 第0${i}集` }));
+    return [anime]; };
+  const bilibili = getSourceByKey('bilibili');
+  const saved = { search: ugcSupplement.search, comments: bilibili.getComments };
+  bilibili.getComments = async () => [{ p: '1,1,16777215,ugc', m: '投稿弹幕' }];
+  ugcSupplement.search = async () => ({ failures: [], candidates: [
+    { bvid: 'BV1ugcfallback', cid: 4242, page: 4, part: '第04话 麦斯登场',
+      url: 'https://www.bilibili.com/video/BV1ugcfallback/?p=4', searchCount: 300, evidence: { episodeTitleMatched: false } },
+    { bvid: 'BV1ugcbest', cid: 4343, page: 4, part: '第04话 麦斯登场',
+      url: 'https://www.bilibili.com/video/BV1ugcbest/?p=4', searchCount: 900, evidence: { episodeTitleMatched: true } }] });
+  try {
+    const result = await adaptiveFixture('假面骑士麦斯 S01E04', catalog, { env: { TMDB_API_KEY: '', PROXY_URL: '', BILIBILI_UGC_ENABLED: 'true' } });
+    assert.equal(result.data.isMatched, true, JSON.stringify(result.data));
+    assert.match(result.data.matches[0].animeTitle, /B站投稿/);
+    assert.equal(result.data.matches[0].episodeTitle, '第04话 麦斯登场');
+    assert.equal(result.data.matches[0].url, 'https://www.bilibili.com/video/BV1ugcbest/?p=4', '标题完全一致的候选优先');
+    assert.equal(result.comments.comments[0].m, '投稿弹幕');
+  } finally { ugcSupplement.search = saved.search; bilibili.getComments = saved.comments; }
+});
+
+test('UGC fallback stays off for domestic official platforms', async () => {
+  const catalog = () => { const anime = fixtureAnime('示例', 2026, 778900, '电视剧');
+    anime.links = [1, 2, 3].map(i => ({ url: `https://v.qq.com/x/cover/domestic/e${i}.html`, title: `【tencent】 第0${i}集` }));
+    return [anime]; };
+  const saved = ugcSupplement.search;
+  let searched = 0;
+  ugcSupplement.search = async () => { searched++; return { candidates: [], failures: [] }; };
+  try {
+    const result = await adaptiveFixture('示例 S01E04', catalog, { env: { TMDB_API_KEY: '', PROXY_URL: '', BILIBILI_UGC_ENABLED: 'true' } });
+    assert.equal(result.data.isMatched, false, JSON.stringify(result.data));
+    assert.equal(searched, 0, '国内官方平台不做投稿兜底');
+  } finally { ugcSupplement.search = saved; }
 });
 
 test('player match request with only SxxExx resolves through the TMDB episode identity', async () => {
