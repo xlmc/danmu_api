@@ -313,6 +313,54 @@ test('unmatched ordinary variety episode resolves issue and part without using i
   assert.equal(result.data.isMatched,true,JSON.stringify(result.data));assert.match(result.data.matches[0].episodeTitle,/第1期上/);
   assert.ok(!result.data.matches[0].url.includes('upper'));
 });
+// 爱奇艺等官方目录把「第N期上 主标题」与后续副标题拼进同一条目，上下篇标记不在末尾；
+// 目录序位（第3项=下班吃饭啦第1期）与 TMDB 集号不一致，标题比对必须仍能定位第2期上。
+const compoundVarietyTitles = [
+  '【iqiyi】 第1期上 胡军李乃文懵圈助理0帧上岗 第1期上 胡军李乃文懵圈助理0帧上岗 瞿颖带硬汉拼豆编狗窝',
+  '【iqiyi】 第1期下 胡军李乃文失误各罚500元 第1期下 胡军李乃文失误各罚500元？瞿颖变嘴替现场教做节目',
+  '【iqiyi】 下班吃饭啦第1期 李乃文小助理太敬业 下班吃饭啦第1期 李乃文下班不忘规划次日行程 胡军传授健身经验',
+  '【iqiyi】 第2期上 胡军李乃文弄丢佟丽娅裙子 第2期上 懵登助理再上线 胡军李乃文弄丢佟丽娅演出服',
+  '【iqiyi】 第2期下 李乃文胡军用挂烫机烫假发 第2期下 李乃文胡军用挂烫机烫假发 佟丽娅送走心礼物'
+];
+const compoundVarietyCatalog = () => {
+  const anime=fixtureAnime('大哥小助理',2026,857835,'variety');
+  anime.animeTitle='大哥小助理(2026)【综艺】from iqiyi';
+  anime.links=compoundVarietyTitles.map((title,i)=>({url:`https://www.iqiyi.com/v_compound${i}.html`,title}));
+  anime.episodeCount=compoundVarietyTitles.length;
+  return anime;
+};
+const compoundVarietyTmdb = { results: [{ id: 331649, name: '大哥小助理', first_air_date: '2026-01-01' }],
+  details: { id: 331649, name: '大哥小助理', first_air_date: '2026-01-01',
+    seasons: [{ season_number: 0, air_date: '2026-01-01' }, { season_number: 1, air_date: '2026-01-01' }] },
+  episode: { season_number: 1, episode_number: 3, name: '第2期上:胡军李乃文弄丢佟丽娅裙子', air_date: '2026-08-21' } };
+
+test('compound official variety titles resolve issue and part without using the catalog position', async () => {
+  const identity = { key: 'tv:331649', tmdbId: '331649', mediaType: 'tv', title: '大哥小助理',
+    aliases: ['大哥小助理'], year: 2026, seasons: [{ season: 0, year: 2026 }, { season: 1, year: 2026 }] };
+  const metadata = await resolveTmdbEpisodeMetadata(identity, 1, 3, async () => compoundVarietyTmdb.episode);
+  const anime = compoundVarietyCatalog();
+  const episodes = () => anime.links.map((link, i) => ({ episodeId: i + 1, episodeTitle: link.title, url: link.url }));
+  const chosen = selectTmdbEpisode([anime], metadata, identity, episodes);
+  assert.equal(chosen.resEpisode.episodeId, 4, 'locates 第2期上 rather than the third catalog entry');
+  const shanghai = { ...anime, links: [{ url: 'https://www.iqiyi.com/v_shanghai', title: '【iqiyi】 第2期上海特辑 胡军李乃文狂奔' }] };
+  assert.equal(selectTmdbEpisode([shanghai], metadata, identity,
+    () => shanghai.links.map((link, i) => ({ episodeId: i + 1, episodeTitle: link.title, url: link.url }))), null,
+    '「上海」 must not read as the upper-part marker');
+});
+
+test('compound official variety titles reach the right episode and comments through POST match', async () => {
+  // 用腾讯源跑通完整链路（含取弹幕），仅保留官方目录那种「期+上下篇+副标题」拼接的标题形状。
+  const catalog = () => { const anime = compoundVarietyCatalog();
+    anime.links = anime.links.map((link, i) => ({ url: `https://v.qq.com/x/cover/compound${i}.html`,
+      title: link.title.replace('【iqiyi】', '【tencent】') }));
+    return [anime]; };
+  const result = await adaptiveFixture('大哥小助理 S01E03 第2期上：胡军李乃文弄丢佟丽娅裙子',
+    catalog, { tmdb: compoundVarietyTmdb });
+  assert.equal(result.data.isMatched, true, JSON.stringify(result.data));
+  assert.match(result.data.matches[0].episodeTitle, /第2期上/);
+  assert.ok(!/下班吃饭啦/.test(result.data.matches[0].episodeTitle), 'must not bind to the third catalog entry');
+  assert.equal(result.comments.comments[0].m, '试用弹幕');
+});
 
 test('episode airing after New Year still resolves in the original season catalog',async()=>{
   const catalog=fixtureAnime('示例');catalog.links[0].title='【tencent】 初次交锋';catalog.links[1].title='【tencent】 迟来的信';

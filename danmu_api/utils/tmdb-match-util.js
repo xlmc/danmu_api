@@ -108,7 +108,20 @@ export async function resolveTmdbEpisodeMetadata(identity, season, episode, look
 const episodeText = value => String(value || '').normalize('NFKC').replace(/^【[^】]*】\s*/, '')
   .split(/[:：]/)[0].toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
 
+// 官方目录（如爱奇艺综艺）会把「第N期上 主标题」和后续副标题拼进同一条目，
+// 上下篇标记因此不一定落在字符串末尾；先看期号后紧跟的标记，再看末尾标记。
+// 标记后紧跟汉字时不算上下篇（避免把「第2期上海特辑」当成上篇）。
+function issuePartMarker(raw) {
+  const match = /第\s*\d+\s*期/.exec(raw);
+  if (!match) return '';
+  const rest = raw.slice(match.index + match[0].length);
+  if (/^[\s:：、，,。.·_-]*下(?:\s*[集篇])?(?!\p{Script=Han})/u.test(rest)) return 'lower';
+  if (/^[\s:：、，,。.·_-]*上(?:\s*[集篇])?(?!\p{Script=Han})/u.test(rest)) return 'upper';
+  return '';
+}
+
 function varietyKey(title) {
+  const raw = String(title || '').normalize('NFKC').replace(/^【[^】]*】\s*/, '');
   const text = episodeText(title);
   if (/纯享|純享|精编|精編|预告|預告/.test(text)) return null;
   const issue = text.match(/第(\d+)期/);
@@ -116,7 +129,8 @@ function varietyKey(title) {
     /特别/.test(text) ? 'special-extra' : /先导片|先導片/.test(text) ? 'pilot-extra' : 'extra') :
     /先导片|先導片/.test(text) ? 'pilot' : issue ? 'main' : null;
   if (!kind) return null;
-  const part = /下(?:集|篇)?$/.test(text) ? 'lower' : /上(?:集|篇)?$/.test(text) ? 'upper' : '';
+  const part = issuePartMarker(raw) ||
+    (/下(?:集|篇)?$/.test(text) ? 'lower' : /上(?:集|篇)?$/.test(text) ? 'upper' : '');
   return `${kind}:${issue?.[1] || ''}:${part}`;
 }
 
