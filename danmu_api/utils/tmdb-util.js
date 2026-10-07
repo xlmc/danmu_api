@@ -418,17 +418,19 @@ export async function getDomesticPersonMetadataForTitle(title) {
         const baiduResult = await cachedPersonSource(`${cacheKey}:baidu-v1`,
           async () => {
             let res = null;
+            let reason = '';
             try {
               res = await getBaiduPersonMetadata(baiduTitle, baiduYear, candidate?.media_type || '');
-            } catch (_) {}
+            } catch (error) { reason = error.message; }
             if ((!res || res.actorNames.length === 0) && context.hasSeason) {
               const CHINESE_DIGITS = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
               const zhSeason = (context.season > 0 && context.season <= 10) ? CHINESE_DIGITS[context.season] : String(context.season);
               try {
                 res = await getBaiduPersonMetadata(`${context.baseTitle}第${zhSeason}季`, baiduYear, candidate?.media_type || '');
-              } catch (_) {}
+              } catch (error) { reason = error.message || reason; }
             }
-            if (!res) throw new Error('百度百科未找到匹配条目');
+            // 带上真实原因：此前统一报「未找到匹配条目」，把「字段名没对上」误报成「没有这个条目」。
+            if (!res) throw new Error(`百度百科无可用条目：${reason || '未取得页面内容'}`);
             return res;
           },
           value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames)

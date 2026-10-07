@@ -34,6 +34,32 @@ test('拒绝错误名称、年份、小说、电影/剧集冲突、海外作品�
     {title:'流浪地球',year:'2019',mediaType:'movie'}).characterNames,['刘培强']);
 });
 
+// 综艺/真人秀条目的字段名和名单结构都不同（《短剧X家族》就是这种）：
+// 活动类型/地点/时间 + 一张没有表头的嘉宾名单表，此前会被判成「未找到匹配条目」。
+test('综艺式字段与无表头嘉宾表也能取到名单', () => {
+  const variety = ({ region = '福建平潭、吉林长白山',
+    date = '<div><dt class="basicInfoItem_test">时&nbsp;&nbsp;&nbsp;&nbsp;间</dt><dd>2026年5月29日</dd></div>',
+    schedule = '' } = {}) => `<title>短剧X家族_百度百科</title>
+   <div><dt class="basicInfoItem_test">活动类型</dt><dd>户外真人秀</dd></div>
+   <div><dt class="basicInfoItem_test">地&nbsp;&nbsp;&nbsp;&nbsp;点</dt><dd>${region}</dd></div>${date}
+   <table><tr><td>陈添祥</td><td>贾翼瑄</td><td>刘萧旭</td><td>林墨</td></tr>
+          <tr><td>申浩男</td><td>王小亿</td><td>沉思</td><td>侯呈玥</td></tr></table>${schedule}`;
+  const context = { title: '短剧X家族', year: '2026', mediaType: 'tv' };
+  const result = extractBaiduPersonMetadata(variety(), context);
+  assert.deepEqual(result.actorNames, ['陈添祥', '贾翼瑄', '刘萧旭', '林墨', '申浩男', '王小亿', '沉思', '侯呈玥']);
+  assert.deepEqual(result.characterNames, []);
+  // 播出信息表（日期 + 长标题）不满足名单形状，不会被当成演员
+  const schedule = '<table><tr><td>2026年5月29日</td><td>第1期：X家族全员“白手起家”</td></tr>'
+    + '<tr><td>2026年6月5日</td><td>第2期：爆笑高能预警！闽南语加更</td></tr></table>';
+  assert.equal(extractBaiduPersonMetadata(variety({ schedule }), context).actorNames.length, 8);
+  // 拍摄地在海外时仍然拒绝
+  assert.throws(() => extractBaiduPersonMetadata(variety({ region: '首尔' }), context), /未确认国产/);
+  // 页面没有日期字段时不再因为取不到年份就否掉整条
+  assert.equal(extractBaiduPersonMetadata(variety({ date: '' }), context).actorNames.length, 8);
+  // 年份真的不一致时仍然拒绝
+  assert.throws(() => extractBaiduPersonMetadata(variety({ date: '<div><dt class="basicInfoItem_test">时&nbsp;&nbsp;&nbsp;&nbsp;间</dt><dd>2025年5月29日</dd></div>' }), context), /年份不一致/);
+});
+
 test('同名义项按年份和类型唯一选择，冲突时不请求详情', async () => {
   Globals.init({LOG_LEVEL:'error'});
   const original = globalThis.fetch;

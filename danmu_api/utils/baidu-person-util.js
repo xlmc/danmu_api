@@ -37,6 +37,9 @@ function chineseNames(value) {
     .filter(name => /^[\p{Script=Han}·・]{2,24}$/u.test(name)
       && !/^(?:本人|自己|未知|待定|不详|未公布|演员|角色|主持|主持人|司仪|主评委|见证人|嘉宾|常驻嘉宾|队长|成员|选手|哥哥|弟弟|.*(?:成员|選手|选手|阶段|公演|对决|战队|阵营|部落|诞生|名单|淘汰|退赛|晋级|成团|危险).*|第[0-9一二三四五六七八九十百]+.*)$/u.test(name));
 }
+// 省级行政区也是国产标识：综艺/真人秀条目的「地点」常直接写「福建平潭、吉林长白山」，不含“中国”。
+const DOMESTIC_REGION = /中国|大陆|内地|香港|台湾|澳门|北京|天津|上海|重庆|河北|山西|辽宁|吉林|黑龙江|江苏|浙江|安徽|福建|江西|山东|河南|湖北|湖南|广东|海南|四川|贵州|云南|陕西|甘肃|青海|内蒙古|广西|西藏|宁夏|新疆/;
+
 function isWorkDescription(description, mediaType) {
   if (/小说|游戏|歌曲|舞台剧|话剧/.test(description)) return false;
   const variety = /综艺|真人秀|竞演|晚会|脱口秀|音乐节目|选秀|演艺节目/.test(description);
@@ -52,7 +55,9 @@ export function extractBaiduPersonMetadata(html, { title, year = '', mediaType =
   const info = basicInfo(root);
   const match = /^(.*?)（(.*?)）_百度百科$/.exec(heading) || /^(.*?)\((.*?)\)_百度百科$/.exec(heading);
   const headingTitle = (match ? match[1] : heading.replace(/_百度百科$/, '')).trim();
-  const headingDesc = match ? match[2] : (info.get(normalized('类型')) || info.get(normalized('类别')) || '');
+  // 综艺/真人秀条目不用影视字段名：时间=首播、地点=拍摄地、活动类型=类型。
+  const headingDesc = match ? match[2] : (info.get(normalized('类型')) || info.get(normalized('类别'))
+    || info.get(normalized('活动类型')) || info.get(normalized('节目类型')) || '');
   const aliases = (info.get(normalized('别名')) || '').split(/[\s、,，;；/]+/);
   const cnName = info.get(normalized('中文名')) || '';
   const titles = [headingTitle, cnName, ...aliases].map(normalized).filter(Boolean);
@@ -60,11 +65,19 @@ export function extractBaiduPersonMetadata(html, { title, year = '', mediaType =
   if (!titles.includes(normalized(title)) || (headingDesc && !isWorkDescription(headingDesc, mediaType))) {
     throw new Error('百度百科作品名称或类型不一致');
   }
-  const release = info.get(normalized('首播时间')) || info.get(normalized('首播日期')) || info.get('上映时间') || info.get('上映日期') || match?.[2] || '';
-  if (year && release.match(/(?:19|20)\d{2}/)?.[0] !== String(year)) throw new Error('百度百科作品年份不一致');
-  const region = normalized(info.get(normalized('制片地区')) || info.get(normalized('出品地区')) || info.get(normalized('制作国家地区')) || info.get(normalized('国家地区')) || '');
-  if (!/中国|大陆|内地|香港|台湾|澳门/.test(region)) {
-    throw new Error('百度百科未确认国产或港台作品');
+  const release = info.get(normalized('首播时间')) || info.get(normalized('首播日期')) || info.get(normalized('开播时间'))
+    || info.get(normalized('播出日期')) || info.get(normalized('上线时间')) || info.get(normalized('上映时间'))
+    || info.get(normalized('上映日期')) || info.get(normalized('时间')) || match?.[2] || '';
+  const releaseYear = release.match(/(?:19|20)\d{2}/)?.[0];
+  // 页面没有日期时不判年份：同名作品的消歧由 disambiguation 链接处理，不能凭缺字段否掉整条。
+  if (year && releaseYear && releaseYear !== String(year)) {
+    throw new Error(`百度百科作品年份不一致（页面 ${releaseYear}，作品 ${year}）`);
+  }
+  const region = normalized(info.get(normalized('制片地区')) || info.get(normalized('出品地区'))
+    || info.get(normalized('制作国家地区')) || info.get(normalized('国家地区')) || info.get(normalized('制作地区'))
+    || info.get(normalized('地区')) || info.get(normalized('拍摄地点')) || info.get(normalized('地点')) || '');
+  if (!DOMESTIC_REGION.test(region)) {
+    throw new Error(`百度百科未确认国产或港台作品（地区：${region || '未标注'}）`);
   }
   const actorNames = new Set(), characterNames = new Set();
   const items = descendants(root, 'div').filter(node => attr(node, 'class').split(/\s+/).some(name => name.startsWith('actorItem_')));
@@ -113,6 +126,15 @@ export function extractBaiduPersonMetadata(html, { title, year = '', mediaType =
         if (m) {
           chineseNames(m[1]).forEach(name => actorNames.add(name));
         }
+      }
+    }
+    // 综艺的「参演嘉宾」常是一张没有表头的纯名单表（如《短剧X家族》）。
+    // 整表 ≥80% 是 2~4 字中文名时按演员收录；播出信息表（日期 + 长标题）不满足该形状，不会被误收。
+    if (actorCol < 0) {
+      const cells = descendants(table, 'td').map(cell => text(cell).trim()).filter(Boolean);
+      const names = cells.filter(cell => /^[\p{Script=Han}·・]{2,4}$/u.test(cell));
+      if (cells.length >= 4 && names.length >= cells.length * 0.8) {
+        names.forEach(name => chineseNames(name).forEach(value => actorNames.add(value)));
       }
     }
   }
