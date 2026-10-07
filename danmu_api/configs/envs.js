@@ -620,6 +620,8 @@ export class Envs {
       mergeSourcePairs: this.resolveMergeSourcePairs(), // 源合并配置，用于将源合并获取
       customMergeRules: this.resolveCustomMergeRules(), // 合并映射表，用于自定义源合并行为。
       bilibliCookie: this.get('BILIBILI_COOKIE', '', 'string', true), // b站cookie
+      // 发布流程通过 build-arg 注入的自用版本（形如 xdanmu-v0.60）；页头「当前版本」使用，未注入时回退上游版本号
+      selfVersion: this.get('XDANMU_VERSION', '', 'string'),
       bilibiliUgcEnabled: this.get('BILIBILI_UGC_ENABLED', false, 'boolean'),
       bilibiliUgcBudgetMs: Math.max(1000, Math.min(120000, this.get('BILIBILI_UGC_BUDGET_MS', 10000, 'number'))),
       youkuConcurrency: Math.min(this.get('YOUKU_CONCURRENCY', 8, 'number'), 16), // 优酷并发配置

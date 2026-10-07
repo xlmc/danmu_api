@@ -133,6 +133,64 @@ test('management scripts parse and only retained navigation is rendered',async()
   for(const id of ['preview-section','logs-section','env-section'])assert.ok(html.includes('id="'+id+'"'));
 });
 
+test('header shows the injected self version and hides the update badge until a newer release exists', async () => {
+  reset({ XDANMU_VERSION: 'xdanmu-v0.99' });
+  const html = await (await request('/')).text();
+  assert.match(html, /<title>Xdanmu弹幕API<\/title>/);
+  assert.match(html, /<h1>Xdanmu弹幕API<\/h1>/);
+  assert.match(html, /当前版本: <span id="current-version">v0\.99<\/span>/);
+  assert.match(html, /<a class="update-badge"[^>]*style="display: none;"/);
+  assert.ok(!html.includes('LogVar弹幕API'), 'old brand must be gone');
+
+  reset();
+  const fallback = await (await request('/')).text();
+  assert.match(fallback, /当前版本: <span id="current-version">v1\.21\.3<\/span>/, 'no injected version falls back to the upstream version');
+});
+
+test('self version comparison and release badge parsing drive the update badge', async () => {
+  reset();
+  const html = await (await request('/')).text();
+  const start = html.indexOf('const SELF_RELEASE_BADGE_URL');
+  const end = html.indexOf('function switchSection');
+  assert.ok(start > 0 && end > start, 'self version helpers are emitted to the browser');
+  const slice = html.slice(start, end);
+
+  // 用真实发出的浏览器脚本 + 桩 document/fetch 验证徽标显示逻辑
+  const build = (currentText, svg) => {
+    const badge = { href: '', style: { display: 'none' } };
+    const latest = { textContent: '' };
+    const nodes = { 'current-version': { textContent: currentText }, 'update-badge': badge, 'latest-version': latest };
+    const factory = new Function('document', 'fetch', slice + '; return { isNewerVersion, checkLatestVersion };');
+    const api = factory({ getElementById: id => nodes[id] || null }, () => Promise.resolve({ text: () => Promise.resolve(svg) }));
+    return { ...api, badge, latest };
+  };
+
+  const newer = build('v0.60', '<title>release: xdanmu-v0.61</title>');
+  assert.equal(newer.isNewerVersion('v0.61', 'v0.60'), true);
+  assert.equal(newer.isNewerVersion('v0.60', 'v0.60'), false);
+  assert.equal(newer.isNewerVersion('v0.9', 'v0.10'), false, 'v0.9 is older than v0.10');
+  assert.equal(newer.isNewerVersion('v0.10', 'v0.9'), true);
+  assert.equal(newer.isNewerVersion('v1.21.3', 'v0.60'), true);
+  assert.equal(newer.isNewerVersion('', 'v0.60'), false);
+
+  // 有新版本：显示「最新版本」并链接到对应 Release
+  await newer.checkLatestVersion();
+  assert.equal(newer.latest.textContent, 'v0.61');
+  assert.equal(newer.badge.style.display, '');
+  assert.equal(newer.badge.href, 'https://github.com/xlmc/danmu_api/releases/tag/xdanmu-v0.61');
+
+  // 没有新版本：只保留「当前版本」，徽标保持隐藏
+  const same = build('v0.61', '<title>release: xdanmu-v0.61</title>');
+  await same.checkLatestVersion();
+  assert.equal(same.latest.textContent, '');
+  assert.equal(same.badge.style.display, 'none');
+
+  // shields.io 的 tag 徽标同样以 <title> 携带版本
+  const tagFormat = build('v0.60', '<title>tag: xdanmu-v0.61</title>');
+  await tagFormat.checkLatestVersion();
+  assert.equal(tagFormat.latest.textContent, 'v0.61');
+});
+
 test('file cache restores IDs/preferences and prunes removed sources across actual restarts',()=>{
   const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'danmu-nas-test-')),checkout=fileURLToPath(new URL('../',import.meta.url));
   try{

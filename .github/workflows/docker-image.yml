@@ -101,6 +101,8 @@ jobs:
           platforms: linux/${{ matrix.arch }}
           labels: ${{ needs.prepare.outputs.labels }}
           outputs: type=image,name=${{ needs.prepare.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            XDANMU_VERSION=${{ needs.prepare.outputs.version }}
           cache-from: type=gha,scope=image-${{ matrix.arch }}
           cache-to: type=gha,scope=image-${{ matrix.arch }},mode=max
       - name: Smoke test native runtime and retain digest

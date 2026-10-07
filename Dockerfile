@@ -14,6 +14,11 @@ RUN npm install
 COPY danmu_api/ ./danmu_api/
 COPY config/ ./config_example/
 
+# 自用版本号：发布流程以 build-arg 注入（形如 xdanmu-v0.60），运行时供页头「当前版本」使用。
+# 放在依赖与源码之后，避免版本变化使上面的层缓存失效。
+ARG XDANMU_VERSION=""
+ENV XDANMU_VERSION=${XDANMU_VERSION}
+
 # 暴露端口
 EXPOSE 9321
 

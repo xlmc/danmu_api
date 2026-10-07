@@ -365,27 +365,54 @@ function updateApiEndpoint() {
     });
 }
 
-function getDockerVersion() {
-  const url = "https://img.shields.io/docker/v/logvar/danmu-api?sort=semver";
+// 自用版本检测：读取本仓库最新 Release 徽标（xdanmu-v0.N）。
+// 只有确实比当前版本新时才显示「最新版本」；没有新版本或检测失败时只保留「当前版本」。
+const SELF_RELEASE_BADGE_URL = 'https://img.shields.io/github/v/release/xlmc/danmu_api';
+const SELF_RELEASE_PAGE = 'https://github.com/xlmc/danmu_api/releases/tag/';
 
-  fetch(url)
+function versionParts(text) {
+  const numbers = String(text || '').match(/\\d+/g);
+  return numbers ? numbers.map(Number) : null;
+}
+
+function isNewerVersion(latest, current) {
+  const left = versionParts(latest), right = versionParts(current);
+  if (!left || !right) return false;
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    const a = left[i] || 0, b = right[i] || 0;
+    if (a !== b) return a > b;
+  }
+  return false;
+}
+
+function checkLatestVersion() {
+  const currentElement = document.getElementById('current-version');
+  const updateBadge = document.getElementById('update-badge');
+  const latestElement = document.getElementById('latest-version');
+  const current = currentElement ? currentElement.textContent.trim() : '';
+
+  return fetch(SELF_RELEASE_BADGE_URL)
     .then(response => response.text())
     .then(svgContent => {
-      // 使用正则表达式从 SVG 中提取版本号
-      const versionMatch = svgContent.match(/version<\\/text><text.*?>(v[\\d\\.]+)/);
-
-      if (versionMatch && versionMatch[1]) {
-        console.log("Version:", versionMatch[1]);
-        const latestVersionElement = document.getElementById('latest-version');
-        if (latestVersionElement) {
-          latestVersionElement.textContent = versionMatch[1];
-        }
-      } else {
-        console.log("Version not found");
+      // 徽标形如 <title>release: xdanmu-v0.61</title>
+      const tagMatch = svgContent.match(/<title>[^<]*?((?:xdanmu-)?v[\\d.]+)<\\/title>/i);
+      if (!tagMatch || !tagMatch[1]) {
+        console.log("Latest self version not found");
+        return;
+      }
+      const tag = tagMatch[1];
+      const latest = 'v' + tag.replace(/^xdanmu-v/i, '');
+      if (!isNewerVersion(latest, current)) return;
+      console.log("New self version:", tag);
+      if (latestElement) latestElement.textContent = latest;
+      if (updateBadge) {
+        updateBadge.href = SELF_RELEASE_PAGE + tag;
+        updateBadge.style.display = '';
       }
     })
     .catch(error => {
-      console.error("Error fetching the SVG:", error);
+      // 检测失败时保持只显示当前版本
+      console.error("Error fetching the self version badge:", error);
     });
 }
 
@@ -565,7 +592,7 @@ function closeModal() {
 async function init() {
     try {
         await updateApiEndpoint(); // 等待API端点更新完成
-        getDockerVersion();
+        checkLatestVersion();
         // 从API获取配置信息，包括检查是否有admin token
         const config = await fetchAndSetConfig();
 

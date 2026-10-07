@@ -18,10 +18,14 @@ function resolveUiTheme(theme) {
 }
 
 export function handleUI() {
+  // 页头「当前版本」：优先显示发布流程注入的自用版本（xdanmu-v0.N），未注入时回退上游版本号。
+  const selfVersion = String(globals.selfVersion || '').trim();
+  const currentVersion = `v${selfVersion ? selfVersion.replace(/^xdanmu-v/i, '') : globals.version}`;
 
   const html = HTML_TEMPLATE
     .replace("globals.currentToken", () => globals.currentToken)
-    .replace("globals.uiTheme", resolveUiTheme(globals.uiTheme));
+    .replace("globals.uiTheme", resolveUiTheme(globals.uiTheme))
+    .replace("globals.currentVersion", () => currentVersion);
 
   return new Response(html, {
     headers: {
@@ -92,7 +96,7 @@ export function handleConfig(hasPermission = false) {
   }
 
   return jsonResponse({
-    message: "Welcome to the LogVar Danmu API server",
+    message: "Welcome to the Xdanmu Danmu API server",
     version: globals.VERSION,
     envs: previewEnvVars, // 配置预览使用
     categorizedEnvVars: categorizedVars,
