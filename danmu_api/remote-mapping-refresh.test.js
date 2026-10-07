@@ -4,7 +4,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { handleRequest } from './worker.js';
-import { getCachedRemoteAutoMatchMappingRules } from './utils/auto-match-mapping-url-util.js';
+import { getCachedRemoteAutoMatchMappingRules, initializeRemoteAutoMatchMapping } from './utils/auto-match-mapping-url-util.js';
+import { Globals } from './configs/globals.js';
 
 const endpoint = '/api/auto-match-mapping/refresh';
 const remoteUrl = 'https://mapping-test.example/season.txt';
@@ -62,5 +63,30 @@ test('admin refresh returns success and count after writing rules; failed refres
     globalThis.fetch = originalFetch;
     process.chdir(originalCwd);
     await fs.rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('background season refresh honours PROXY_URL and never writes error diagnostics', async () => {
+  const originalCwd = process.cwd();
+  const originalFetch = globalThis.fetch;
+  const quietUrl = 'https://mapping-test.example/quiet-season.txt';
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'season-quiet-test-'));
+  try {
+    process.chdir(temp);
+    const urls = [];
+    globalThis.fetch = async url => { urls.push(String(url)); throw new Error('simulated network failure'); };
+    Globals.init({ AUTO_MATCH_MAPPING_TABLE_URL: quietUrl, PROXY_URL: '@https://mirror.example', LOG_LEVEL: 'info' });
+    Globals.logBuffer = [];
+    await initializeRemoteAutoMatchMapping();
+    assert.equal(urls.length, 1);
+    assert.equal(urls[0], `https://mirror.example/${quietUrl}`, 'reverse proxy is applied to the mapping fetch');
+    assert.equal(Globals.logBuffer.filter(e => e.level === 'error' && e.message.includes('请求模拟')).length, 0,
+      'background failures must not write error diagnostics');
+    assert.equal(Globals.logBuffer.filter(e => e.level === 'warn' && e.message.includes('启动更新失败')).length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    process.chdir(originalCwd);
+    await fs.rm(temp, { recursive: true, force: true });
+    Globals.init({});
   }
 });

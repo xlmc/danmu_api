@@ -104,6 +104,9 @@ export async function httpGet(url, options = {}) {
 
   // 从 options 中获取重试次数，默认为 0
   const maxRetries = parseInt(options.retries || '0', 10) || 0;
+  // 后台任务（远程映射定时更新等）的失败由调用方汇总成一条日志，
+  // 这里只保留一行可定位的告警，避免每次尝试都写入大段错误诊断。
+  const quiet = options.quiet === true;
   // GET 与 POST 行为保持一致：默认跟随重定向，allow_redirects 为 false 时禁止（用于截获 302 Location）
   const allow_redirects = options.allow_redirects !== false;
   // 提取允许放行的特定状态码白名单
@@ -292,7 +295,9 @@ export async function httpGet(url, options = {}) {
       }
 
       // 检查是否是超时错误
-      if (error.name === 'AbortError') {
+      if (quiet) {
+        log("warn", `[${currentSource}] [请求模拟] 请求失败: ${url}（${error.message}）`);
+      } else if (error.name === 'AbortError') {
         log("error", `[${currentSource}] [请求模拟] 请求超时:`, error.message);
         log("error", '详细诊断:');
         log("error", '- URL:', url);
@@ -324,7 +329,7 @@ export async function httpGet(url, options = {}) {
 
   // 所有重试都失败，抛出最后一个错误
   const finalSource = sourceLogContext.getStore() || "system";
-  log("error", `[${finalSource}] [请求模拟] 所有重试均失败 (${maxRetries + 1} 次尝试)`);
+  if (!quiet) log("error", `[${finalSource}] [请求模拟] 所有重试均失败 (${maxRetries + 1} 次尝试)`);
   throw lastError;
 }
 

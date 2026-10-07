@@ -73,8 +73,10 @@ async function saveDisk(url, text) {
   }
 }
 
-async function fetchRemote(url) {
-  const response = await httpGet(url, { timeout: 5000, retries: 0 });
+async function fetchRemote(url, { quiet = false } = {}) {
+  // 后台定时/启动更新只记一行告警，避免远程地址不可达时把错误诊断刷满日志；
+  // 手动刷新保留完整诊断。
+  const response = await httpGet(globals.makeProxyUrl(url), { timeout: 5000, retries: 0, quiet });
   const text = typeof response?.data === 'string' ? response.data : String(response?.data || '');
   const rules = parseVerifiedRemoteRules(text);
   if (rules.length === 0) throw new Error('远程季集映射表没有可启用的有效季集规则');
@@ -98,7 +100,7 @@ function scheduleRefresh(url) {
   state.refreshTimer = setTimeout(async () => {
     state.refreshTimer = null;
     try {
-      await fetchRemote(url);
+      await fetchRemote(url, { quiet: true });
     } catch (error) {
       logRemoteMapping('warn', `[system] [remote-mapping] [remote-season] 定时更新失败，继续使用本机缓存: ${error?.message || error}`);
     }
@@ -132,7 +134,7 @@ export async function initializeRemoteAutoMatchMapping() {
   logRemoteMapping('info', `[system] [remote-mapping] [remote-season] 当前本机缓存: ${state.url === url ? state.rules.length : 0} 条规则`);
   if ((state.url !== url || state.rules.length === 0) && state.initialAttemptedUrl !== url) {
     state.initialAttemptedUrl = url;
-    state.fetching ||= fetchRemote(url).catch(error => {
+    state.fetching ||= fetchRemote(url, { quiet: true }).catch(error => {
       logRemoteMapping('warn', `[system] [remote-mapping] [remote-season] 启动更新失败，继续使用现有本机配置（当前缓存 ${state.url === url ? state.rules.length : 0} 条）: ${error?.message || error}`);
       return 0;
     }).finally(() => { state.fetching = null; });

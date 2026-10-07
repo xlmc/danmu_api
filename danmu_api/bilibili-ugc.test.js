@@ -113,7 +113,10 @@ test('ugc gate: bilibili thin triggers supplement; bilibili rich skips; non-bili
   tencent.getComments = async () => [{ p: '1,1,25,0', m: '原有' }];
   try {
     const r = await getComment(`/api/v2/comment/${nonBiliCommentId}`, 'json', false, '127.0.0.1');
-    assert.equal((await r.json()).count, 2, 'non-bilibili: ugc supplements, count=2');
+    const merged = await r.json();
+    assert.equal(merged.count, 2, 'non-bilibili: ugc supplements, count=2');
+    // 弹弹play 协议以 cid 标识单条弹幕：补充弹幕必须顺延编号，不能与主源 cid 重复。
+    assert.equal(new Set(merged.comments.map(c => c.cid)).size, merged.comments.length, 'cid stays unique after merging UGC');
     assert.equal(calls, 1, 'non-bilibili: supplement called once');
     Globals.envs.blockedWords = '补充'; Globals.commentCache = new Map();
     assert.equal((await (await getComment(`/api/v2/comment/${nonBiliCommentId}`, 'json', false, '127.0.0.1')).json()).count, 1);
@@ -132,6 +135,49 @@ test('ugc gate: bilibili thin triggers supplement; bilibili rich skips; non-bili
 });
 
 
+test('variety episode numbers come from the episode title instead of the catalog index', () => {
+  const resolved = { anime: { animeId: 7943670, source: 'imgo', bangumiId: '896231', animeTitle: '披荆斩棘2026(2026)【综艺】from imgo', aliases: [], startDate: '2026-08-01' },
+    link: { title: '【imgo】 2026-10-03 第8期下：四公滚烫半场', url: 'https://www.mgtv.com/b/896231/1.html' }, index: 2 };
+  const ctx = buildUgcContext(resolved);
+  assert.equal(ctx.episode, 8, '第8期下 is episode 8, not the third catalog entry');
+  assert.equal(ctx.episodeSource, 'episode-title');
+  const queries = buildUgcQueries(ctx);
+  assert(queries.includes('披荆斩棘2026 第8期'), 'variety issues are searched as 期');
+  assert(queries.includes('披荆斩棘2026 第8集'), 'episode wording stays available as a fallback');
+  // 目录下标只在标题无法给出集号时才使用。
+  const fallback = buildUgcContext({ ...resolved, link: { ...resolved.link, title: '【imgo】 四公滚烫半场' } });
+  assert.equal(fallback.episode, 3); assert.equal(fallback.episodeSource, 'catalog-index');
+});
+test('upper and lower parts cannot stand in for each other', () => {
+  const variety = { ...context, episodeTitle: '第5期下：正片' };
+  const reasons = [];
+  const wrong = selectUgcPages(variety, video('测试作品 第2季 第5期', [{ cid: 1, page: 1, part: '第5期上', duration: 40 }]), r => reasons.push(r));
+  assert.equal(wrong.length, 0); assert(reasons.includes('part-mismatch'));
+  const right = selectUgcPages(variety, video('测试作品 第2季 第5期', [{ cid: 2, page: 1, part: '第5期下', duration: 40 }]));
+  assert.equal(right.length, 1); assert.equal(right[0].cid, 2);
+});
+test('candidates with too few reported danmaku are rejected as noise', async () => {
+  const deps = dependencies();
+  deps.json = async url => {
+    if (url.includes('/search/type')) return { code: 0, data: { result: [
+      { bvid: 'BVnoise', title: '测试作品 第2季 第5集', video_review: 9, stat: { danmaku: 7 } },
+      { bvid: 'BVcandidate', title: '测试作品 第2季 第5集', video_review: 1, stat: { danmaku: 500 } }] } };
+    if (url.includes('/view?')) return { code: 0, data: video('测试作品 第2季 第5集') };
+    throw Error('unexpected ' + url);
+  };
+  const events = [], logger = (event, message, data) => events.push({ event, data });
+  const result = await createUgcSupplement(deps).supplement(context, [{ p: '1,1,25,0', m: '原有' }], { logger });
+  assert.deepEqual(result.map(c => c.m), ['原有', '一条也可用']);
+  assert(events.some(e => e.event === 'candidate.reject' && e.data.reason === 'low-danmaku' && e.data.bvid === 'BVnoise'));
+});
+test('promo danmaku inside candidate clips are dropped before merging', async () => {
+  const deps = dependencies();
+  deps.source.getEpisodeDanmu = async () => [{ p: '5,1,25,0', m: '大家点点关注支持呦' }, { p: '6,1,25,0', m: '一条也可用' }];
+  const events = [], logger = (event, message, data) => events.push({ event, data });
+  const result = await createUgcSupplement(deps).supplement(context, [{ p: '1,1,25,0', m: '原有' }], { logger });
+  assert.deepEqual(result.map(c => c.m), ['原有', '一条也可用']);
+  assert(events.some(e => e.event === 'candidate.promo' && e.data.removed === 1));
+});
 test('handleConfig exposes BILIBILI_UGC_ENABLED and defaults budget to 10s without UI entry', async () => {
   Globals.init();
   const res = handleConfig(true);

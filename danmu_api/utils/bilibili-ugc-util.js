@@ -12,6 +12,55 @@ const number = s => /^\d+$/.test(s) ? Number(s) : convertChineseNumber(s);
 const excluded = /reaction|第一次看|首看|一口气看|解说|讲解|混剪|预告|花絮|片段|测评|玩具|有声|小说|网盘|资源分享|\bMAD\b|\bCUT\b|纯\s*(?:OP|ED)/iu;
 const versions = /精编|(?<!未)删减|重制|英文|日语|粤语|配音|特别版|特別版|番外|续集/g;
 
+// 投稿自身弹幕量过少时多为花絮/搬运/广告素材，补充进来只会稀释弹幕质量。
+// 仅在搜索结果给出 stat 时判定；缺少统计字段时不做限制（部分接口不返回 stat）。
+const MIN_CANDIDATE_DANMAKU = 20;
+// UGC 补充弹幕中的引流广告文本。平台主源弹幕仍完全由用户屏蔽词规则处理。
+const UGC_PROMO = /点\s*点?\s*关注|关注\s*(?:我|一下|主播|UP|up)|一键三连|求\s*(?:三连|关注|点赞|投币)|点赞投币|记得关注|加个关注|素质三连|三连一下/u;
+// 单次检索与分P详情并发度；B 站 wbi 接口按此并发调用，避免串行等待叠加超时。
+const SEARCH_CONCURRENCY = 3;
+const DETAIL_CONCURRENCY = 3;
+const COMMENT_CONCURRENCY = 2;
+
+const commentText = item => String(item?.m ?? item?.content ?? item?.text ?? '');
+
+/** 「第8期下」这类上下篇标记；仅比较明确的期/集相邻标记，避免误伤普通标题。 */
+function partMarker(text) {
+  const value = String(text || '').normalize('NFKC');
+  const adjacent = value.match(/第\s*[\d一二三四五六七八九十百零两]+\s*[期集话回]\s*([上下])/);
+  if (adjacent) return adjacent[1] === '下' ? 'lower' : 'upper';
+  if (/[（(【\[]\s*下\s*[）)】\]]|下\s*[集篇]\s*$/.test(value)) return 'lower';
+  if (/[（(【\[]\s*上\s*[）)】\]]|上\s*[集篇]\s*$/.test(value)) return 'upper';
+  return '';
+}
+
+/** 外部中断信号到达时立即让等待中的网络请求结束，避免并发任务悬挂到超时。 */
+function abortable(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason ?? new Error('aborted'));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason ?? new Error('aborted'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      value => { signal.removeEventListener('abort', onAbort); resolve(value); },
+      error => { signal.removeEventListener('abort', onAbort); reject(error); });
+  });
+}
+
+/** 有界并发执行，保持结果顺序；任一任务失败即整体失败。 */
+async function mapConcurrent(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  const runners = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 let ugcLogSequence = 0;
 export function createUgcLogger(context = {}) {
   const ugcId = Date.now().toString(36) + '-' + (++ugcLogSequence).toString(36);
@@ -26,14 +75,18 @@ export function buildUgcContext(resolved) {
   if (!resolved?.anime || !resolved.link) return null;
   const { anime, link, index } = resolved;
   const parsed = extractAnimeInfo(anime.animeTitle, link.title);
-  const episode = parsed.episode ?? index + 1; // Same episode position as the existing detail model.
+  // 综艺等以「第N期」编号的作品无法被通用集数解析器识别；先用分集标题自身的期/集号，
+  // 再退回解析器结果，最后才用目录下标。目录下标并不等于作品集号，直接采用会检索到错误的一期。
+  const fromTitle = episodeNumber(link.title);
+  const episode = fromTitle ?? parsed.episode ?? index + 1;
   if (!parsed.baseTitle || !Number.isInteger(episode) || episode < 1) return null;
   return {
     identity: `${anime.source}:${anime.animeId}:${anime.bangumiId}`,
     title: parsed.baseTitle, aliases: [...(anime.aliases || [])],
     year: Number(String(anime.startDate || '').slice(0, 4)) || null,
     season: parsed.season ?? anime.tmdbIdentity?.seasonNumber ?? null,
-    episode, episodeTitle: link.title, referenceUrl: link.url,
+    episode, episodeSource: fromTitle !== null ? 'episode-title' : parsed.episode !== null ? 'catalog-title' : 'catalog-index',
+    episodeTitle: link.title, referenceUrl: link.url,
     type: anime.typeDescription || anime.type || '',
     tmdbIdentity: anime.tmdbIdentity || null,
   };
@@ -43,7 +96,10 @@ export function buildUgcQueries(context) {
   const n = context.episode, padded = String(n).padStart(2, '0');
   const names = [...new Set([context.title, ...(context.aliases || [])].filter(Boolean))].slice(0, 3);
   const season = context.season ? ` 第${context.season}季` : '';
-  return [...new Set(names.flatMap(name => [`${name}${season} 第${n}集`, `${name}${season} ${padded}`, `${name}${season} 合集`]))];
+  // 综艺用「第N期」，剧集用「第N集」；两种编号都检索，避免用错单位而漏掉真实投稿。
+  const units = /第\s*[\d一二三四五六七八九十百零两]+\s*期/.test(String(context.episodeTitle || '')) ? ['期', '集'] : ['集'];
+  return [...new Set(names.flatMap(name =>
+    [...units.map(unit => `${name}${season} 第${n}${unit}`), `${name}${season} ${padded}`, `${name}${season} 合集`]))];
 }
 
 function episodeNumber(text) {
@@ -66,6 +122,10 @@ export function selectUgcPages(context, video, onReject = () => {}) {
   return pages.flatMap(p => {
     if (excluded.test(`${title} ${p.part}`)) return reject('non-content', p);
     if ([...String(p.part).matchAll(versions)].some(m => !contextText.includes(m[0]))) return reject('version-mismatch', p);
+    // 上下篇：目标集是「第8期下」时，不能用「第8期上」的弹幕替代。
+    const contextPart = partMarker(context.episodeTitle);
+    const pagePart = partMarker(p.part) || (pages.length === 1 ? partMarker(title) : '');
+    if (contextPart && pagePart && contextPart !== pagePart) return reject('part-mismatch', p);
     const pageEpisode = episodeNumber(p.part);
     let bareEpisodeTitle = normalize(String(context.episodeTitle || '').replace(/【[^】]+】/g, '').replace(/第\s*[\d一二三四五六七八九十百]+\s*[集话期回]/g, ''));
     for (const name of aliases) bareEpisodeTitle = bareEpisodeTitle.replace(normalize(name), '');
@@ -131,74 +191,90 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
     const result = { candidates: [], accepted: [], failures: [] };
     logger('search.start', '开始检索投稿', { maxCandidates });
     const videos = new Map(), key = await source._getWbiMixinKey();
-    for (const keyword of buildUgcQueries(context)) {
-      for (const order of ['totalrank', 'dm']) {
-        signal?.throwIfAborted();
-        logger('search.query', '检索关键词：' + keyword + '，排序=' + order, { keyword, order });
-        const params = source._getWbiSignedParams({ keyword, search_type: 'video', page: 1, page_size: 20, order }, key);
-        const data = await json('https://api.bilibili.com/x/web-interface/wbi/search/type?' + new URLSearchParams(params));
-        if (data.code !== 0) throw new Error('ugc-search-' + data.code);
-        const rows = data.data?.result || [];
-        for (const v of rows) if (v.bvid) videos.set(v.bvid, v);
-        logger('search.result', '本次检索返回 ' + rows.length + ' 个投稿', { keyword, order, count: rows.length });
-      }
-    }
+    const queries = buildUgcQueries(context).flatMap(keyword => ['totalrank', 'dm'].map(order => ({ keyword, order })));
+    await mapConcurrent(queries, SEARCH_CONCURRENCY, async ({ keyword, order }) => {
+      signal?.throwIfAborted();
+      logger('search.query', '检索关键词：' + keyword + '，排序=' + order, { keyword, order });
+      const params = source._getWbiSignedParams({ keyword, search_type: 'video', page: 1, page_size: 20, order }, key);
+      const data = await abortable(json('https://api.bilibili.com/x/web-interface/wbi/search/type?' + new URLSearchParams(params)), signal);
+      if (data.code !== 0) throw new Error('ugc-search-' + data.code);
+      const rows = data.data?.result || [];
+      for (const v of rows) if (v.bvid && !videos.has(v.bvid)) videos.set(v.bvid, v);
+      logger('search.result', '本次检索返回 ' + rows.length + ' 个投稿', { keyword, order, count: rows.length });
+    });
     const ordered = [...videos.values()].filter(v => {
       const title = clean(v.title), ep = episodeNumber(title);
+      // stat 缺失时不限制；给出弹幕数但过少的投稿通常是花絮/搬运/广告素材。
+      const reported = v.stat ? Number(v.stat.danmaku) : null;
       const reason = excluded.test(title) ? 'non-content'
         : ![context.title, ...context.aliases || []].some(name => normalize(title).includes(normalize(name))) ? 'title-mismatch'
-        : !(ep === null || ep === context.episode || /合集|全集|全\s*\d+|1\s*[-~～]\s*\d+/.test(title)) ? 'episode-mismatch' : null;
-      if (reason) logger('candidate.reject', '投稿初筛拒绝：' + v.bvid + '，原因=' + reason, { bvid: v.bvid, candidateTitle: title, reason });
+        : !(ep === null || ep === context.episode || /合集|全集|全\s*\d+|1\s*[-~～]\s*\d+/.test(title)) ? 'episode-mismatch'
+        : (reported !== null && Number.isFinite(reported) && reported < MIN_CANDIDATE_DANMAKU) ? 'low-danmaku' : null;
+      if (reason) logger('candidate.reject', '投稿初筛拒绝：' + v.bvid + '，原因=' + reason, { bvid: v.bvid, candidateTitle: title, reason, reportedDanmaku: reported });
       return !reason;
     }).sort((a, b) => (b.video_review || 0) - (a.video_review || 0));
     logger('search.end', '检索去重 ' + videos.size + ' 个，初筛通过 ' + ordered.length + ' 个', { discovered: videos.size, eligible: ordered.length, metadataLimit: 30 });
-    for (const v of ordered.slice(0, 30)) {
+    const details = await mapConcurrent(ordered.slice(0, 30), DETAIL_CONCURRENCY, async v => {
       signal?.throwIfAborted();
       try {
         logger('candidate.detail', '读取投稿分P：' + v.bvid, { bvid: v.bvid });
-        const view = await json('https://api.bilibili.com/x/web-interface/view?bvid=' + v.bvid);
+        const view = await abortable(json('https://api.bilibili.com/x/web-interface/view?bvid=' + v.bvid), signal);
         const selected = selectUgcPages(context, view.data || {}, (reason, page) => logger('candidate.reject',
           '投稿身份校验拒绝：' + v.bvid + '，原因=' + reason,
           { bvid: v.bvid, cid: page?.cid, page: page?.page, candidateTitle: clean(view.data?.title), reason }));
-        result.candidates.push(...selected);
         for (const c of selected) logger('candidate.select', '候选通过身份校验：' + c.bvid + ' P' + c.page + '，CID=' + c.cid,
           { bvid: c.bvid, cid: c.cid, page: c.page, duration: c.duration, reportedComments: c.searchCount });
+        return { selected };
       } catch (e) {
-        result.failures.push({ bvid: v.bvid, reason: e.message });
         logger('candidate.failure', '投稿详情获取失败：' + v.bvid + '，' + e.message, { bvid: v.bvid, reason: e.message }, 'warn');
+        return { failure: { bvid: v.bvid, reason: e.message } };
       }
+    });
+    for (const detail of details) {
+      result.candidates.push(...(detail.selected || []));
+      if (detail.failure) result.failures.push(detail.failure);
     }
     logger('candidates.ready', '可用分P候选 ' + result.candidates.length + ' 个', { count: result.candidates.length });
     logger('mode', '仅匹配投稿元数据并获取弹幕，不请求音视频；时间轴未经音频校验', { mode: 'metadata-only', timelineVerified: false });
-    const selected = result.candidates.slice(0, maxCandidates), seen = new Set();
-    for (const c of selected) {
-      if (signal?.aborted) break;
-      if (seen.has(c.cid)) continue;
+    const seen = new Set();
+    const selected = result.candidates.slice(0, maxCandidates).filter(c => {
+      if (seen.has(c.cid)) return false;
       seen.add(c.cid);
+      return true;
+    });
+    const fetched = await mapConcurrent(selected, COMMENT_CONCURRENCY, async c => {
+      if (signal?.aborted) return { skipped: true };
       const started = performance.now();
       try {
         logger('candidate.fetch', '获取候选弹幕：' + c.bvid + ' P' + c.page, { bvid: c.bvid, cid: c.cid });
-        const raw = await source.getEpisodeDanmu(c.url), comments = source.formatComments(raw);
+        const raw = await abortable(source.getEpisodeDanmu(c.url), signal);
+        const all = source.formatComments(raw);
+        // 投稿弹幕常含「点点关注」等引流内容；平台主源弹幕不受此规则影响。
+        const comments = all.filter(item => !UGC_PROMO.test(commentText(item)));
+        if (comments.length !== all.length) logger('candidate.promo', '候选过滤引流弹幕 ' + (all.length - comments.length) + ' 条', { bvid: c.bvid, cid: c.cid, removed: all.length - comments.length, count: comments.length });
         signal?.throwIfAborted();
         c.fetchedCount = comments.length;
         logger('candidate.comments', '候选取得 ' + comments.length + ' 条弹幕', { bvid: c.bvid, cid: c.cid, count: comments.length });
         if (!comments.length) {
           c.timeline = { status: 'pending', reason: 'no-comments' };
           logger('candidate.reject', '候选没有弹幕', { bvid: c.bvid, cid: c.cid, reason: 'no-comments' });
-          continue;
+          return { rejected: true };
         }
         const duration = Math.min(c.duration, rangeSeconds ?? c.duration);
         c.timeline = { status: 'metadata-matched', offsetSeconds: 0, validRange: [0, duration] };
-        result.accepted.push({ cid: c.cid, comments, timeline: c.timeline });
         logger('candidate.accept', '候选身份匹配，保留原始弹幕时间戳；时间轴未经音频校验',
           { bvid: c.bvid, cid: c.cid, status: 'metadata-matched', timelineVerified: false, offsetSeconds: 0, validRange: [0, duration], durationMs: Math.round(performance.now() - started) });
+        return { accepted: { cid: c.cid, comments, timeline: c.timeline } };
       } catch (e) {
         const reason = signal?.aborted ? 'timeout' : e.message;
         c.timeline = { status: 'pending', reason };
-        result.failures.push({ bvid: c.bvid, reason });
         logger('candidate.failure', '候选弹幕获取失败：' + c.bvid + '，' + reason, { bvid: c.bvid, cid: c.cid, reason }, 'warn');
-        if (signal?.aborted) break;
+        return { failure: { bvid: c.bvid, reason } };
       }
+    });
+    for (const row of fetched) {
+      if (row.accepted) result.accepted.push(row.accepted);
+      if (row.failure) result.failures.push(row.failure);
     }
     result.timedOut = Boolean(signal?.aborted);
     return result;

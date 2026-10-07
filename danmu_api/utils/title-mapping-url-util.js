@@ -381,12 +381,14 @@ function ensureMergedIntoGlobals() {
  *
  * @param {string} url 归一化后的远程地址
  */
-async function fetchRemoteMappings(url) {
+async function fetchRemoteMappings(url, { quiet = false } = {}) {
   remoteState.attemptedUrl = url;
   logRemoteMapping("info", `[system] [remote-mapping] 拉取远程剧名映射表: ${url}`);
 
   // 单次请求短超时 5 秒：避免远程站点不可达时卡住更新按钮很久
-  const res = await httpGet(url, { timeout: 5000, retries: 0 });
+  // 定时重试属于后台任务：失败细节由上层汇总为一条告警，避免每次尝试写入大段错误诊断。
+  // 手动更新保留完整诊断，便于用户排查。
+  const res = await httpGet(globals.makeProxyUrl(url), { timeout: 5000, retries: 0, quiet });
   const text = typeof res?.data === 'string' ? res.data : (res?.data != null ? String(res.data) : '');
   if (!text.trim()) throw new Error('远程映射表内容为空');
 
@@ -416,7 +418,7 @@ async function refreshRemoteTitleMapping(url, reason = 'scheduled') {
     for (let attempt = 1; attempt <= REMOTE_REFRESH_RETRY_COUNT; attempt++) {
       try {
         logRemoteMapping("info", `[system] [remote-mapping] ${reason} 更新尝试 ${attempt}/${REMOTE_REFRESH_RETRY_COUNT}`);
-        await fetchRemoteMappings(url);   // 下载 + 生效 + 写缓存（一步到位）
+        await fetchRemoteMappings(url, { quiet: true });   // 下载 + 生效 + 写缓存（一步到位）
         remoteState.failedAt = 0;         // 成功：清除失败标记
         logRemoteMapping("info", `[system] [remote-mapping] 远程映射表更新成功（第 ${attempt} 次尝试）`);
         return true;

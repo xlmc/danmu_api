@@ -1710,7 +1710,7 @@ function needsGroupMerge(sources) {
     rule.secondary.source.split('&').some(source => active.has(source)));
 }
 
-async function executeMatchAttemptBody({ req, title, season, episode, year, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false, tmdbIdentity = null, tmdbEpisode = null, sourceSearches = null, searchSources = null, stagePlatform }) {
+async function executeMatchAttemptBody({ req, title, season, episode, year, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false, tmdbIdentity = null, tmdbEpisode = null, tmdbEpisodeHint = null, sourceSearches = null, searchSources = null, stagePlatform }) {
   const startedAt = Date.now();
   // A platform-qualified rule describes that platform's numbering. Never
   // apply its offset to another source if the platform has no matching episode.
@@ -1872,6 +1872,22 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, pref
     }
   }
 
+  // 常规季集选择失败后，用 TMDB 分集身份在本平台组内再定位一次（整次匹配只查询一次 TMDB）；
+  // 命中即可停止遍历后续平台组，避免为同一部作品重复搜索所有来源。
+  if (tmdbEpisodeHint && !tmdbEpisode) {
+    const hint = await tmdbEpisodeHint().catch(() => null);
+    if (hint) {
+      const hintCatalog = searchData.animes.map(anime => ({ ...anime, links:
+        resolveAnimeByIdFromDetailStore(anime.bangumiId || anime.animeId, detailStore, anime.source)?.links || anime.links }));
+      const hinted = selectTmdbEpisode(hintCatalog, hint, tmdbIdentity,
+        anime => getBangumiDataForMatch(anime, detailStore)?.bangumi?.episodes);
+      if (hinted) {
+        log('info', `[system] [match] TMDB 分集提示命中: ${hint.name} -> ${hinted.resAnime.animeTitle} / ${hinted.resEpisode.episodeTitle}`);
+        return { resAnime: null, resEpisode: null, spilloverMatched: false, ...hinted, title, season, episode, cacheWarning };
+      }
+    }
+  }
+
   return { resAnime: null, resEpisode: null, spilloverMatched: false, title, season, episode, cacheWarning };
 }
 
@@ -1961,6 +1977,17 @@ async function matchAnimeWithTrace(url, req, clientIp) {
 
     const succeeded = value => Boolean(value?.resAnime && value?.resEpisode);
 
+    // 同一个 TMDB 分集查询在整次匹配中只执行一次：只有平台组完成搜索且常规季集选择失败时
+    // 才会真正发起，命中后当前平台组直接返回，不再遍历后续平台组。
+    let tmdbEpisodeHintPromise = null;
+    const tmdbEpisodeHint = () => {
+      if (!tmdbIdentity || originalSeason === 0 || !Number.isInteger(originalSeason) ||
+          !Number.isInteger(originalEpisode) || originalEpisode < 1) return Promise.resolve(null);
+      tmdbEpisodeHintPromise ||= resolveTmdbEpisodeMetadata(tmdbIdentity, originalSeason, originalEpisode)
+        .catch(error => { log('warn', `[system] [match] TMDB 分集提示查询失败: ${error.message}`); return null; });
+      return tmdbEpisodeHintPromise;
+    };
+
     const tryTitlePath = async ({ stage, title, preferAnimeId = null, preferSource = null, offsets = null, strictTargetTitle = false }) => {
       const normalizedTitle = normalizeMatchTitle(title);
       const pathKey = JSON.stringify([normalizedTitle, originalSeason, originalEpisode, preferAnimeId, preferSource, offsets, strictTargetTitle]);
@@ -1983,6 +2010,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
         offsets,
         mapping: null,
         tmdbIdentity,
+        tmdbEpisodeHint,
         sourceSearches,
         strictTargetTitle
       }));
@@ -2666,6 +2694,10 @@ async function supplementUgcForEpisode(commentId, url, comments, segmentFlag, su
     const originalKeys = new Set(comments.map(c => c.p + '\u0000' + c.m));
     const additions = augmented === comments ? [] : augmented.filter(c => !original.has(c) && !originalKeys.has(c.p + '\u0000' + c.m));
     const filtered = convertToDanmakuJson(additions, 'bilibili');
+    // 转换器会为补充弹幕从 1 重新编号 cid，与主源 cid 冲突；弹弹play 协议以 cid 标识单条弹幕，
+    // 因此把补充弹幕的 cid 顺延到主源最大值之后，保证合并结果内 cid 唯一。
+    let nextCid = comments.reduce((max, c) => Math.max(max, Number(c?.cid) || 0), 0) + 1;
+    for (const c of filtered) c.cid = nextCid++;
     logger('return', 'UGC合并结果（人物过滤前）：原弹幕 ' + comments.length + ' 条，实际新增 ' + filtered.length + ' 条，最终 ' + (comments.length + filtered.length) + ' 条，耗时 ' + Math.round(performance.now() - started) + 'ms',
       { commentId, originalCount: comments.length, mergedAddedCount: additions.length, filteredCount: additions.length - filtered.length, addedCount: filtered.length, finalCount: comments.length + filtered.length, durationMs: Math.round(performance.now() - started) });
     if (augmented === comments) return comments;

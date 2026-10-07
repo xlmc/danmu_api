@@ -365,7 +365,9 @@ test('ordinary TMDB fallback processes all group members and returns their confi
     assert.equal(result.data.isMatched,true,JSON.stringify(result.data));
     assert.ok(result.data.matches[0].url.includes('$$$'),'matching response must carry all configured sources');
     assert.equal(iqiyiHandles,1,'the completed group directory is reused by subsequent stages');
-    assert.equal(bilibiliHandles,2,'later group belongs to the two failed normal stages and is skipped by the successful metadata stage');
+    // 常规季集选择失败后会用 TMDB 分集身份在本平台组内再定位一次：命中即停止，
+    // 因此后续平台组只在第一个失败阶段被搜索过一次，第二个阶段不再遍历它。
+    assert.equal(bilibiliHandles,1,'the successful metadata stage stops before searching the later group again');
     assert.equal(result.requests.filter(url=>url.includes('/season/1/episode/2')).length,1);
   } finally {for(const {source,search,handle,comments} of saved){source.search=search;source.handleAnimes=handle;source.getComments=comments;}}
 });
