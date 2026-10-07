@@ -202,6 +202,7 @@ export const HTML_TEMPLATE = /* html */ `
                                 <label class="cache-clear-item"><input type="checkbox" class="app-checkbox" name="cacheItem" value="episodeIds" checked onchange="updateCacheClearCount()"> 剧集ID缓存 (episodeIds)</label>
                                 <label class="cache-clear-item"><input type="checkbox" class="app-checkbox" name="cacheItem" value="episodeNum" checked onchange="updateCacheClearCount()"> 剧集编号缓存 (episodeNum)</label>
                                 <label class="cache-clear-item"><input type="checkbox" class="app-checkbox" name="cacheItem" value="lastSelectMap" checked onchange="updateCacheClearCount()"> 最后选择映射缓存 (lastSelectMap)</label>
+                                <label class="cache-clear-item"><input type="checkbox" class="app-checkbox" name="cacheItem" value="personSources" checked onchange="updateCacheClearCount()"> 人物名单缓存 (personSources)</label>
                             </div>
                             <p class="cache-clear-note">清理后可能需要重新登录</p>
                         </div>
