@@ -202,6 +202,14 @@ export async function handleClearCache(req) {
       } catch (e) {
         log("error", `[system] [server] Failed to clear Bangumi-Data cache: ${e.message}`);
       }
+    },
+    personSources: async () => {
+      try {
+        const { clearPersonSourceCache } = await import('../utils/person-source-cache.js');
+        await clearPersonSourceCache();
+      } catch (e) {
+        log("error", `[system] [person-metadata] Failed to clear person source cache: ${e.message}`);
+      }
     }
   };
   const allItems = Object.keys(clearActions);
@@ -223,7 +231,10 @@ export async function handleClearCache(req) {
 
   try {
     for (const key of effectiveItems) {
-      clearActions[key]();
+      await clearActions[key]();
+    }
+    if (effectiveItems.includes('searchCache') && !effectiveItems.includes('personSources')) {
+      await clearActions.personSources();
     }
 
     if (effectiveItems.includes('episodeNum')) globals.episodeNum = getEpisodeIdFloor();

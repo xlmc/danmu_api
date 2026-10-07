@@ -17,7 +17,13 @@ async function initialize() {
       if (data.version === 1 && Array.isArray(data.entries)) {
         for (const [key, entry] of data.entries.slice(-LIMIT)) {
           if (typeof key === 'string' && entry && Number.isFinite(entry.expiresAt)
-            && Number.isFinite(entry.retryAt)) entries.set(key, entry);
+            && Number.isFinite(entry.retryAt)) {
+            if (entry.value && Array.isArray(entry.value.actorNames) && Array.isArray(entry.value.characterNames)
+              && entry.value.actorNames.length + entry.value.characterNames.length === 0) {
+              continue;
+            }
+            entries.set(key, entry);
+          }
         }
       }
     } catch (error) {
@@ -25,6 +31,16 @@ async function initialize() {
     }
   })();
   return initialized;
+}
+
+export async function clearPersonSourceCache() {
+  entries.clear();
+  pending.clear();
+  if (disk) {
+    try {
+      await disk.fs.unlink(disk.file);
+    } catch (_) {}
+  }
 }
 
 async function persist() {
