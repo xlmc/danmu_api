@@ -340,10 +340,13 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
     return result;
   }
 
-  async function supplement(context, base, options = {}) {
+  // 检索与合并拆开：检索是 UGC 的真实耗时（缓存未命中时可达数秒），可以在抓主源弹幕之前
+  // 并行发起；等弹幕到手后再合并，从而把这段耗时从串行路径里省掉。
+  async function prepare(context, options = {}) {
     const started = performance.now(), logger = options.logger || createUgcLogger(context);
     const budgetMs = options.budgetMs ?? 10000;
-    logger('start', '开始UGC补充，原弹幕 ' + base.length + ' 条，预算 ' + budgetMs + 'ms', { originalCount: base.length, budgetMs });
+    logger('start', options.prefetch ? '开始UGC补充（与主源弹幕并行检索），预算 ' + budgetMs + 'ms' : '开始UGC补充，预算 ' + budgetMs + 'ms',
+      { budgetMs, prefetch: Boolean(options.prefetch) });
     const key = JSON.stringify(['ugc-metadata-v2', context, options.rangeSeconds ?? null, options.maxCandidates ?? 8]);
     const entry = cache.get(key);
     let result, cacheState = 'miss';
@@ -374,7 +377,12 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
         task.finally(() => clearTimeout(t));
       })]);
     }
-    const durationMs = Math.round(performance.now() - started);
+    return { result, cacheState, durationMs: Math.round(performance.now() - started), budgetMs, logger };
+  }
+
+  // 用已完成的检索结果合并到主源弹幕；base 此时才需要，所以并行预取不影响其它判断。
+  async function settle(context, base, prepared) {
+    const { result, cacheState, durationMs, budgetMs, logger } = prepared;
     if (!result) {
       logger('end', 'UGC超时，保留原弹幕；新增0条，耗时 ' + durationMs + 'ms',
         { status: 'timeout', originalCount: base.length, addedCount: 0, finalCount: base.length, durationMs, budgetMs, cacheState }, 'warn');
@@ -388,7 +396,13 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
       { status, candidates: result.candidates.length, accepted: result.accepted.length, failures, originalCount: base.length, addedCount: merged.length - base.length, finalCount: merged.length, durationMs, cacheState }, status === 'timeout' ? 'warn' : 'info');
     return merged;
   }
-  return { search, resolve, supplement, clear: () => cache.clear() };
+
+  // options.prepared 可以是先前 prepare() 的结果（并行预取），也可以是它的 Promise。
+  async function supplement(context, base, options = {}) {
+    const prepared = options.prepared ? await options.prepared : await prepare(context, options);
+    return settle(context, base, prepared);
+  }
+  return { search, prepare, settle, resolve, supplement, clear: () => cache.clear() };
 }
 
 export const ugcSupplement = createUgcSupplement();

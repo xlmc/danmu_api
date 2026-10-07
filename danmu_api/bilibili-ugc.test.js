@@ -230,6 +230,22 @@ test('promo danmaku inside candidate clips are dropped before merging', async ()
   assert.deepEqual(result.map(c => c.m), ['原有', '一条也可用']);
   assert(events.some(e => e.event === 'candidate.promo' && e.data.removed === 1));
 });
+// 并行预取：检索可以先于主源弹幕发起，拿到弹幕后再用同一份结果合并，不能重复检索。
+test('prefetched resolve merges without searching twice', async () => {
+  const deps = dependencies();
+  let searches = 0;
+  const baseJson = deps.json;
+  deps.json = async url => { if (url.includes('/search/type')) searches++; return baseJson(url); };
+  const service = createUgcSupplement(deps), base = [{ p: '1,1,25,0', m: '原有' }];
+  const prepared = await service.prepare(context, { budgetMs: 2000, prefetch: true });
+  const afterPrepare = searches;
+  assert(afterPrepare > 0, '预取阶段完成检索');
+  const merged = await service.supplement(context, base, { budgetMs: 2000, prepared });
+  assert.equal(merged.length, 2);
+  assert.equal(merged[1].m, '一条也可用');
+  assert.equal(searches, afterPrepare, '合并阶段不再重复检索');
+});
+
 test('handleConfig exposes BILIBILI_UGC_ENABLED and defaults budget to 10s without UI entry', async () => {
   Globals.init();
   const res = handleConfig(true);

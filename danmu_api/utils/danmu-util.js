@@ -390,6 +390,36 @@ export function buildCharacterNicknameMatchers(names) {
   return buildPersonNicknameMatchers(names);
 }
 
+// 昵称数量随演员表增长（14 个演员即可派生 5000+ 个），逐条线性扫全部匹配器会让每次弹幕请求多花近 1 秒。
+// 把纯字面量匹配器编成前缀树：按文本逐字走树，命中即返回，代价与昵称总数无关（只与文本长度有关）。
+const NEEDLE_LABEL = Symbol('needleLabel');
+function buildNeedleTrie(matchers) {
+  const root = new Map();
+  for (const matcher of matchers) {
+    if (matcher.regex || !matcher.needle) continue;
+    let node = root;
+    for (const char of matcher.needle) {
+      let next = node.get(char);
+      if (!next) { next = new Map(); node.set(char, next); }
+      node = next;
+    }
+    if (!node.has(NEEDLE_LABEL)) node.set(NEEDLE_LABEL, matcher.label);
+  }
+  return root;
+}
+function matchNeedleTrie(root, text) {
+  for (let start = 0; start < text.length; start++) {
+    let node = root;
+    for (let index = start; index < text.length; index++) {
+      node = node.get(text[index]);
+      if (!node) break;
+      const label = node.get(NEEDLE_LABEL);
+      if (label !== undefined) return label;
+    }
+  }
+  return null;
+}
+
 export function filterDanmusByBlockedNames(danmus, names, options = {}) {
   if (!Array.isArray(danmus) || danmus.length === 0) {
     return { danmus: Array.isArray(danmus) ? danmus : [], removedCount: 0, hits: [] };
@@ -404,17 +434,20 @@ export function filterDanmusByBlockedNames(danmus, names, options = {}) {
   if (matchers.length === 0 && surnameMatchers.length === 0) {
     return { danmus, removedCount: 0, hits: [] };
   }
+  const needleTrie = buildNeedleTrie(matchers);
+  // 极少数带正则的匹配器（未分类名单的语境规则）仍需逐条判断，数量很少。
+  const regexMatchers = matchers.filter(matcher => matcher.regex);
 
   const hitCounts = new Map();
   const filtered = danmus.filter(item => {
     const rawText = String(item?.m || '').normalize('NFKC');
     const text = rawText.replace(/[\s·・•‧·･]+/g, '').toLocaleLowerCase();
     const personText = matchers.length ? simplized(text) : text;
-    const matcher = matchers.find(candidate => candidate.regex ? candidate.regex.test(personText) : personText.includes(candidate.needle));
-    const surnameMatcher = matcher ? null : surnameMatchers.find(candidate => candidate.regex.test(text));
-    const hit = matcher || surnameMatcher;
-    if (!hit) return true;
-    hitCounts.set(hit.label, (hitCounts.get(hit.label) || 0) + 1);
+    let hit = needleTrie.size ? matchNeedleTrie(needleTrie, personText) : null;
+    if (hit === null && regexMatchers.length) hit = regexMatchers.find(candidate => candidate.regex.test(personText))?.label ?? null;
+    if (hit === null) hit = surnameMatchers.find(candidate => candidate.regex.test(text))?.label ?? null;
+    if (hit === null) return true;
+    hitCounts.set(hit, (hitCounts.get(hit) || 0) + 1);
     return false;
   });
   return {
