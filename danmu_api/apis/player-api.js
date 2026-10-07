@@ -2175,7 +2175,8 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       const logger = createUgcLogger(context);
       logger('match.start', '官方源未命中，尝试 B站投稿兜底', { season: originalSeason, episode: originalEpisode });
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), globals.bilibiliUgcMatchBudgetMs);
+      // 与弹幕阶段共用同一个 UGC 预算，不再单独配置。
+      const timer = setTimeout(() => controller.abort(), globals.bilibiliUgcBudgetMs);
       let found = null;
       try {
         found = await ugcSupplement.search(context, { signal: controller.signal, logger });
