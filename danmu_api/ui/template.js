@@ -19,9 +19,9 @@ export const HTML_TEMPLATE = /* html */ `
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="darkreader-lock">
     <meta name="color-scheme" content="light dark">
-    <title>Xdanmu弹幕API</title>
-    <link rel="icon" type="image/jpg" href="https://i.mji.rip/2025/09/27/eedc7b701c0fa5c1f7c175b22f441ad9.jpeg">
-    <link rel="apple-touch-icon" href="https://i.mji.rip/2025/09/27/eedc7b701c0fa5c1f7c175b22f441ad9.jpeg">
+    <title>Xdanmu</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Crect%20width='64'%20height='64'%20rx='14'%20fill='%23667eea'/%3E%3Cpath%20d='M20%2020L44%2044M44%2020L20%2044'%20stroke='%23ffffff'%20stroke-width='8'%20stroke-linecap='round'/%3E%3C/svg%3E">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Crect%20width='64'%20height='64'%20rx='14'%20fill='%23667eea'/%3E%3Cpath%20d='M20%2020L44%2044M44%2020L20%2044'%20stroke='%23ffffff'%20stroke-width='8'%20stroke-linecap='round'/%3E%3C/svg%3E">
     <style>${baseCssContent}</style>
     <style>${componentsCssContent}</style>
     <style>${formsCssContent}</style>
@@ -55,8 +55,8 @@ export const HTML_TEMPLATE = /* html */ `
         <div class="header">
             <div class="header-left">
                 <div class="logo-title-container">
-                    <div class="logo"><img src="https://i.mji.rip/2025/09/27/eedc7b701c0fa5c1f7c175b22f441ad9.jpeg" width="500"/></div>
-                    <h1>Xdanmu弹幕API</h1>
+                    <div class="logo" aria-hidden="true"><svg class="logo-mark" viewBox="0 0 64 64"><path d="M20 20L44 44M44 20L20 44"/></svg></div>
+                    <h1>Xdanmu</h1>
                 </div>
                 <div class="version-info">
                     <span class="version-badge">${renderIcon('tag')} 当前版本: <span id="current-version">globals.currentVersion</span></span>

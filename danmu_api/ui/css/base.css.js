@@ -180,16 +180,20 @@ body::before {
     display: flex;
     align-items: center;
     justify-content: center;
+    color: #ffffff;
     font-size: 26px;
     box-shadow: 0 2px 10px rgba(var(--app-primary-rgb), 0.28);
     overflow: hidden;
 }
 
-.logo img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    border-radius: 12px;
+/* 页头品牌标记：白色 X，跟随主题渐变底色 */
+.logo-mark {
+    width: 24px;
+    height: 24px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 8;
+    stroke-linecap: round;
 }
 
 .header h1 {

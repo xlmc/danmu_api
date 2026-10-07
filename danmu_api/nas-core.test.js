@@ -136,11 +136,15 @@ test('management scripts parse and only retained navigation is rendered',async()
 test('header shows the injected self version and hides the update badge until a newer release exists', async () => {
   reset({ XDANMU_VERSION: 'xdanmu-v0.99' });
   const html = await (await request('/')).text();
-  assert.match(html, /<title>Xdanmu弹幕API<\/title>/);
-  assert.match(html, /<h1>Xdanmu弹幕API<\/h1>/);
+  assert.match(html, /<title>Xdanmu<\/title>/);
+  assert.match(html, /<h1>Xdanmu<\/h1>/);
   assert.match(html, /当前版本: <span id="current-version">v0\.99<\/span>/);
   assert.match(html, /<a class="update-badge"[^>]*style="display: none;"/);
   assert.ok(!html.includes('LogVar弹幕API'), 'old brand must be gone');
+  // 品牌标记与页签图标改为内联 SVG，不再引用第三方图片
+  assert.match(html, /<div class="logo"[^>]*><svg class="logo-mark"/);
+  assert.match(html, /rel="icon" type="image\/svg\+xml" href="data:image\/svg\+xml,/);
+  assert.ok(!html.includes('i.mji.rip'), 'third-party brand image must be gone');
 
   reset();
   const fallback = await (await request('/')).text();
