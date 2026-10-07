@@ -453,6 +453,23 @@ test('date-prefixed imgo titles resolve to the requested episode', async () => {
   assert.ok(!/第6期/.test(result.data.matches[0].episodeTitle), '日期里的 -01 不能当成第1期');
 });
 
+// 芒果部分综艺把上下篇写在冒号后的副标题末尾（第1期：初舞台（上））；
+// episodeText 在冒号处截断会丢掉上下篇，导致两条第1期 key 相同而无法定位。
+test('variety part marker after the colon keeps the episode distinct', () => {
+  assert.equal(varietyKey('【imgo】 2026-08-15 第1期：初舞台（上）'), 'main:1:upper');
+  assert.equal(varietyKey('【imgo】 2026-08-16 第1期：初舞台（下）'), 'main:1:lower');
+  assert.equal(varietyKey('【imgo】 2026-08-28 第3期上：二公重组部落'), 'main:3:upper', '期号后紧跟的写法不变');
+  assert.equal(varietyKey('【tencent】 先导片下：贾冰爆炒'), 'pilot::lower', '冒号前末尾的写法不变');
+  const anime = { animeId: 896231, bangumiId: '896231', source: 'imgo', type: '综艺', startDate: '2026-01-01',
+    animeTitle: '披荆斩棘2026(2026)【综艺】from imgo', links: [
+      { url: 'https://www.mgtv.com/b/896231/1.html', title: '【imgo】 2026-08-15 第1期：初舞台（上）' },
+      { url: 'https://www.mgtv.com/b/896231/2.html', title: '【imgo】 2026-08-16 第1期：初舞台（下）' }] };
+  const episodes = anime.links.map((link, i) => ({ episodeId: i + 1, episodeTitle: link.title, url: link.url }));
+  const key = varietyKey(extractVarietyFragment('披荆斩棘2026 S06E01 第1期：初舞台（上）'));
+  assert.equal(key, 'main:1:upper');
+  assert.equal(selectVarietyEpisodeByKey([anime], key, () => episodes).resEpisode.episodeId, 1);
+});
+
 test('player match request with only SxxExx resolves through the TMDB episode identity', async () => {
   const result = await adaptiveFixture('大哥小助理 S01E03', playerCatalog, { tmdb: compoundVarietyTmdb });
   assert.equal(result.data.isMatched, true, JSON.stringify(result.data));

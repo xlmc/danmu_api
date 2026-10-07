@@ -133,8 +133,12 @@ export function varietyKey(title) {
     /特别/.test(text) ? 'special-extra' : /先导片|先導片/.test(text) ? 'pilot-extra' : 'extra') :
     /先导片|先導片/.test(text) ? 'pilot' : issue ? 'main' : null;
   if (!kind) return null;
+  // 上下篇标记在三处都可能出现：期号后紧跟（第3期上：…）、冒号前末尾（先导片下：…）、
+  // 以及冒号后副标题的末尾（第1期：初舞台（上）——芒果这类写法，截断后会把上下篇丢掉）。
+  const stripped = raw.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
   const part = issuePartMarker(raw) ||
-    (/下(?:集|篇)?$/.test(text) ? 'lower' : /上(?:集|篇)?$/.test(text) ? 'upper' : '');
+    (/下(?:集|篇)?$/.test(text) ? 'lower' : /上(?:集|篇)?$/.test(text) ? 'upper' : '') ||
+    (/下(?:集|篇)?$/.test(stripped) ? 'lower' : /上(?:集|篇)?$/.test(stripped) ? 'upper' : '');
   return `${kind}:${issue?.[1] || ''}:${part}`;
 }
 
