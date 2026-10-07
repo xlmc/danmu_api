@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveTmdbMatchIdentity, filterTmdbMatchCandidates, findSavedTmdbIdentity, resolveTmdbEpisodeMetadata, selectTmdbEpisode } from './utils/tmdb-match-util.js';
+import { resolveTmdbMatchIdentity, filterTmdbMatchCandidates, findSavedTmdbIdentity, resolveTmdbEpisodeMetadata, selectTmdbEpisode, selectVarietyEpisodeByKey, varietyKey } from './utils/tmdb-match-util.js';
+import { extractVarietyFragment } from './apis/player-api.js';
 import { parseAutoMatchMappingRules, collectAutoMatchCandidates } from './utils/auto-match-mapping-util.js';
 import { Globals } from './configs/globals.js';
 import { handleRequest } from './worker.js';
@@ -360,6 +361,52 @@ test('compound official variety titles reach the right episode and comments thro
   assert.match(result.data.matches[0].episodeTitle, /第2期上/);
   assert.ok(!/下班吃饭啦/.test(result.data.matches[0].episodeTitle), 'must not bind to the third catalog entry');
   assert.equal(result.comments.comments[0].m, '试用弹幕');
+});
+
+// 线上同一部综艺有两种播放器文件名：
+//   A「大哥小助理 S01E03 第2期上：胡军李乃文弄丢佟丽娅裙子」——名字和期号都齐了，直接定位官方分集；
+//   B「大哥小助理 S01E03」——文件名没有期号，只能由 TMDB 分集身份给出（第3集=第2期上）。
+// 下面的 catalog 换成可走评论链路的形式。
+const playerFileNameA = '大哥小助理 S01E03 第2期上：胡军李乃文弄丢佟丽娅裙子';
+const playerCatalog = () => { const anime = compoundVarietyCatalog();
+  anime.links = anime.links.map((link, i) => ({ url: `https://v.qq.com/x/cover/player${i}.html`,
+    title: link.title.replace('【iqiyi】', '【tencent】') }));
+  return [anime]; };
+
+test('player file name A yields the variety identity without TMDB', () => {
+  const fragment = extractVarietyFragment(playerFileNameA);
+  assert.equal(fragment, '第2期上：胡军李乃文弄丢佟丽娅裙子');
+  assert.equal(varietyKey(fragment), 'main:2:upper');
+  const anime = compoundVarietyCatalog();
+  const episodes = anime.links.map((link, i) => ({ episodeId: i + 1, episodeTitle: link.title, url: link.url }));
+  assert.equal(selectVarietyEpisodeByKey([anime], varietyKey(fragment), () => episodes).resEpisode.episodeId, 4,
+    'locates 第2期上 rather than the third catalog entry');
+  assert.equal(selectVarietyEpisodeByKey([anime], 'main:2:', () => episodes), null, 'a bare issue number stays ambiguous');
+  assert.equal(selectVarietyEpisodeByKey([anime], null, () => episodes), null);
+  assert.equal(extractVarietyFragment('大哥小助理 S01E03'), '', 'file name B carries no issue marker');
+  assert.equal(varietyKey(extractVarietyFragment('大哥小助理 S01E03')), null);
+});
+
+test('player match request A resolves through the file name with TMDB disabled', async () => {
+  const result = await adaptiveFixture(playerFileNameA, playerCatalog, { env: { TMDB_API_KEY: '', PROXY_URL: '' } });
+  assert.equal(result.data.isMatched, true, JSON.stringify(result.data));
+  assert.match(result.data.matches[0].episodeTitle, /第2期上/);
+  assert.ok(!/下班吃饭啦/.test(result.data.matches[0].episodeTitle), 'must not bind to the third catalog entry');
+  assert.equal(result.comments.comments[0].m, '试用弹幕');
+  assert.deepEqual(result.requests, [], 'A 不需要任何网络请求（含 TMDB）');
+});
+
+test('player match request with only SxxExx resolves through the TMDB episode identity', async () => {
+  const result = await adaptiveFixture('大哥小助理 S01E03', playerCatalog, { tmdb: compoundVarietyTmdb });
+  assert.equal(result.data.isMatched, true, JSON.stringify(result.data));
+  assert.match(result.data.matches[0].episodeTitle, /第2期上/);
+  assert.ok(!/下班吃饭啦/.test(result.data.matches[0].episodeTitle), 'must not bind to the third catalog entry');
+  assert.equal(result.comments.comments[0].m, '试用弹幕');
+});
+
+test('player match request with only SxxExx stays unmatched when TMDB is off', async () => {
+  const result = await adaptiveFixture('大哥小助理 S01E03', playerCatalog, { env: { TMDB_API_KEY: '', PROXY_URL: '' } });
+  assert.equal(result.data.isMatched, false, JSON.stringify(result.data));
 });
 
 test('episode airing after New Year still resolves in the original season catalog',async()=>{

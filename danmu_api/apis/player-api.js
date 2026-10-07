@@ -1,4 +1,4 @@
-import { resolveTmdbMatchIdentity, filterTmdbMatchCandidates, findSavedTmdbIdentity, resolveTmdbEpisodeMetadata, selectTmdbEpisode } from '../utils/tmdb-match-util.js';
+import { resolveTmdbMatchIdentity, filterTmdbMatchCandidates, findSavedTmdbIdentity, resolveTmdbEpisodeMetadata, selectTmdbEpisode, selectVarietyEpisodeByKey, varietyKey } from '../utils/tmdb-match-util.js';
 import { isSupportedSource, isSupportedLocation, sourceForUrl } from '../sources/policy.js';
 import { canonicalPlatformName } from '../utils/platform-util.js';
 import { runWithMatchTrace, traceMatchStep, getMatchTracePrefix } from '../utils/match-trace-util.js';
@@ -1568,6 +1568,16 @@ export async function extractTitleSeasonEpisode(cleanFileName, suppliedReleaseGr
   return {title, season, episode, year, releaseGroups};
 }
 
+// 综艺文件名里的「第N期[上下]」已经写明了是哪一期，直接用它去官方目录定位即可，
+// 不必先问 TMDB；期号可能出现在 SxxExx 前后任意位置，所以扫描整串。
+export function extractVarietyFragment(cleanFileName) {
+  const cleaned = String(cleanFileName || '')
+    .replace(/^(?:\s*(?:\[[^\]]+\]|【[^】]+】)\s*)+/, '')
+    .replace(/\.(?:mkv|mp4|avi|mov|wmv|ts)$/i, '');
+  const match = /第\s*\d+\s*期/.exec(cleaned);
+  return match ? cleaned.slice(match.index).trim() : '';
+}
+
 export function buildSearchAnimeUrl(baseUrl, keyword, season, episode, skipTitleMapping = false) {
   const searchUrl = new URL(baseUrl);
   const apiPrefix = searchUrl.pathname.replace(/\/(?:match|search\/episodes)$/, '');
@@ -1710,7 +1720,7 @@ function needsGroupMerge(sources) {
     rule.secondary.source.split('&').some(source => active.has(source)));
 }
 
-async function executeMatchAttemptBody({ req, title, season, episode, year, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false, tmdbIdentity = null, tmdbEpisode = null, tmdbEpisodeHint = null, sourceSearches = null, searchSources = null, stagePlatform }) {
+async function executeMatchAttemptBody({ req, title, season, episode, year, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false, tmdbIdentity = null, tmdbEpisode = null, tmdbEpisodeHint = null, fileNameVarietyKey = null, sourceSearches = null, searchSources = null, stagePlatform }) {
   const startedAt = Date.now();
   // A platform-qualified rule describes that platform's numbering. Never
   // apply its offset to another source if the platform has no matching episode.
@@ -1804,6 +1814,16 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, pref
 
   if (!searchData?.success || !Array.isArray(searchData.animes) || searchData.animes.length === 0) {
     return { resAnime: null, resEpisode: null, spilloverMatched: false, title, season, episode, cacheWarning };
+  }
+
+  if (fileNameVarietyKey) {
+    const catalog = searchData.animes.map(anime => ({ ...anime, links:
+      resolveAnimeByIdFromDetailStore(anime.bangumiId || anime.animeId, detailStore, anime.source)?.links || anime.links }));
+    const selected = selectVarietyEpisodeByKey(catalog, fileNameVarietyKey,
+      anime => getBangumiDataForMatch(anime, detailStore)?.bangumi?.episodes);
+    if (selected) log('info', `[system] [match] 文件名期号直接对应平台分集: ${fileNameVarietyKey} -> ${selected.resAnime.animeTitle} / ${selected.resEpisode.episodeTitle}`);
+    else log('info', '[system] [match-reject] 文件名期号在官方目录里没有唯一对应的分集');
+    return { resAnime: null, resEpisode: null, spilloverMatched: false, ...selected, title, season, episode, cacheWarning };
   }
 
   if (tmdbEpisode) {
@@ -1954,6 +1974,8 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     log("info", `[system] [match] Parsed cleanFileName: ${cleanFileName}, preferredPlatform: ${preferredPlatform}, releaseGroups: ${releaseGroups.join(',') || 'none'}`);
 
     const parsed = await traceMatchStep(log, '文件名解析', () => extractTitleSeasonEpisode(cleanFileName, releaseGroups));
+    const fileNameVarietyKey = varietyKey(extractVarietyFragment(cleanFileName));
+    if (fileNameVarietyKey) log('info', `[system] [match] 文件名已写明综艺期号: ${fileNameVarietyKey}`);
     let tmdbIdentity = findSavedTmdbIdentity(globals.animes, parsed);
     let tmdbIdentityAttempted = false;
     const sourceSearches = new Map();
@@ -2158,6 +2180,17 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       const [preferAnimeId, preferSource, offsets] = globals.rememberLastSelect
         ? getPreferAnimeId(originalTitle, originalSeason) : [null, null, null];
       attempt = await tryTitlePath({ stage: tmdbIdentity ? 'TMDB 作品直接搜索' : '本机普通匹配', title: tmdbIdentity?.title || originalTitle, preferAnimeId, preferSource, offsets }) || attempt;
+    }
+
+    // 文件名已经写明「第N期[上下]」时直接用它在官方目录里定位，先不问 TMDB：
+    // 作品名 + 期号 + 上下篇已经足够，唯一命中即返回；没有期号或不唯一才继续走 TMDB。
+    if (!succeeded(attempt) && originalSeason !== 0 && fileNameVarietyKey) {
+      attempt = await traceMatchStep(log, '文件名期号对应平台分集', () => executeMatchAttempt({
+        req, title: normalizeMatchTitle(tmdbIdentity?.title || originalTitle), season: originalSeason, episode: null,
+        year: originalYear, preferredPlatform, fileNameVarietyKey, sourceSearches,
+        preferAnimeId: null, preferSource: null, offsets: null, mapping: null
+      })) || attempt;
+      if (succeeded(attempt)) matchStage = '文件名期号对应平台分集';
     }
 
     if (!succeeded(attempt) && !tmdbIdentity && !tmdbIdentityAttempted && (globals.tmdbApiKey || globals.proxyUrl)) {

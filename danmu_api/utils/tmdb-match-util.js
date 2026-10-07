@@ -120,7 +120,7 @@ function issuePartMarker(raw) {
   return '';
 }
 
-function varietyKey(title) {
+export function varietyKey(title) {
   const raw = String(title || '').normalize('NFKC').replace(/^【[^】]*】\s*/, '');
   const text = episodeText(title);
   if (/纯享|純享|精编|精編|预告|預告/.test(text)) return null;
@@ -171,6 +171,21 @@ export function selectTmdbEpisode(animes, metadata, identity, episodesForAnime) 
       const dateMatch = date && metadata.airDate && date === metadata.airDate;
       if (date && metadata.airDate && !dateMatch) continue;
       if (!titleMatch && !(generic && dateMatch)) continue;
+      if (!matches.some(m => m.resAnime.source === anime.source && m.resEpisode.url === ep.url))
+        matches.push({ resAnime: anime, resEpisode: ep, spilloverMatched: false });
+    }
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
+// 文件名已经写明「第N期[上下]」时，可以直接用这个身份在官方目录里定位分集：
+// 不需要 TMDB 身份，也不要求目录标题与文件名逐字相同；候选不唯一时不猜，交给后续阶段。
+export function selectVarietyEpisodeByKey(animes, key, episodesForAnime) {
+  if (!key) return null;
+  const matches = [];
+  for (const anime of animes) {
+    for (const ep of episodesForAnime(anime) || []) {
+      if (!ep?.episodeTitle || varietyKey(ep.episodeTitle) !== key) continue;
       if (!matches.some(m => m.resAnime.source === anime.source && m.resEpisode.url === ep.url))
         matches.push({ resAnime: anime, resEpisode: ep, spilloverMatched: false });
     }
