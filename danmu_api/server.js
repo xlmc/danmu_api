@@ -554,6 +554,18 @@ async function startServer() {
   // 设置 .env 文件监听
   await setupEnvWatcher();
 
+  // 5321 中转必须先于远程映射初始化启动：远程映射下载统一经过 PROXY_URL，
+  // 正向代理配置下 makeProxyUrl 会回退到这个本地中转（仅本地 Node 有效）。
+  try {
+    proxyServer = createProxyServer();
+    const proxyBinding = await listenOnAllInterfaces(proxyServer, 5321, {
+      serviceName: 'proxy server'
+    });
+    console.log(`Proxy server running on http://${formatHostForUrl(proxyBinding.address)}:${proxyBinding.port}`);
+  } catch (e) {
+    console.error('[server] proxy server failed to start:', e);
+  }
+
   // 初始化全局变量环境
   try {
     Globals.init(process.env);
@@ -571,14 +583,6 @@ async function startServer() {
     serviceName: 'main server'
   });
   console.log(`Server running on http://${formatHostForUrl(mainBinding.address)}:${mainBinding.port}`);
-
-
-  // 启动5321端口的代理服务
-  proxyServer = createProxyServer();
-  const proxyBinding = await listenOnAllInterfaces(proxyServer, 5321, {
-    serviceName: 'proxy server'
-  });
-  console.log(`Proxy server running on http://${formatHostForUrl(proxyBinding.address)}:${proxyBinding.port}`);
 
   // 异步初始化 Bangumi Data 缓存
   setTimeout(() => initBangumiData('node', true).catch(console.error), 1000);
