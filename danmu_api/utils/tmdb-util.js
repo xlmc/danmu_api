@@ -81,9 +81,9 @@ export function personLookupTitle(value) {
 /** Only strip explicit season suffixes; keep the original title for exact matching. */
 export function personSeasonContext(title) {
   const fullTitle = personLookupTitle(title);
-  const match = fullTitle.match(/\s*(?:第\s*([0-9一二三四五六七八九十百]+)\s*季|(最终|最終|完结|完結)季|season\s*(\d+)|\s+s(\d+))\s*$/i);
+  const match = fullTitle.match(/\s*(?:第\s*([0-9一二三四五六七八九十百]+)\s*季|(最终|最終|完结|完結)季|season\s*(\d+)|\s+s(\d+)|(?<!\d)(\d{1,2}))\s*$/i);
   const baseTitle = match ? fullTitle.slice(0, match.index).trim() : fullTitle;
-  const number = match && !match[2] ? Number(match[1] ? convertChineseNumber(match[1]) : match[3] || match[4]) : null;
+  const number = match && !match[2] ? Number(match[1] ? convertChineseNumber(match[1]) : match[3] || match[4] || match[5]) : null;
   return { fullTitle, baseTitle, season: number, finalSeason: Boolean(match?.[2]), hasSeason: Boolean(match && baseTitle),
     year: String(title || '').normalize('NFKC').match(/\(((?:19|20)\d{2})\)/)?.[1] || '' };
 }
@@ -185,6 +185,16 @@ export function extractTmdbChineseCastNames(credits, mediaType = 'movie') {
       : [cast?.character];
     for (const role of roles) {
       for (const name of splitTmdbCharacterNames(role)) characterNames.add(name);
+    }
+  }
+  for (const crew of (credits?.crew || [])) {
+    const isHost = /host|presenter|主持/i.test(crew?.job || '')
+      || (Array.isArray(crew?.jobs) && crew.jobs.some(j => /host|presenter|主持/i.test(j?.job || '')));
+    if (isHost) {
+      for (const value of [crew?.name, crew?.original_name]) {
+        const name = normalizeTmdbChineseName(value);
+        if (name) actorNames.add(name);
+      }
     }
   }
   return {
@@ -360,8 +370,27 @@ export async function getDomesticPersonMetadataForTitle(title) {
         candidate ? cachedPersonSource(`${cacheKey}:${candidate.media_type}/${candidate.id}:credits`, creditsLoader, value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames) && value.actorNames.length + value.characterNames.length > 0) : Promise.resolve({ value: null, stale: true }),
         isAnimation ? cachedPersonSource(`${cacheKey}:bangumi`, () => getBangumiCharacterNames(bangumiTitle),
           value => Array.isArray(value?.names) && value.names.length > 0, value => !value.incomplete) : Promise.resolve(null),
-        cachedPersonSource(`${cacheKey}:wiki`, () => getWikipediaPersonMetadata(sourceTitle, sourceYear),
-          value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames)),
+        cachedPersonSource(`${cacheKey}:wiki`, async () => {
+          let res = await getWikipediaPersonMetadata(sourceTitle, sourceYear);
+          if ((!res || res.actorNames.length + res.characterNames.length === 0) && context.hasSeason) {
+            const CHINESE_DIGITS = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+            const zhSeason = (context.season > 0 && context.season <= 10) ? CHINESE_DIGITS[context.season] : String(context.season);
+            const seasonTitles = [
+              `${context.baseTitle}_(第${zhSeason}季)`,
+              `${context.baseTitle}第${zhSeason}季`
+            ];
+            for (const sTitle of seasonTitles) {
+              try {
+                const altRes = await getWikipediaPersonMetadata(sTitle, sourceYear);
+                if (altRes && altRes.actorNames.length + altRes.characterNames.length > 0) {
+                  res = altRes;
+                  break;
+                }
+              } catch (_) {}
+            }
+          }
+          return res;
+        }, value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames)),
       ]);
       const credits = creditsResult.value;
       const resolved = credits || { actorNames: [], characterNames: [] };
@@ -383,14 +412,28 @@ export async function getDomesticPersonMetadataForTitle(title) {
       }
       // 为弹幕入口已选中的当前作品补人物信息；不参与作品匹配，也不以 TMDB 身份匹配失败为触发条件。
       // 仅在整张中文角色表为空时补查；已有演员表保留，均缺失时补两张表。
-      if (resolved.characterNames.length === 0) {
+      if (resolved.characterNames.length === 0 || resolved.actorNames.length === 0) {
         const baiduTitle = context.hasSeason ? searchTitle : sourceTitle;
         const baiduYear = context.hasSeason ? year : sourceYear;
         const baiduResult = await cachedPersonSource(`${cacheKey}:baidu-v1`,
-          () => getBaiduPersonMetadata(baiduTitle, baiduYear, candidate?.media_type || ''),
+          async () => {
+            let res = null;
+            try {
+              res = await getBaiduPersonMetadata(baiduTitle, baiduYear, candidate?.media_type || '');
+            } catch (_) {}
+            if ((!res || res.actorNames.length === 0) && context.hasSeason) {
+              const CHINESE_DIGITS = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+              const zhSeason = (context.season > 0 && context.season <= 10) ? CHINESE_DIGITS[context.season] : String(context.season);
+              try {
+                res = await getBaiduPersonMetadata(`${context.baseTitle}第${zhSeason}季`, baiduYear, candidate?.media_type || '');
+              } catch (_) {}
+            }
+            if (!res) throw new Error('百度百科未找到匹配条目');
+            return res;
+          },
           value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames)
             && value.actorNames.length + value.characterNames.length > 0,
-          value => value.actorNames.length > 0 && value.characterNames.length > 0);
+          value => value.actorNames.length > 0 || value.characterNames.length > 0);
         if (baiduResult.value) {
           const baidu = baiduResult.value;
           if (resolved.actorNames.length === 0) resolved.actorNames = baidu.actorNames.slice();
@@ -399,7 +442,7 @@ export async function getDomesticPersonMetadataForTitle(title) {
         }
         if (baiduResult.stale) incomplete = true;
       }
-      if (resolved.characterNames.length === 0) incomplete = true;
+      if (resolved.characterNames.length === 0 && resolved.actorNames.length === 0) incomplete = true;
       resolved.names = [...new Set([...resolved.actorNames, ...resolved.characterNames])];
       const status = resolved.names.length === 0 ? 'unavailable' : incomplete ? 'partial' : 'ready';
       log('info', `[system] [person-metadata] 「${title}」TMDB ${candidate ? `${candidate.media_type}/${candidate.id}${candidate.personSeason ? ` S${candidate.personSeason.number}(${candidate.personSeason.year})` : ''}` : '身份未匹配'}${bangumiSubjectId ? ` + Bangumi ${bangumiSubjectId}` : ''}，演员 ${resolved.actorNames.length} 个，角色 ${resolved.characterNames.length} 个，状态 ${status}`);

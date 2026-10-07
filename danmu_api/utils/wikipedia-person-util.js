@@ -42,12 +42,13 @@ function rows(table) {
   return grid;
 }
 function names(cell, actor = false) {
+  if (Number(attr(cell || {}, 'colspan') || 1) > 1) return [];
   let value = text(cell || {}).normalize('NFKC');
-  value = actor ? value.replace(/[()]/g, '\n') : value.replace(/\([^)]*\)/g, '');
-  return value.split(/[\/、,，;；\n]+/).map(name => name.trim()
+  value = actor ? value.replace(/[()（）]/g, '\n') : value.replace(/\([^)]*\)|（[^）]*）/g, '');
+  return value.split(/[\/、,，;；\n]+/).map(name => simplized(name.trim())
     .replace(/^(?:童年|少年|青年|成年|老年|幼年|饰演?|配音)\s*[:：]?\s*/, '')
     .replace(/\s+/g, '')).filter(name => /^[\p{Script=Han}·・]{2,24}$/u.test(name)
-      && !/^(?:演员|角色|主演|本人|自己|未知|待定|不详|未公布|青年|少年|童年|成年|老年)$/.test(name));
+      && !/^(?:演员|角色|主演|本人|自己|未知|待定|不详|未公布|青年|少年|童年|成年|老年|主持|主持人|司仪|主评委|见证人|嘉宾|常驻嘉宾|队长|成员|选手|哥哥|弟弟|.*(?:成员|選手|选手|阶段|公演|对决|战队|阵营|部落|诞生|名单|淘汰|退赛|晋级|成团|危险).*|第[0-9一二三四五六七八九十百]+.*)$/u.test(name));
 }
 
 /** Only named columns in the current work's cast tables; never follow actor links. */
@@ -63,19 +64,30 @@ export function extractWikipediaPersonMetadata(page, { title, year = '' }) {
   if (![page.title, ...aliases].some(value => normalized(value) === normalized(title))) throw new Error('维基作品名不一致');
   const releaseRows = info.filter(row => /^(?:播出日期|首播日期|首播|上映日期|上映时间|发行日期|播放期间)$/.test(normalized(text(row[0] || {}))));
   const years = releaseRows.flatMap(row => text(row[1] || {}).match(/(?:19|20)\d{2}/g) || []);
-  if (year && years[0] !== String(year)) throw new Error('维基作品年份不一致');
+  if (year && years.length > 0 && !years.includes(String(year))) throw new Error('维基作品年份不一致');
   const actorNames = new Set(), characterNames = new Set();
+  const hostRows = info.filter(row => /^(?:主持|主持人|司仪|主评委|见证人|常驻嘉宾|主要嘉宾)$/.test(normalized(text(row[0] || {}))));
+  for (const row of hostRows) {
+    names(row[1], true).forEach(name => actorNames.add(name));
+  }
   for (const table of tables) {
     if (table === infobox) continue;
+    const tableClass = attr(table, 'class');
+    if (/\b(?:navbox|nowraplinks)\b/.test(tableClass)) continue;
     let actorColumn = -1, roleColumn = -1;
     for (const row of rows(table)) {
       const labels = row.map(cell => normalized(text(cell)));
-      const actor = labels.findIndex(label => /^(?:演员|饰演|饰演者|配音演员|配音员|声优)$/.test(label));
+      const actor = labels.findIndex(label => /^(?:演员|饰演|饰演者|配音演员|配音员|声优|姓名|成员|成員|參與成員|参与成员|嘉宾|嘉賓|選手|选手|哥哥|弟弟)$/.test(label));
       const role = labels.findIndex(label => /^(?:角色|人物|角色名|角色名称)$/.test(label));
       if (actor >= 0 && role >= 0) { actorColumn = actor; roleColumn = role; continue; }
-      if (actorColumn < 0 || roleColumn < 0 || row[actorColumn] === row[roleColumn]) continue;
-      names(row[actorColumn], true).forEach(name => actorNames.add(name));
-      names(row[roleColumn]).forEach(name => characterNames.add(name));
+      if (actor >= 0 && role < 0) { actorColumn = actor; roleColumn = -1; continue; }
+      if (actorColumn < 0) continue;
+      if (roleColumn >= 0 && row[actorColumn] !== row[roleColumn]) {
+        names(row[actorColumn], true).forEach(name => actorNames.add(name));
+        names(row[roleColumn]).forEach(name => characterNames.add(name));
+      } else if (roleColumn < 0) {
+        names(row[actorColumn], true).forEach(name => actorNames.add(name));
+      }
     }
   }
   return { actorNames: [...actorNames], characterNames: [...characterNames],
