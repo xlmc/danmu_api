@@ -224,11 +224,22 @@ test('candidates with too few reported danmaku are rejected as noise', async () 
 });
 test('promo danmaku inside candidate clips are dropped before merging', async () => {
   const deps = dependencies();
-  deps.source.getEpisodeDanmu = async () => [{ p: '5,1,25,0', m: '大家点点关注支持呦' }, { p: '6,1,25,0', m: '一条也可用' }];
+  // 真实样本：B站投稿里常混「动漫聊天群965056896欢迎」「ACGN交流群1076162477」以及单独一条群号。
+  deps.source.getEpisodeDanmu = async () => [
+    { p: '5,1,25,0', m: '大家点点关注支持呦' },
+    { p: '6,1,25,0', m: '动漫聊天群965056896欢迎' },
+    { p: '7,1,25,0', m: '1076162477' },
+    { p: '8,1,25,0', m: 'ACGN交流群1076162477' },
+    { p: '9,1,25,0', m: '6666666' },
+    { p: '10,1,25,0', m: '一条也可用' }];
   const events = [], logger = (event, message, data) => events.push({ event, data });
   const result = await createUgcSupplement(deps).supplement(context, [{ p: '1,1,25,0', m: '原有' }], { logger });
-  assert.deepEqual(result.map(c => c.m), ['原有', '一条也可用']);
-  assert(events.some(e => e.event === 'candidate.promo' && e.data.removed === 1));
+  const texts = result.map(c => c.m);
+  assert.ok(texts.includes('一条也可用'), '正常弹幕保留');
+  assert.ok(texts.includes('6666666'), '连续同数字的梗保留');
+  assert.ok(!texts.includes('1076162477'), '单独的群号被丢弃');
+  assert.ok(!texts.some(t => /群/.test(t)), '带群字的广告被丢弃');
+  assert(events.some(e => e.event === 'candidate.promo' && e.data.removed === 4), '4 条引流广告被过滤');
 });
 // 并行预取：检索可以先于主源弹幕发起，拿到弹幕后再用同一份结果合并，不能重复检索。
 test('prefetched resolve merges without searching twice', async () => {

@@ -17,7 +17,16 @@ const versions = /精编|(?<!未)删减|重制|英文|日语|粤语|配音|特�
 // 仅在搜索结果给出 stat 时判定；缺少统计字段时不做限制（部分接口不返回 stat）。
 const MIN_CANDIDATE_DANMAKU = 20;
 // UGC 补充弹幕中的引流广告文本。平台主源弹幕仍完全由用户屏蔽词规则处理。
-const UGC_PROMO = /点\s*点?\s*关注|关注\s*(?:我|一下|主播|UP|up)|一键三连|求\s*(?:三连|关注|点赞|投币)|点赞投币|记得关注|加个关注|素质三连|三连一下/u;
+// 除「点点关注/一键三连」外，B站投稿常见的 QQ/微信群号广告（如「动漫聊天群965056896欢迎」）也要拦。
+const UGC_PROMO = /点\s*点?\s*关注|关注\s*(?:我|一下|主播|UP|up)|一键三连|求\s*(?:三连|关注|点赞|投币)|点赞投币|记得关注|加个关注|素质三连|三连一下|(?:QQ|qq|微信|威信|vx|VX|企鹅)\s*(?:群|号|號|裙)?\s*[:：]?\s*[A-Za-z0-9_-]{5,}|(?:交流|聊天|粉丝|资源|动漫|影视|追剧|福利|学习)\s*(?:群|裙)|(?:加|进|入)\s*(?:我|群|裙)|(?:群|裙)\s*(?:号|號)?\s*[:：]?\s*\d{5,}|(?:看|进)\s*我?\s*(?:主页|空间)|公众号/u;
+// 单独发送的群号就是一条 6~12 位纯数字（用户看到的「没有意义的数字」）；
+// 但 666 / 6666666 这类连续同数字是网络梗，不算广告，保留。
+const isUgcPromo = value => {
+  const text = String(value ?? '');
+  if (UGC_PROMO.test(text)) return true;
+  const trimmed = text.trim();
+  return /^\d{6,12}$/.test(trimmed) && !/^(\d)\1+$/.test(trimmed);
+};
 // 单次检索与分P详情并发度；B 站 wbi 接口按此并发调用，避免串行等待叠加超时。
 const SEARCH_CONCURRENCY = 3;
 const DETAIL_CONCURRENCY = 3;
@@ -310,7 +319,7 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
         const raw = await abortable(source.getEpisodeDanmu(c.url), signal);
         const all = source.formatComments(raw);
         // 投稿弹幕常含「点点关注」等引流内容；平台主源弹幕不受此规则影响。
-        const comments = all.filter(item => !UGC_PROMO.test(commentText(item)));
+        const comments = all.filter(item => !isUgcPromo(commentText(item)));
         if (comments.length !== all.length) logger('candidate.promo', '候选过滤引流弹幕 ' + (all.length - comments.length) + ' 条', { bvid: c.bvid, cid: c.cid, removed: all.length - comments.length, count: comments.length });
         signal?.throwIfAborted();
         c.fetchedCount = comments.length;
