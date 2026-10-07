@@ -1,5 +1,10 @@
 # 自用版本说明
 
+## 匹配兜底检索预算固定为 5 秒（不暴露配置）
+
+- 上一版把匹配阶段的兜底检索预算并入了 `BILIBILI_UGC_BUDGET_MS`（默认 10 秒），但那会让**播放器等匹配结果**的时间从 5 秒变成最多 10 秒。现改为固定的 5 秒（代码常量 `UGC_MATCH_BUDGET_MS`）：既不跟随 UGC 弹幕预算，也不作为配置项暴露。
+- 弹幕阶段的 UGC 补充与并行预取仍使用 `BILIBILI_UGC_BUDGET_MS`（默认 10000ms），不受影响。
+
 ## 去掉 BILIBILI_UGC_MATCH_BUDGET_MS，兜底检索共用 UGC 预算
 
 - 匹配阶段的 B站投稿兜底不再单独配置检索预算，改用统一的 `BILIBILI_UGC_BUDGET_MS`（默认 10000ms）；`BILIBILI_UGC_MATCH_BUDGET_MS` 连同配置页条目一并移除。

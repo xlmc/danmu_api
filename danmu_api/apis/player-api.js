@@ -124,6 +124,10 @@ async function applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata 
 // 用于聚合请求的去重Map
 const PENDING_DANMAKU_REQUESTS = new Map();
 
+// 匹配阶段用 B站投稿兜底时的检索预算：这段时间是播放器在等匹配结果，固定 5 秒——
+// 既不跟随弹幕阶段的 BILIBILI_UGC_BUDGET_MS，也不作为配置项暴露。
+const UGC_MATCH_BUDGET_MS = 5000;
+
 function resolveCommentCacheKey(url) {
   const value = String(url || "");
   if (!globals.hongguoMergeAllEpisodes) return url;
@@ -2175,8 +2179,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       const logger = createUgcLogger(context);
       logger('match.start', '官方源未命中，尝试 B站投稿兜底', { season: originalSeason, episode: originalEpisode });
       const controller = new AbortController();
-      // 与弹幕阶段共用同一个 UGC 预算，不再单独配置。
-      const timer = setTimeout(() => controller.abort(), globals.bilibiliUgcBudgetMs);
+      const timer = setTimeout(() => controller.abort(), UGC_MATCH_BUDGET_MS);
       let found = null;
       try {
         found = await ugcSupplement.search(context, { signal: controller.signal, logger });
