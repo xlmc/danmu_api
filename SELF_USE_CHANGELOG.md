@@ -1,5 +1,11 @@
 # 自用版本说明
 
+## Xdanmu 图标替换与标题精简
+
+- 页头图标、页签图标（favicon）与 apple-touch-icon 不再引用第三方 LogVar 图片，改为内联 SVG 的 X 标记：页头是白色 X 配主题渐变色块，页签是圆角方块白 X（底色对齐默认主题强调色）。仓库内已无 i.mji.rip 引用。
+- 页面标题与页头由「Xdanmu弹幕API」精简为「Xdanmu」。
+- 回归测试新增断言：页头存在内联品牌标记、页签图标为 SVG data URI、且不再出现第三方图片地址。
+
 ## Xdanmu 品牌与自用版本徽标
 
 - 管理页标题与页头改用 Xdanmu 品牌（原 LogVar），/api/config 的欢迎语同步改名；localStorage 键名（主题、API 地址）保持不变，避免丢失已有设置。
