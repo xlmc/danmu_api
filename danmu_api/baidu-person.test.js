@@ -90,7 +90,7 @@ async function seed(title, actors, roles, {candidate=true, wikiRoles=[]} = {}) {
   await cachedPersonSource(`${key}:wiki`,async()=>({actorNames:[],characterNames:wikiRoles}),()=>true);
 }
 
-test('真实人物加载入口按缺项补查，保留原演员表，失败不丢弃已有资料', async () => {
+test('真实人物加载入口按缺项补查，演员表取并集，失败不丢弃已有资料', async () => {
   Globals.init({LOG_LEVEL:'error'});
   const original = globalThis.fetch;
   const calls=[];
@@ -103,7 +103,9 @@ test('真实人物加载入口按缺项补查，保留原演员表，失败不�
   try {
     for (const [title,actors,roles,options,expectedActors,expectedRoles,requests] of [
       ['名单齐全',['原演员'],['原角色'],{},['原演员'],['原角色'],0],
-      ['仅缺角色',['原演员'],[],{},['原演员'],['宁长樾'],1],
+      ['仅缺角色',['原演员'],[],{},['原演员','方逸伦'],['宁长樾'],1],
+      // 真实场景（《短剧X家族》）：TMDB 有演员但比百度少，两边要取并集，否则百度独有的演员永远拦不住
+      ['演员不全',['原演员','甲'],[],{},['原演员','甲','方逸伦'],['宁长樾'],1],
       ['全部缺失',[],[],{candidate:false},['方逸伦'],['宁长樾'],1],
       ['维基已有',['原演员'],[],{wikiRoles:['维基角色']},['原演员'],['维基角色'],0],
       ['补查失败',['原演员'],[],{},['原演员'],[],1],

@@ -411,7 +411,7 @@ export async function getDomesticPersonMetadataForTitle(title) {
         log('info', `[system] [person-metadata] Wikipedia 当前作品演员 ${wiki.actorNames.length} 个、角色 ${wiki.characterNames.length} 个${wiki.sourceUrl ? `，来源 ${wiki.sourceUrl}，修订 ${wiki.revision}` : '，无对应条目'}`);
       }
       // 为弹幕入口已选中的当前作品补人物信息；不参与作品匹配，也不以 TMDB 身份匹配失败为触发条件。
-      // 仅在整张中文角色表为空时补查；已有演员表保留，均缺失时补两张表。
+      // 缺少演员表或角色表时补查百度；两边名单取并集，不覆盖已有数据。
       if (resolved.characterNames.length === 0 || resolved.actorNames.length === 0) {
         const baiduTitle = context.hasSeason ? searchTitle : sourceTitle;
         const baiduYear = context.hasSeason ? year : sourceYear;
@@ -438,9 +438,11 @@ export async function getDomesticPersonMetadataForTitle(title) {
           value => value.actorNames.length > 0 || value.characterNames.length > 0);
         if (baiduResult.value) {
           const baidu = baiduResult.value;
-          if (resolved.actorNames.length === 0) resolved.actorNames = baidu.actorNames.slice();
-          resolved.characterNames = baidu.characterNames.slice();
-          log('info', `[system] [person-metadata] Baidu 补充当前作品演员 ${baidu.actorNames.length} 个、角色 ${baidu.characterNames.length} 个，来源 ${baidu.sourceUrl}`);
+          // 取并集，而不是只在演员表为空时采用：综艺的百度条目常比 TMDB 的中文演员表全
+          // （《短剧X家族》TMDB 10 人、百度 14 人），只补空项会把百度独有的演员整批丢掉。
+          resolved.actorNames = [...new Set([...resolved.actorNames, ...baidu.actorNames])];
+          resolved.characterNames = [...new Set([...resolved.characterNames, ...baidu.characterNames])];
+          log('info', `[system] [person-metadata] Baidu 补充当前作品演员 ${baidu.actorNames.length} 个、角色 ${baidu.characterNames.length} 个，合并后演员 ${resolved.actorNames.length} 个、角色 ${resolved.characterNames.length} 个，来源 ${baidu.sourceUrl}`);
         }
         if (baiduResult.stale) incomplete = true;
       }
