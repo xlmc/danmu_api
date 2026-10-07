@@ -81,3 +81,14 @@ test('danmu tags normalize old source labels and avoid duplicate real-time alias
  assert.match(result[0].p,/\[bilibili[&＆]tencent\]/);
  assert.doesNotMatch(result[0].p,/qq|tencent.*tencent/);
 });
+
+test('advanced, code and BAS danmaku degrade to the dandan scroll mode', () => {
+  // B站 7=高级、8=代码、9=BAS：弹弹play 只有 1=滚动、4=底部、5=顶部。
+  const items = [7, 8, 9].map((mode, i) => ({ p: `${i + 1},${mode},16777215,0`, m: `广告${i}` }));
+  const result = convertToDanmakuJson(items, 'bilibili');
+  assert.deepEqual(result.map(c => c.p.split(',')[1]), ['1', '1', '1']);
+  assert.deepEqual(result.map(c => c.m), ['广告0', '广告1', '广告2'], 'text is preserved');
+  // 滚动/底部/顶部与逆向滚动保持原样。
+  const kept = convertToDanmakuJson([1, 4, 5, 6].map(mode => ({ p: `1,${mode},16777215,0`, m: `普通${mode}` })), 'bilibili');
+  assert.deepEqual(kept.map(c => c.p.split(',')[1]), ['1', '4', '5', '6']);
+});

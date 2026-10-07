@@ -481,11 +481,18 @@ export function filterDanmusByBlockedWords(danmus) {
   return filteredDanmus;
 }
 
+// 弹弹play 协议只使用 1=滚动、4=底部、5=顶部。B站高级弹幕(7)、代码弹幕(8)、
+// BAS 弹幕(9) 没有对应模式，原样透传会被支持这些模式的播放器按脚本弹幕渲染
+// （引流广告常用它放大字号或固定位置），统一降级为普通滚动弹幕，只保留文字。
+const UNSUPPORTED_DANMU_MODES = new Set([7, 8, 9]);
+const DANMU_MODE_FALLBACK = 1;
+
 export function convertToDanmakuJson(contents, platform, commentConfig = getCommentTransformConfig()) {
   let danmus = [];
   let cidCounter = 1;
   let isMultiSource = false; // 用于记录当前弹幕集合是否为多源组合
   let colorV2Count = 0; // 源渐变色弹幕（B站 color_v2）识别计数；DanmuX 不输出原生纹理
+  let unsupportedModeCount = 0; // 降级为滚动弹幕的高级/代码/BAS 弹幕计数
 
   // 统一处理输入为数组
   let items = [];
@@ -560,6 +567,11 @@ export function convertToDanmakuJson(contents, platform, commentConfig = getComm
       m = item.m;
     }
 
+    if (UNSUPPORTED_DANMU_MODES.has(Number(mode))) {
+      mode = DANMU_MODE_FALLBACK;
+      unsupportedModeCount++;
+    }
+
     // 优先使用弹幕自带的 _sourceLabel（应对合并工具），其次是外部传入的宏观 platform
     let currentPlatform = canonicalPlatformGroup(item._sourceLabel || platform);
 
@@ -592,6 +604,9 @@ export function convertToDanmakuJson(contents, platform, commentConfig = getComm
 
   if (colorV2Count > 0) {
     log("info", `[system] [danmu] [danmu convert] 识别了 ${colorV2Count} 条源渐变色弹幕（color_v2）`);
+  }
+  if (unsupportedModeCount > 0) {
+    log("info", `[system] [danmu] [danmu convert] 转换了 ${unsupportedModeCount} 条高级/代码/BAS弹幕为滚动弹幕`);
   }
 
   // 文本字段归一化为 m 后统一转换，确保所有来源及输入格式行为一致。
