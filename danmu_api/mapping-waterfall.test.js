@@ -39,6 +39,22 @@ test('剧集标题下划线编号按标题集数解析', () => {
   assert.equal(extractEpisodeNumberFromTitle('【qq】 花开锦绣_32'), 32);
 });
 
+// 认不出明确编号就不返回数字：日期里的日、标题中间的数字都不是集号。
+// 线上事故：《快乐老家》S01E01 因「2026-08-01 第6期」被读出 1 而选中第6期。
+test('日期与标题中间的数字不作为集号', () => {
+  assert.equal(extractEpisodeNumberFromTitle('【imgo】 2026-08-01 第6期：一起许下心愿放水灯吧'), null);
+  assert.equal(extractEpisodeNumberFromTitle('【imgo】 2026-06-28 第1期：中古艺人旧事秘闻起底'), null);
+  assert.equal(extractEpisodeNumberFromTitle('【imgo】 2026-09-05 番外篇：快乐老家“开放日”'), null);
+  assert.equal(extractEpisodeNumberFromTitle('剧名.2026.08.01'), null);
+  assert.equal(extractEpisodeNumberFromTitle('剧名 2026年8月1日'), null);
+  assert.equal(extractEpisodeNumberFromTitle('【qq】 某剧 01 开场白'), null, '标题中间的数字不认');
+  // 明确编号不受影响
+  assert.equal(extractEpisodeNumberFromTitle('【qq】 某剧 01'), 1);
+  assert.equal(extractEpisodeNumberFromTitle('【qq】 某剧第1集'), 1);
+  assert.equal(extractEpisodeNumberFromTitle('【qq】 某剧.EP07'), 7);
+  assert.equal(extractEpisodeNumberFromTitle('【qq】 某剧_32'), 32);
+});
+
 test('远程季集规则只能在明确范围内换算', () => {
   const { rules, warnings } = parseAutoMatchMappingRules(
     '# 注释;不得拆成规则\n吞噬星空 S04E01~E34 -> 吞噬星空{[tmdbid=123;type=tv]} S01E86~E119'

@@ -437,6 +437,22 @@ test('UGC fallback stays off for domestic official platforms', async () => {
   } finally { ugcSupplement.search = saved; }
 });
 
+// 线上真实故障：《快乐老家》S01E01 命中了「第6期」——imgo 集标题以日期开头，
+// 日期里的日（2026-08-01 的 -01）被当成集号 1，而真正的第1期是 2026-06-28（提取值 28）。
+test('date-prefixed imgo titles resolve to the requested episode', async () => {
+  const catalog = () => { const anime = fixtureAnime('快乐老家', 2026, 7008382, '综艺');
+    anime.source = 'imgo'; anime.animeTitle = '快乐老家(2026)【综艺】from imgo';
+    anime.links = [
+      { url: 'https://www.mgtv.com/b/883387/1.html', title: '【imgo】 2026-06-28 第1期：中古艺人旧事秘闻起底' },
+      { url: 'https://www.mgtv.com/b/883387/6.html', title: '【imgo】 2026-08-01 第6期：一起许下心愿放水灯吧' }];
+    return [anime]; };
+  const result = await adaptiveFixture('快乐老家 S01E01 第1期：小朋友变成老朋友 我们依然是好朋友', catalog,
+    { env: { TMDB_API_KEY: '', PROXY_URL: '' } });
+  assert.equal(result.data.isMatched, true, JSON.stringify(result.data));
+  assert.match(result.data.matches[0].episodeTitle, /第1期/);
+  assert.ok(!/第6期/.test(result.data.matches[0].episodeTitle), '日期里的 -01 不能当成第1期');
+});
+
 test('player match request with only SxxExx resolves through the TMDB episode identity', async () => {
   const result = await adaptiveFixture('大哥小助理 S01E03', playerCatalog, { tmdb: compoundVarietyTmdb });
   assert.equal(result.data.isMatched, true, JSON.stringify(result.data));

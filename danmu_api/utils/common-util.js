@@ -612,9 +612,14 @@ export function extractEpisodeNumberFromTitle(episodeTitle) {
     return parseInt(epMatch[1], 10);
   }
 
-  // 匹配格式：01、1（纯数字，通常在标题开头或结尾）；
-  // 同时兼容“剧名_32”“剧名.32”“剧名-32”等站点常见命名。
-  const numberMatch = episodeTitle.match(/(?:^|[\s._-])(\d{1,3})(?:\s|$)/);
+  // 匹配格式：01、1（纯数字，位于标题末尾）；同时兼容“剧名_32”“剧名.32”“剧名-32”等站点常见命名。
+  // 两条约束，取「宁可不匹配也不要错配」：
+  //   1) 日期不是集号：imgo 等平台的集标题以「2026-08-01」开头，日期里的日（-01）曾被当成
+  //      集号（2026-08-01 → 1），导致请求 S01E01 选中「第6期」；先把日期整段剔除。
+  //   2) 编号必须是标题的最后一个词：标题中间冒出来的数字（日期、分辨率等杂项）一概不认，
+  //      返回 null，交给文件名期号或 TMDB 分集身份去定位，避免用猜测的数字错配。
+  const withoutDates = episodeTitle.replace(/\d{4}\s*[-./年]\s*\d{1,2}\s*[-./月]\s*\d{1,2}\s*日?/g, ' ');
+  const numberMatch = withoutDates.match(/(?:^|[\s._-])(\d{1,3})(?=\s*$)/);
   if (numberMatch) {
     return parseInt(numberMatch[1], 10);
   }
