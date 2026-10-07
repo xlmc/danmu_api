@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildUgcContext, buildUgcQueries, selectUgcPages, mergeUgcComments, createUgcSupplement, ugcSupplement, isUgcApplicable, pickUgcEpisode, buildUgcRequestContext } from './utils/bilibili-ugc-util.js';
+import { buildUgcContext, buildUgcQueries, selectUgcPages, mergeUgcComments, createUgcSupplement, ugcSupplement, isUgcApplicable, pickUgcEpisode, buildUgcRequestContext, calculateUgcTitlePrecision, MIN_UGC_TITLE_PRECISION } from './utils/bilibili-ugc-util.js';
 import { Globals } from './configs/globals.js';
 import { addAnime } from './utils/cache-util.js';
-import { getComment } from './apis/player-api.js';
+import { getComment, isMovieFeatureFilmEpisode } from './apis/player-api.js';
 import { getSourceByKey } from './sources/registry.js';
 import { handleConfig } from './apis/system-api.js';
 
@@ -367,4 +367,79 @@ test('candidate-as-reference: no candidates means no supplement', async () => {
   const base = [{ p: '1,1,25,0', m: '原有' }];
   assert.strictEqual(await service.supplement(nonBiliContext, base), base);
 });
+
+test('isMovieFeatureFilmEpisode identifies feature films and rejects trailers/clips/boxoffice', () => {
+  const anime = { animeTitle: '蜘蛛侠：崭新之日(2026)【电影】from tencent', aliases: ['Spider-Man: Brand New Day'] };
+  // 必须识别为正片
+  assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: '正片' }, anime), true);
+  assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: '电影正片' }, anime), true);
+  assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: '完整版' }, anime), true);
+  assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: '蜘蛛侠：崭新之日' }, anime), true);
+  assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: '蜘蛛侠：崭新之日 1080P' }, anime), true);
+  assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: '第1集' }, anime), true);
+  assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: '全1集' }, anime), true);
+
+  // 必须拒绝非正片（预告、花絮、战报、解说等）
+  assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: '【预告】崭新之日定档预告' }, anime), false);
+  assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: '【花絮】拍摄幕后特辑' }, anime), false);
+  assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: '票房突破10亿战报' }, anime), false);
+  assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: '首周末票房登顶纪念' }, anime), false);
+  assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: '高光打斗片段' }, anime), false);
+  assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: '彩蛋全解析' }, anime), false);
+  assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: '五分钟深度解说' }, anime), false);
+});
+
+test('calculateUgcTitlePrecision distinguishes full episodes from commentaries and fanedits', () => {
+  const spiderCtx = { title: '蜘蛛侠：崭新之日', aliases: ['Spider-Man: Brand New Day'] };
+  assert.ok(calculateUgcTitlePrecision('【4K 60帧】蜘蛛侠：崭新之日 (2026) 完整公映版 [中英双字]', spiderCtx) >= 0.8, '电影搬运准确率高');
+  assert.ok(calculateUgcTitlePrecision('二刷《蜘蛛侠：崭新之日》全网最全细节解析与彩蛋盘点', spiderCtx) < 0.5, '影评解说准确率低');
+  assert.ok(calculateUgcTitlePrecision('【木鱼微剧场】《蜘蛛侠：崭新之日》大结局，震撼人心的救赎', spiderCtx) < 0.5, '剧评准确率低');
+
+  const linglongCtx = { title: '灵笼', aliases: [] };
+  assert.ok(calculateUgcTitlePrecision('【幻月字幕组】灵笼 第01话 [1080P HEVC BDRip]', linglongCtx) >= 0.8, '番剧搬运准确率高');
+  assert.ok(calculateUgcTitlePrecision('【灵笼】全剧最刀角色盘点，谁才是最意难平的那个？', linglongCtx) < 0.5, '角色盘点准确率低');
+
+  const varietyCtx = { title: '披荆斩棘2026', aliases: [] };
+  assert.ok(calculateUgcTitlePrecision('披荆斩棘2026 第8期', varietyCtx) >= 0.8, '综艺带年份标题准确率高');
+});
+
+test('selectUgcPages rejects low-precision commentary and short movie clips', () => {
+  const movieCtx = { title: '蜘蛛侠：崭新之日', aliases: [], type: '电影', episode: 1 };
+  const reasons = [];
+  const onReject = r => reasons.push(r);
+
+  // 1. 低准确率影评视频 -> 被 title-precision-low 拒绝
+  const commentaryVideo = {
+    bvid: 'BVcomm', aid: 1, title: '二刷《蜘蛛侠：崭新之日》全网最全细节解析与彩蛋盘点',
+    pages: [{ cid: 101, page: 1, part: '解析', duration: 900 }]
+  };
+  assert.equal(selectUgcPages(movieCtx, commentaryVideo, onReject).length, 0);
+  assert.ok(reasons.includes('title-precision-low'), '低准确率被拒绝');
+
+  // 2. 标题准确但单P时长不足40分钟的短视频 -> 被 movie-duration-too-short 拒绝
+  const shortClipVideo = {
+    bvid: 'BVshort', aid: 2, title: '蜘蛛侠：崭新之日 完整版',
+    pages: [{ cid: 102, page: 1, part: '正片', duration: 1200 }] // 20分钟
+  };
+  reasons.length = 0;
+  assert.equal(selectUgcPages(movieCtx, shortClipVideo, onReject).length, 0);
+  assert.ok(reasons.includes('movie-duration-too-short'), '电影时长不足被拒绝');
+
+  // 3. 正常正片 (时长 > 40分钟, 准确率高) -> 成功通过
+  const fullMovieVideo = {
+    bvid: 'BVfull', aid: 3, title: '【1080P】蜘蛛侠：崭新之日 完整版',
+    pages: [{ cid: 103, page: 1, part: '正片', duration: 7200 }] // 120分钟
+  };
+  const accepted = selectUgcPages(movieCtx, fullMovieVideo, onReject);
+  assert.equal(accepted.length, 1);
+  assert.equal(accepted[0].cid, 103);
+  assert.ok(accepted[0].precision >= MIN_UGC_TITLE_PRECISION);
+});
+
+test('pickUgcEpisode prioritizes higher title precision over lower precision candidates', () => {
+  const lowPrec = { bvid: 'BVlow', searchCount: 10000, precision: 0.35, evidence: { episodeTitleMatched: false } };
+  const highPrec = { bvid: 'BVhigh', searchCount: 500, precision: 1.0, evidence: { episodeTitleMatched: false } };
+  assert.equal(pickUgcEpisode([lowPrec, highPrec]).bvid, 'BVhigh', '高准确率优先于纯弹幕量');
+});
+
 

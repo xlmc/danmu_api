@@ -534,7 +534,7 @@ function switchSection(section, event = null) {
             event.target.classList.add('active');
         }
 
-        addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : '配置预览'}模块\`, 'info');
+        addLog(\`切换到\${section === 'env' ? '环境变量' : section === 'preview' ? '配置预览' : section === 'logs' ? '日志查看' : section === 'dashboard' ? '信息汇总' : '配置预览'}模块\`, 'info');
     }
 }
 

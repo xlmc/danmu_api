@@ -264,6 +264,40 @@ function isMovieMatchCandidate(anime) {
   return /(电影|剧场版|movie|film)/i.test(type);
 }
 
+/**
+ * 校验电影分集是否为真正的正片；排除纯预告、特辑、片段、花絮、新闻等非正片视频。
+ */
+export function isMovieFeatureFilmEpisode(ep, anime) {
+  if (!ep || !ep.episodeTitle) return false;
+  const cleanEpTitle = String(ep.episodeTitle).replace(/^【.*?】|^\[.*?\]/, '').trim();
+  if (!cleanEpTitle) return true;
+
+  // 1. 明确的正片标识词
+  const featureTagRegex = /^(?:正片|电影正片|原片|完整版|公映版|剧场版正片|movie|film)(?:[（(].*?[）)])?$/i;
+  if (featureTagRegex.test(cleanEpTitle)) return true;
+
+  // 2. 明确的非正片标识词（预告/花絮/特辑/片段/新闻/战报等）
+  const nonFeatureRegex = /预告|特辑|花絮|片段|幕后|采访|专访|首映|发布会|MV|推广曲|主题曲|预售|定档|开机|杀青|票房|战报|登顶|路透|高光|速看|看点|回顾|解说|点评|彩蛋/i;
+  if (nonFeatureRegex.test(cleanEpTitle)) return false;
+
+  // 3. 分集标题等于电影标题或别名
+  const animeTitle = extractAnimeTitle(anime?.animeTitle || '');
+  const normAnime = normalizeTitleForMatch(animeTitle);
+  const normEp = normalizeTitleForMatch(cleanEpTitle);
+
+  if (normAnime && normEp === normAnime) return true;
+  if (Array.isArray(anime?.aliases) && anime.aliases.some(a => normalizeTitleForMatch(a) === normEp)) return true;
+
+  // 4. 标题为电影名加上正片/版本修饰后缀（如 "流浪地球2 正片"、"流浪地球2 4K"）
+  const strippedEp = cleanEpTitle.replace(/(?:正片|完整版|公映版|原片|国语版|粤语版|原声版|中字|双语|1080p|4k|超清|高清).*$/i, '').trim();
+  if (normAnime && normalizeTitleForMatch(strippedEp) === normAnime) return true;
+
+  // 5. 常见电影单集标识：如 "1"、"01"、"第1集"、"全1集"
+  if (/^(?:第\s*0*1\s*集|全\s*0*1\s*集|0*1)$/.test(cleanEpTitle)) return true;
+
+  return false;
+}
+
 function getMatchEpisodeCount(anime, bangumiData) {
   // 部分源（如 360）会把同一部电影的多个平台链接都放进 links，
   // 不能把平台链接数当成电影集数。
@@ -1348,11 +1382,12 @@ export async function matchAniAndEp(season, episode, year, searchData, title, re
             matchedEpisode = findEpisodeByNumber(filteredEpisodes, episode, targetEpisode, null);
         }
     } else {
-        // 电影模式逻辑
-        if (bangumiData.bangumi.episodes.length > 0) {
+        // 电影模式逻辑：候选分集中必须包含真正的“正片”，没有正片（纯预告/花絮/短片）则不予匹配
+        const featureFilmEpisodes = bangumiData.bangumi.episodes.filter(ep => isMovieFeatureFilmEpisode(ep, anime));
+        if (featureFilmEpisodes.length > 0) {
             if (platform) {
-                // 在剧集列表中寻找匹配特定平台的资源
-                const targetEp = bangumiData.bangumi.episodes.find(ep => {
+                // 在正片分集列表中寻找匹配特定平台的资源
+                const targetEp = featureFilmEpisodes.find(ep => {
                     const epTitlePlatform = extractEpisodeTitle(ep.episodeTitle);
                     return getPlatformMatchScore(epTitlePlatform, platform) > 0;
                 });
@@ -1360,12 +1395,14 @@ export async function matchAniAndEp(season, episode, year, searchData, title, re
                 if (targetEp) {
                     matchedEpisode = targetEp;
                 } else if (isPreferredAnime) {
-                    log("info", `[system] [match] 优选电影未命中目标平台 ${platform}，放宽条件提取资源`);
-                    matchedEpisode = bangumiData.bangumi.episodes[0];
+                    log("info", `[system] [match] 优选电影未命中目标平台 ${platform}，放宽条件提取正片`);
+                    matchedEpisode = featureFilmEpisodes[0];
                 }
             } else {
-                matchedEpisode = bangumiData.bangumi.episodes[0];
+                matchedEpisode = featureFilmEpisodes[0];
             }
+        } else {
+            log("info", `[system] [match] 电影候选无有效正片分集 (均为预告/花絮/短片)，拒绝匹配: ${anime.animeTitle}`);
         }
     }
 
@@ -2161,9 +2198,11 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     // 只面向番剧/国外剧/国外平台（见 isUgcApplicable）；预算用完就放弃，返回未匹配。
     const tryUgcFallback = async () => {
       if (!globals.bilibiliUgcEnabled || !Number.isInteger(originalEpisode) || originalEpisode < 1) return null;
+      const isMovie = originalSeason === null || (originalEpisode === 1 && originalSeason === 1 && !parsed.season && !parsed.episode);
       const context = buildUgcRequestContext({
         title: tmdbIdentity?.title || originalTitle, aliases: tmdbIdentity?.aliases || [],
-        year: originalYear, season: originalSeason, episode: originalEpisode, tmdbIdentity
+        year: originalYear, season: originalSeason, episode: originalEpisode, tmdbIdentity,
+        type: isMovie ? '电影' : ''
       });
       if (!context) return null;
       // 官方目录里同名条目给出适用画像：候选项类型、命中来源、B站是否已有正片。
@@ -2171,6 +2210,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       const related = wanted ? globals.animes.filter(anime =>
         normalizeTitleForMatch(String(anime.animeTitle).replace(/\s*from\s+.+$/i, '')).includes(wanted)) : [];
       const types = [...new Set(related.map(anime => anime.type || anime.typeDescription).filter(Boolean))];
+      if (types.some(t => /电影|剧场版/.test(t))) context.type = '电影';
       const sources = [...new Set(related.map(anime => anime.source).filter(Boolean))];
       if (!isUgcApplicable({ identity: tmdbIdentity, sources, types, hasBilibiliPgc: sources.includes('bilibili') })) {
         log('info', '[system] [match] UGC 兜底不适用当前作品，跳过');

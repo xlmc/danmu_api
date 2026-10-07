@@ -12,6 +12,56 @@ const clean = s => decodeHtmlEntities(String(s || '').replace(/<[^>]*>/g, ''));
 const number = s => /^\d+$/.test(s) ? Number(s) : convertChineseNumber(s);
 const excluded = /reaction|第一次看|首看|一口气看|解说|讲解|混剪|预告|花絮|片段|测评|玩具|有声|小说|网盘|资源分享|\bMAD\b|\bCUT\b|纯\s*(?:OP|ED)/iu;
 const versions = /精编|(?<!未)删减|重制|英文|日语|粤语|配音|特别版|特別版|番外|续集/g;
+export const MIN_UGC_TITLE_PRECISION = 0.6;
+const RELEASE_DECORATORS = /(?:1080p|720p|4k|2160p|60帧|60fps|高码率|超清|高清|标清|蓝光|bd(?:rip)?|web-?dl|hdr|hevc|h264|h265|x264|x265|aac|中字|简中|繁中|双语|国语|粤语|日语|英语|中英双字|中文字幕|双语字幕|无字|生肉|熟肉|(?:未删减|完整|公映|纯净)+(?:版)?|正片|电影|剧场版|全集|合集|完结|最终话|大结局|自制|搬运|自压|压制|(?:\d{1,2}月)?新番|[^\s【】\[\]()（）]+(?:字幕组|字幕社|汉化组|译制组|压制组|工作组|制作组)|(?:19|20)\d{2}(?:年|版)?|第\s*[\d一二三四五六七八九十百]+\s*[季期部集话回]|s\d+|e\d+|ep\d+|part\s*\d+|\b\d{1,3}\s*期|\b\d{1,3}\b)/gi;
+
+/**
+ * 计算投稿标题相对目标作品的匹配准确率（核心字符覆盖率），排除弱相关解说/影评/盘点等杂音视频。
+ */
+export function calculateUgcTitlePrecision(candidateTitle, context) {
+  if (!candidateTitle || !context) return 0;
+  const rawTitle = clean(candidateTitle);
+  const aliases = [context.title, ...(context.aliases || [])].filter(Boolean);
+
+  let working = rawTitle.replace(/[【】《》\[\]\(\)（）「」『』]/g, ' ');
+
+  const sortedAliases = [...new Set(aliases.filter(s => s && String(s).trim().length >= 2))]
+    .sort((a, b) => normalize(b).length - normalize(a).length);
+
+  let matchedTitleLength = 0;
+  for (const name of sortedAliases) {
+    const normName = normalize(name);
+    if (!normName) continue;
+    const normWorking = normalize(working);
+    if (normWorking.includes(normName)) {
+      matchedTitleLength += normName.length;
+      const flexiblePattern = normName
+        .split('')
+        .map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('[\\s\\p{P}]*');
+      working = working.replace(new RegExp(flexiblePattern, 'iu'), ' ');
+    }
+  }
+
+  if (matchedTitleLength === 0) return 0;
+
+  if (context.episodeTitle) {
+    const epName = String(context.episodeTitle)
+      .replace(/【[^】]+】/g, '')
+      .replace(/第\s*[\d一二三四五六七八九十百]+\s*[集话期回]/g, '')
+      .trim();
+    if (epName.length >= 2) {
+      working = working.split(epName).join(' ');
+    }
+  }
+
+  working = working.replace(RELEASE_DECORATORS, ' ');
+
+  const leftoverNoise = normalize(working);
+  const leftoverLength = leftoverNoise.length;
+
+  return matchedTitleLength / (matchedTitleLength + leftoverLength);
+}
 
 // 投稿自身弹幕量过少时多为花絮/搬运/广告素材，补充进来只会稀释弹幕质量。
 // 仅在搜索结果给出 stat 时判定；缺少统计字段时不做限制（部分接口不返回 stat）。
@@ -128,12 +178,16 @@ export function buildUgcRequestContext({ title, aliases = [], year = null, seaso
   };
 }
 
-// 匹配只能返回一个分集：优先标题与目标集完全一致的候选，多个再比弹幕数。
+// 匹配只能返回一个分集：优先标题与目标集完全一致的候选，优先高准确率，再比弹幕数。
 export function pickUgcEpisode(candidates = []) {
   if (!candidates.length) return null;
   const exact = candidates.filter(candidate => candidate.evidence?.episodeTitleMatched);
   const pool = exact.length ? exact : candidates;
-  return [...pool].sort((a, b) => (Number(b.searchCount) || 0) - (Number(a.searchCount) || 0))[0];
+  return [...pool].sort((a, b) => {
+    const precDiff = (b.precision || b.evidence?.titlePrecision || 0) - (a.precision || a.evidence?.titlePrecision || 0);
+    if (Math.abs(precDiff) > 0.05) return precDiff;
+    return (Number(b.searchCount) || 0) - (Number(a.searchCount) || 0);
+  })[0];
 }
 
 // UGC 面向官方平台没有正片、或弹幕本来就少的作品：番剧/国外剧、国外平台。
@@ -171,6 +225,8 @@ export function selectUgcPages(context, video, onReject = () => {}) {
   const reject = (reason, page) => { onReject(reason, page); return []; };
   const title = clean(video.title), aliases = [context.title, ...(context.aliases || [])];
   if (!aliases.some(name => normalize(name).length >= 2 && normalize(title).includes(normalize(name)))) return reject('title-mismatch');
+  const precision = calculateUgcTitlePrecision(title, context);
+  if (precision < MIN_UGC_TITLE_PRECISION) return reject('title-precision-low');
   const season = title.match(/第\s*([\d一二三四五六七八九十百]+)\s*季|\bS(\d+)\b/i);
   if (season && (!context.season || number(season[1] || season[2]) !== context.season)) return reject('season-mismatch');
   const year = title.match(/\b((?:19|20)\d{2})\s*(?:年|版)/);
@@ -192,14 +248,15 @@ export function selectUgcPages(context, video, onReject = () => {}) {
     const named = bareEpisodeTitle.length >= 2 && normalize(p.part) === bareEpisodeTitle;
     // A page's position is not an episode number. Trailer/OP pages often precede E01.
     const episode = pageEpisode ?? (pages.length === 1 ? titleEpisode : null);
-    const movie = /电影|剧场版/.test(context.type || '') && pages.length === 1 && episode === null;
+    const movie = (/电影|剧场版/.test(context.type || '') || (context.season === null && context.episode === 1)) && pages.length === 1 && episode === null;
     if (episode !== context.episode && !named && !movie) return reject('episode-unconfirmed-or-mismatch', p);
     if (pageEpisode !== null && pageEpisode !== context.episode) return reject('episode-mismatch', p);
     if (pages.length === 1 && titleEpisode !== null && titleEpisode !== context.episode) return reject('episode-mismatch', p);
     if (!(p.duration > 0) || !p.cid || !video.bvid) return reject('metadata-incomplete', p);
+    if (movie && p.duration < 2400) return reject('movie-duration-too-short', p);
     return [{ bvid: video.bvid, aid: video.aid, cid: p.cid, page: p.page, duration: p.duration, title, part: p.part,
-      url: `https://www.bilibili.com/video/${video.bvid}/?p=${p.page}`, searchCount: video.stat?.danmaku || 0,
-      evidence: { title, part: p.part, explicitEpisode: episode, episodeTitleMatched: named } }];
+      precision, url: `https://www.bilibili.com/video/${video.bvid}/?p=${p.page}`, searchCount: video.stat?.danmaku || 0,
+      evidence: { title, part: p.part, explicitEpisode: episode, episodeTitleMatched: named, titlePrecision: precision } }];
   });
 }
 
@@ -267,13 +324,20 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
       const title = clean(v.title), ep = episodeNumber(title);
       // stat 缺失时不限制；给出弹幕数但过少的投稿通常是花絮/搬运/广告素材。
       const reported = v.stat ? Number(v.stat.danmaku) : null;
-      const reason = excluded.test(title) ? 'non-content'
-        : ![context.title, ...context.aliases || []].some(name => normalize(title).includes(normalize(name))) ? 'title-mismatch'
+      const precision = calculateUgcTitlePrecision(title, context);
+      v.precision = precision;
+      const reason = ![context.title, ...context.aliases || []].some(name => normalize(title).includes(normalize(name))) ? 'title-mismatch'
+        : precision < MIN_UGC_TITLE_PRECISION ? 'title-precision-low'
+        : excluded.test(title) ? 'non-content'
         : !(ep === null || ep === context.episode || /合集|全集|全\s*\d+|1\s*[-~～]\s*\d+/.test(title)) ? 'episode-mismatch'
         : (reported !== null && Number.isFinite(reported) && reported < MIN_CANDIDATE_DANMAKU) ? 'low-danmaku' : null;
-      if (reason) logger('candidate.reject', '投稿初筛拒绝：' + v.bvid + '，原因=' + reason, { bvid: v.bvid, candidateTitle: title, reason, reportedDanmaku: reported });
+      if (reason) logger('candidate.reject', '投稿初筛拒绝：' + v.bvid + '，原因=' + reason, { bvid: v.bvid, candidateTitle: title, reason, precision, reportedDanmaku: reported });
       return !reason;
-    }).sort((a, b) => (b.video_review || 0) - (a.video_review || 0));
+    }).sort((a, b) => {
+      const precDiff = (b.precision || 0) - (a.precision || 0);
+      if (Math.abs(precDiff) > 0.05) return precDiff;
+      return (b.video_review || 0) - (a.video_review || 0);
+    });
     logger('search.end', '检索去重 ' + videos.size + ' 个，初筛通过 ' + ordered.length + ' 个', { discovered: videos.size, eligible: ordered.length, metadataLimit: 30 });
     const details = await mapConcurrent(ordered.slice(0, 30), DETAIL_CONCURRENCY, async v => {
       signal?.throwIfAborted();

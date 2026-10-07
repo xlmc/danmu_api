@@ -4,11 +4,13 @@ import { componentsCssContent } from "./css/components.css.js";
 import { formsCssContent } from "./css/forms.css.js";
 import { responsiveCssContent } from "./css/responsive.css.js";
 import { themesCssContent } from "./css/themes.css.js";
+import { dashboardCssContent } from "./css/dashboard.css.js";
 import { iconJsContent, iconsSpriteContent, renderIcon } from "./js/icons.js";
 import { mainJsContent } from "./js/main.js";
 import { previewJsContent } from "./js/preview.js";
 import { logviewJsContent } from "./js/logview.js";
 import { systemSettingsJsContent } from "./js/systemsettings.js";
+import { dashboardJsContent } from "./js/dashboard.js";
 
 // language=HTML
 export const HTML_TEMPLATE = /* html */ `
@@ -27,6 +29,8 @@ export const HTML_TEMPLATE = /* html */ `
     <style>${formsCssContent}</style>
     <style>${responsiveCssContent}</style>
     <style>${themesCssContent}</style>
+    <style>${dashboardCssContent}</style>
+
 
 </head>
 <body data-theme="globals.uiTheme">
@@ -69,7 +73,8 @@ export const HTML_TEMPLATE = /* html */ `
                 </div>
             </div>
             <div class="nav-buttons">
-                <button class="nav-btn active" onclick="switchSection('preview', event)">配置预览</button>
+                <button class="nav-btn active" onclick="switchSection('dashboard', event)">信息汇总</button>
+                <button class="nav-btn" onclick="switchSection('preview', event)">配置预览</button>
                 <button class="nav-btn" onclick="switchSection('logs', event)">日志查看</button>
 
 
@@ -79,8 +84,112 @@ export const HTML_TEMPLATE = /* html */ `
         </div>
 
         <div class="content">
+            <!-- 信息汇总 (Dashboard 首页) -->
+            <div class="section active" id="dashboard-section">
+                <!-- 1. 顶部 4 大核心指标卡片 -->
+                <div class="dash-grid-4">
+                    <!-- 卡片 1: 系统运行状态 -->
+                    <div class="dash-card">
+                        <div class="dash-card-header">
+                            <span class="dash-card-title">系统运行状态</span>
+                            <span class="dash-status-dot normal" id="dash-service-dot" title="服务正常运行"></span>
+                        </div>
+                        <div class="dash-card-body">
+                            <div class="dash-big-text" id="dash-service-text">服务正常</div>
+                            <div class="dash-sub-line" style="color: #10b981; font-weight: 600;">
+                                Node.js · 端口 <span id="dash-port-val">9321</span>
+                            </div>
+                            <div class="dash-sub-line" style="margin-top: 10px;">
+                                <div class="dash-latency-trigger">
+                                    <span class="dash-big-num" style="font-size: 26px; color: #10b981;">16.4</span>
+                                    <span class="dash-big-unit">ms</span>
+                                    <div class="dash-latency-tooltip">平均解析延迟 · P95: 22ms · P99: 35ms</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="dash-card-footer">
+                            <span>在线时长: 3天 14小时</span>
+                            <button class="dash-card-btn" onclick="copyDashboardEndpoint()">复制端点</button>
+                        </div>
+                    </div>
+
+                    <!-- 卡片 2: 今日请求总量 -->
+                    <div class="dash-card">
+                        <div class="dash-card-header">
+                            <span class="dash-card-title">今日请求总量</span>
+                            <span class="dash-card-pill">24H 统计</span>
+                        </div>
+                        <div class="dash-card-body">
+                            <div class="dash-big-num">24,850</div>
+                            <div class="dash-sub-line">
+                                <span class="dash-trend-up">↑ 14.2%</span> 较昨日同时段
+                            </div>
+                        </div>
+                        <div class="dash-card-footer">
+                            <span>峰值吞吐: 38 req/s</span>
+                        </div>
+                    </div>
+
+                    <!-- 卡片 3: 今日弹幕获取 -->
+                    <div class="dash-card">
+                        <div class="dash-card-header">
+                            <span class="dash-card-title">今日弹幕获取</span>
+                            <span class="dash-card-pill">已捕获</span>
+                        </div>
+                        <div class="dash-card-body">
+                            <div class="dash-big-num" style="color: var(--theme-accent);">210.3 <span class="dash-big-unit">万条</span></div>
+                            <div class="dash-sub-line">
+                                <span class="dash-trend-up">↑ 12.8%</span> 较昨日
+                            </div>
+                            <div class="dash-sub-line" style="margin-top: 4px; font-weight: 500;">
+                                今日已成功获取 1,698 集弹幕
+                            </div>
+                        </div>
+                        <div class="dash-card-footer">
+                            <span>多源聚合去重 · 高并发响应</span>
+                        </div>
+                    </div>
+
+                    <!-- 卡片 4: 缓存命中率 -->
+                    <div class="dash-card">
+                        <div class="dash-card-header">
+                            <span class="dash-card-title">缓存命中率</span>
+                            <span class="dash-card-pill">已启用</span>
+                        </div>
+                        <div class="dash-card-body">
+                            <div class="dash-big-num" style="color: var(--theme-accent);">99.4 <span class="dash-big-unit">%</span></div>
+                            <div class="dash-sub-line">
+                                已累计节省 24.7k 次请求
+                            </div>
+                        </div>
+                        <div class="dash-card-footer">
+                            <span>内存 + Redis 缓存</span>
+                            <button class="dash-card-btn" onclick="showClearCacheModal()">清理缓存</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. 请求趋势模块 (彻底去除红框多余胶囊与冗余代码) -->
+                <div class="dash-trend-section">
+                    <div class="dash-trend-header">
+                        <div class="dash-trend-title-box">
+                            <h2 class="dash-trend-title">请求趋势</h2>
+                        </div>
+                        <div class="dash-trend-controls">
+                            <button class="dash-trend-tab-btn active" data-mode="hourly" onclick="renderDashboardTrend('hourly')">今日分时</button>
+                            <button class="dash-trend-tab-btn" data-mode="daily" onclick="renderDashboardTrend('daily')">近 7 天</button>
+                        </div>
+                    </div>
+                    <div class="dash-chart-tooltip-bar" id="dash-chart-info">
+                        <strong>10:00</strong> · <span>1,140 次请求</span> · <span>74 集弹幕</span> · <span>8.9 万条弹幕</span> · <span>回源 12</span> · <span style="color:#10b981;font-weight:700;">命中率 98.9%</span>
+                    </div>
+                    <div class="dash-chart-container" id="dash-trend-bars"></div>
+                    <div class="dash-chart-axis-x" id="dash-trend-axis"></div>
+                </div>
+            </div>
+
             <!-- 配置预览 -->
-            <div class="section active" id="preview-section">
+            <div class="section" id="preview-section">
                 <h2>配置预览</h2>
 
                 <div id="proxy-config-container" class="error-config-banner" style="display: none;">
@@ -352,6 +461,7 @@ export const HTML_TEMPLATE = /* html */ `
         ${previewJsContent}
         ${logviewJsContent}
         ${systemSettingsJsContent}
+        ${dashboardJsContent}
     </script>
 </body>
 </html>
