@@ -58,6 +58,7 @@ export function handleConfig(hasPermission = false) {
     deployPlatform: globals.deployPlatform
   };
   delete previewEnvVars.BILIBILI_UGC_BUDGET_MS;
+  delete previewEnvVars.XDANMU_VERSION;
 
   // 将环境变量按分类组织 - 使用原始环境变量进行分类，但保持预览格式
   Object.keys(previewEnvVars).forEach(key => {
@@ -82,6 +83,7 @@ export function handleConfig(hasPermission = false) {
   // ADMIN_TOKEN 后，才要求使用 ADMIN_TOKEN 才能读取完整配置。
   let originalEnvVars = { ...globals.originalEnvVars };
   delete originalEnvVars.BILIBILI_UGC_BUDGET_MS;
+  delete originalEnvVars.XDANMU_VERSION;
   const hasAdminTokenConfigured = adminToken.trim() !== '';
   const hasConfigPermission = globals.tokenAuthDisabled
     ? true
