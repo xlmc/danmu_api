@@ -66,6 +66,34 @@ test('queries consume existing aliases and identity without changing context', (
   assert(q.includes('测试作品 第2季 第5集')); assert(q.includes('Test Series 第2季 05')); assert(q.some(x => x.endsWith('合集')));
   assert.deepEqual(context, before);
 });
+
+test('UGC searches late TMDB aliases and their Chinese variants without losing episode identity', async () => {
+  const tmdbIdentity = { key: 'tv:324502', mediaType: 'tv', aliases: ['装备我最强', 'テムパル～アイテムの力～', 'Tempal: Item no Chikara', 'Overgeared', '裝備仔'] };
+  const ctx = buildUgcRequestContext({ title: '装备我最强', year: 2026, season: 1, episode: 2, tmdbIdentity });
+  const queries = buildUgcQueries(ctx);
+  for (const alias of ['裝備仔', '装备仔', 'Overgeared']) assert(queries.includes(`${alias} 第1季 第2集`), alias);
+  assert(queries.indexOf('裝備仔 第1季 第2集') < queries.indexOf('Tempal: Item no Chikara 第1季 第2集'));
+  assert.equal(new Set(queries).size, queries.length);
+  const savedContext = buildUgcContext({ anime: { animeTitle: '装备我最强', type: '动漫', tmdbIdentity }, link: { title: '第2集', url: 'official' }, index: 1 });
+  assert(savedContext.aliases.includes('裝備仔'), '目录补充同样继承 TMDB 别名');
+  assert.equal(selectUgcPages(ctx, video('装备仔 第2话', [{ cid: 55, page: 1, part: '第2话', duration: 1665 }])).length, 1);
+  assert.equal(selectUgcPages(ctx, video('装备仔 第3话', [{ cid: 55, page: 1, part: '第3话', duration: 1665 }])).length, 0);
+  for (const chineseHit of [true, false]) {
+    const deps = dependencies(), searched = [];
+    const json = async url => {
+      if (url.includes('/search/type')) {
+        const keyword = new URL(url).searchParams.get('keyword');
+        searched.push(keyword);
+        if (!chineseHit && !keyword.startsWith('Test Series')) return { code: 0, data: { result: [] } };
+      }
+      return deps.json(url);
+    };
+    const found = await createUgcSupplement({ source: deps.source, json }).search({ ...context, tmdbIdentity: { aliases: ['Test Series', '中文别名'] } });
+    assert.equal(found.candidates.length, 1);
+    assert(searched.includes('中文别名 第2季 第5集'));
+    assert.equal(searched.some(keyword => keyword.startsWith('Test Series')), !chineseHit, '中文未命中才搜索其他语言');
+  }
+});
 test('explicit season, year, episode and non-content conflicts are rejected', () => {
   for (const title of ['测试作品 第1季 第5集', '测试作品 第2季 第4集', '测试作品 2021年 第5集', '测试作品 第2季 第5集 reaction', '测试作品 第2季 第5集 精编版', '测试作品 第2季 第5集 删减版']) assert.equal(selectUgcPages(context, video(title)).length, 0, title);
   assert.equal(selectUgcPages(context, video('另一作品 第2季 第5集')).length, 0);

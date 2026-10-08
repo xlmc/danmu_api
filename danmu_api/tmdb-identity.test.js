@@ -458,7 +458,7 @@ test('unmatched overseas show falls back to a B station submission', async () =>
     assert.equal(result.data.isMatched, true, JSON.stringify(result.data));
     assert.match(result.data.matches[0].animeTitle, /B站投稿/);
     assert.equal(result.data.matches[0].episodeTitle, '第04集');
-    assert.equal(result.data.matches[0].url, 'https://www.bilibili.com/video/BV1ugcbest/?p=4', '标题完全一致的候选优先');
+    assert.equal(result.data.matches[0].url, 'bilibili:https://www.bilibili.com/video/BV1ugcbest/?p=4$$$bilibili:https://www.bilibili.com/video/BV1ugcfallback/?p=4', '合格投稿保留在同一分集里');
     assert.equal(result.comments.comments[0].m, '投稿弹幕');
   } finally { ugcSupplement.prepare = saved.prepare; bilibili.getComments = saved.comments; }
 });
@@ -470,22 +470,38 @@ test('confirmed animation ignores same-name short drama and returns a registered
   let calls=0;
   ugcSupplement.prepare=async()=>{calls++;return {result:{failures:[],candidates:[
     {bvid:'BVempty',cid:1,page:1,url:'https://www.bilibili.com/video/BVempty/',searchCount:9999,evidence:{}},
-    {bvid:'BVvalid',cid:2,page:2,url:'https://www.bilibili.com/video/BVvalid/?p=2',part:'第2话',searchCount:83,evidence:{}}],
-    accepted:[{cid:2,comments:[{p:'1,1,25,16777215',m:'有效投稿弹幕'}],timeline:{status:'metadata-matched',offsetSeconds:0,validRange:[0,100]}}]}};};
+    {bvid:'BVvalid',cid:2,page:2,url:'https://www.bilibili.com/video/BVvalid/?p=2',part:'第2话',searchCount:2,precision:1,evidence:{}},
+    {bvid:'BVmore',cid:3,page:1,url:'https://www.bilibili.com/video/BVmore/?p=1',part:'第2话',searchCount:126,precision:0.625,evidence:{}}],
+    accepted:[{cid:2,comments:[{p:'1,1,25,16777215',m:'有效投稿弹幕'}],timeline:{status:'metadata-matched',offsetSeconds:0,validRange:[0,100]}},
+      {cid:3,comments:[{p:'1,1,25,16777215',m:'有效投稿弹幕'},...Array.from({length:126},(_,i)=>({p:`${i+2},1,25,16777215`,m:'更多弹幕'+i}))],timeline:{status:'metadata-matched',offsetSeconds:0,validRange:[0,200]}}]}};};
   try{
     const result=await adaptiveFixture('装备我最强 S01E02',()=>[shortDrama],{fallbackKeyword:'装备我最强',env:{BILIBILI_UGC_ENABLED:'true'},
       tmdb:{results:[{id:324502,name:'装备我最强',first_air_date:'2026-10-02'}],
         details:{id:324502,name:'装备我最强',first_air_date:'2026-10-02',genres:[{id:16}],seasons:[{season_number:1,air_date:'2026-10-02'}]}}});
     assert.equal(result.data.isMatched,true);
     assert.match(result.data.matches[0].animeTitle,/B站投稿/);
-    assert.equal(result.data.matches[0].url,'https://www.bilibili.com/video/BVvalid/?p=2');
+    assert.equal(result.data.matches.length,1,'多个投稿仍返回一个播放器源');
+    assert.equal(result.data.matches[0].url,'bilibili:https://www.bilibili.com/video/BVmore/?p=1$$$bilibili:https://www.bilibili.com/video/BVvalid/?p=2');
     assert.equal(result.comments.comments[0]?.m,'有效投稿弹幕',JSON.stringify(result.comments));
+    assert.equal(result.comments.comments.length,127,'精确标题的少量弹幕与其他合格投稿合并，并去除重复');
     for(const response of [result.fallback.network,result.fallback.cached,result.fallback.episodes]){
       assert.equal(response.animes.length,1,JSON.stringify({response,stored:Globals.animes}));
       assert.match(response.animes[0].animeTitle,/B站投稿/);
     }
     assert.equal(calls,1,'generated source must not recursively supplement itself');
     assert(!result.requests.some(url=>url.includes('bilibili.com')),'comment request reuses validated comments');
+    const source=getSourceByKey('bilibili'),savedGet=source.getEpisodeDanmu,savedFormat=source.formatComments;
+    const fetched=[];
+    try {
+      source.getEpisodeDanmu=async url=>{fetched.push(url);return [{p:'1,1,25,16777215',m:'有效投稿弹幕'},
+        ...(url.includes('BVmore')?Array.from({length:126},(_,i)=>({p:`${i+2},1,25,16777215`,m:'更多弹幕'+i})):[])];};
+      source.formatComments=comments=>comments;
+      Globals.commentCache.clear();
+      const refreshed=await (await handleRequest(new Request('http://localhost/87654321/api/v2/comment/'+result.data.matches[0].episodeId),Globals.env,'node','127.0.0.1')).json();
+      assert.equal(refreshed.comments.length,127,'缓存失效后仍读取全部合格投稿并去重');
+      assert.equal(fetched.length,2);
+      assert.equal(calls,1,'缓存刷新不重新匹配作品');
+    } finally {source.getEpisodeDanmu=savedGet;source.formatComments=savedFormat;}
   }finally{ugcSupplement.prepare=saved;}
 });
 

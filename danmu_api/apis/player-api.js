@@ -2271,31 +2271,36 @@ async function matchAnimeWithTrace(url, req, clientIp) {
         logger('match.failure', 'UGC 兜底检索失败：' + error.message, { reason: error.message }, 'warn');
         return null;
       }
-      const candidate = pickUgcEpisode((found?.candidates || []).filter(item =>
+      const candidates = (found?.candidates || []).filter(item =>
         found.accepted.some(accepted => accepted.cid === item.cid && accepted.comments.length))
-        .map(item => ({ ...item, searchCount: found.accepted.find(accepted => accepted.cid === item.cid).comments.length })));
+        .map(item => ({ ...item, searchCount: found.accepted.find(accepted => accepted.cid === item.cid).comments.length }));
+      const candidate = pickUgcEpisode(candidates);
       if (!candidate) { logger('match.none', 'UGC 兜底没有可用分集'); return null; }
-      const accepted = found.accepted.find(item => item.cid === candidate.cid);
-      const comments = convertToDanmakuJson(mergeUgcComments([], [accepted]), 'bilibili');
+      const accepted = found.accepted.filter(item => candidates.some(candidate => candidate.cid === item.cid));
+      const comments = convertToDanmakuJson(mergeUgcComments([], accepted), 'bilibili');
       if (!comments.length) { logger('match.none', 'UGC 兜底没有有效时间范围内的弹幕'); return null; }
+      const urls = [...new Set(candidates.map(item => item.url))].sort();
+      const episodeUrl = urls.length > 1 ? urls.map(url => 'bilibili:' + url).join(MERGE_DELIMITER) : candidate.url;
       const ugcAnimeId = 900000000 + [...String(candidate.bvid)].reduce((acc, ch) => (acc * 31 + ch.codePointAt(0)) % 99999999, 7);
       const prior = globals.animes.find(anime => anime.animeId === ugcAnimeId && anime.type === 'B站投稿');
       const episodeTitle = `第${String(originalEpisode).padStart(2, '0')}集`;
-      const links = [...(prior?.links || []).filter(link => link.url !== candidate.url), { url: candidate.url, title: episodeTitle }];
+      const links = [...(prior?.links || []).filter(link => link.title !== episodeTitle), { url: episodeUrl, title: episodeTitle }];
       const resAnime = { animeId: ugcAnimeId, source: 'bilibili', bangumiId: 'ugc:' + candidate.bvid, type: 'B站投稿', typeDescription: 'B站投稿',
         animeTitle: `${context.title}${originalYear ? `(${originalYear})` : ''}${originalSeason > 1 ? ` 第${originalSeason}季` : ''}【B站投稿】`,
         imageUrl: '', startDate: originalYear ? `${originalYear}-01-01` : '', episodeCount: links.length,
         aliases: [originalTitle, context.title, ...(context.aliases || [])], tmdbIdentity, links };
       if (!addAnime(resAnime)) return null;
-      const episode = globals.animes.find(anime => anime.animeId === ugcAnimeId && anime.type === 'B站投稿').links.find(link => link.url === candidate.url);
-      setCommentCache(resolveCommentCacheKey(candidate.url), comments);
+      const episode = globals.animes.find(anime => anime.animeId === ugcAnimeId && anime.type === 'B站投稿').links.find(link => link.url === episodeUrl);
+      setCommentCache(resolveCommentCacheKey(episodeUrl), comments);
       if (globals.localCacheValid) await updateLocalCaches({ keys: ['animes', 'episodeIds', 'episodeNum'] });
       if (globals.localRedisValid) await updateLocalRedisCaches({ keys: ['animes', 'episodeIds', 'episodeNum'] });
-      logger('match.hit', 'UGC 兜底命中：' + candidate.bvid + ' P' + candidate.page + '，投稿弹幕 ' + candidate.searchCount + ' 条',
-        { bvid: candidate.bvid, cid: candidate.cid, episodeId: episode.id, searchCount: candidate.searchCount, episodeTitleMatched: Boolean(candidate.evidence?.episodeTitleMatched) });
+      logger('match.hit', 'UGC 兜底合并 ' + urls.length + ' 个投稿分P，过滤去重后返回 ' + comments.length + ' 条弹幕',
+        { bvid: candidate.bvid, cid: candidate.cid, episodeId: episode.id, searchCount: candidate.searchCount,
+          candidates: candidates.map(item => ({ bvid: item.bvid, cid: item.cid, page: item.page, title: item.title, part: item.part, evidence: item.evidence, count: item.searchCount })),
+          finalCount: comments.length, episodeTitleMatched: Boolean(candidate.evidence?.episodeTitleMatched) });
       return {
         resAnime,
-        resEpisode: { episodeId: episode.id, episodeTitle, url: candidate.url },
+        resEpisode: { episodeId: episode.id, episodeTitle, url: episodeUrl },
         spilloverMatched: false, title: context.title, season: originalSeason, episode: originalEpisode
       };
     };
@@ -2385,7 +2390,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       }
     }
 
-    if (globals.bilibiliUgcEnabled && resEpisode?.url?.includes(MERGE_DELIMITER)) {
+    if (globals.bilibiliUgcEnabled && resEpisode?.url?.includes(MERGE_DELIMITER) && resAnime.type !== 'B站投稿') {
       try {
         const prefetch = startUgcPrefetch(resEpisode.episodeId, resEpisode.url, false);
         const comments = await fetchMergedComments(resEpisode.url, resAnime.animeTitle, resEpisode.episodeId);

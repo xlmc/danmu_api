@@ -5,9 +5,10 @@ import { logEvent } from './log-util.js';
 import { convertChineseNumber, extractAnimeInfo, extractYear, matchMediaType, workIdentityConflict } from './common-util.js';
 import { decodeHtmlEntities } from './codec-util.js';
 import { isDomesticTmdbProduction } from './tmdb-util.js';
+import { simplized, traditionalized } from './zh-util.js';
 
 const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', Referer: 'https://www.bilibili.com/' };
-const normalize = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]/gu, '');
+const normalize = s => simplized(String(s || '')).normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]/gu, '');
 const clean = s => decodeHtmlEntities(String(s || '').replace(/<[^>]*>/g, ''));
 const number = s => /^\d+$/.test(s) ? Number(s) : convertChineseNumber(s);
 const excluded = /reaction|第一次看|首看|一口气看|解说|讲解|混剪|预告|花絮|片段|测评|玩具|有声|小说|网盘|资源分享|\bMAD\b|\bCUT\b|纯\s*(?:OP|ED)/iu;
@@ -144,7 +145,7 @@ export function buildUgcContext(resolved) {
   if (!parsed.baseTitle || !Number.isInteger(episode) || episode < 1) return null;
   return {
     identity: `${anime.source}:${anime.animeId}:${anime.bangumiId}`,
-    title: parsed.baseTitle, aliases: [...(anime.aliases || [])],
+    title: parsed.baseTitle, aliases: [...new Set([...(anime.aliases || []), ...(anime.tmdbIdentity?.aliases || [])])],
     year: Number(String(anime.startDate || '').slice(0, 4)) || extractYear(anime.animeTitle),
     season: parsed.season ?? anime.tmdbIdentity?.seasonNumber ?? (mediaType === 'tv' ? 1 : null),
     mediaType,
@@ -157,13 +158,18 @@ export function buildUgcContext(resolved) {
 
 export function buildUgcQueries(context) {
   const n = context.episode, padded = String(n).padStart(2, '0');
-  const names = [...new Set([context.title, ...(context.aliases || [])].filter(Boolean))].slice(0, 3);
-  if (context.year) names.unshift(`${context.title} ${context.year}`);
+  const aliases = [...new Set([...(context.aliases || []), ...(context.tmdbIdentity?.aliases || [])].filter(Boolean))];
+  // B站优先搜索中文别名；其他已确认别名仍参与，不因列表位置被截断。
+  const chinese = name => /[\u3400-\u9fff]/u.test(name) && !/[\u3040-\u30ff]/u.test(name);
+  aliases.sort((a, b) => Number(chinese(b)) - Number(chinese(a)));
+  const names = [...new Set([context.title, ...aliases].filter(Boolean).flatMap(name => [name, simplized(name), traditionalized(name)]))];
+  const broadNames = new Set([context.title, ...aliases.slice(0, 2)].filter(Boolean).flatMap(name => [name, simplized(name), traditionalized(name)]));
+  if (context.year) { names.unshift(`${context.title} ${context.year}`); broadNames.add(names[0]); }
   const season = context.season ? ` 第${context.season}季` : '';
   // 综艺用「第N期」，剧集用「第N集」；两种编号都检索，避免用错单位而漏掉真实投稿。
   const units = /第\s*[\d一二三四五六七八九十百零两]+\s*期/.test(String(context.episodeTitle || '')) ? ['期', '集'] : ['集'];
   return [...new Set(names.flatMap(name =>
-    [...units.map(unit => `${name}${season} 第${n}${unit}`), `${name}${season} ${padded}`, `${name}${season} 合集`]))];
+    [...units.map(unit => `${name}${season} 第${n}${unit}`), ...(broadNames.has(name) ? [`${name}${season} ${padded}`, `${name}${season} 合集`] : [])]))];
 }
 
 // 匹配阶段还没有官方分集，只能用请求本身给出的身份构造 UGC context；
@@ -173,7 +179,7 @@ export function buildUgcRequestContext({ title, aliases = [], year = null, seaso
   if (!baseTitle || !Number.isInteger(episode) || episode < 1) return null;
   return {
     identity: 'request:' + baseTitle,
-    title: baseTitle, aliases: [...aliases].filter(Boolean),
+    title: baseTitle, aliases: [...new Set([...aliases, ...(tmdbIdentity?.aliases || [])].filter(Boolean))],
     year: Number.isInteger(year) ? year : null,
     season: Number.isInteger(season) ? season : null,
     episode, episodeSource: 'request',
@@ -323,7 +329,13 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
     logger('search.start', '开始检索投稿');
     const videos = new Map(), key = await source._getWbiMixinKey();
     const queries = buildUgcQueries(context).flatMap(keyword => ['totalrank', 'dm'].map(order => ({ keyword, order })));
-    await mapConcurrent(queries, SEARCH_CONCURRENCY, async ({ keyword, order }) => {
+    const chineseQuery = ({ keyword }) => {
+      const name = keyword.replace(/(?: 第\d+季)? (?:第\d+[集期]|\d+|合集)$/u, '');
+      return /[\u3400-\u9fff]/u.test(name) && !/[\u3040-\u30ff]/u.test(name);
+    };
+    for (const queryGroup of [queries.filter(chineseQuery), queries.filter(query => !chineseQuery(query))]) {
+    if (!queryGroup.length) continue;
+    await mapConcurrent(queryGroup, SEARCH_CONCURRENCY, async ({ keyword, order }) => {
       signal?.throwIfAborted();
       logger('search.query', '检索关键词：' + keyword + '，排序=' + order, { keyword, order });
       const params = source._getWbiSignedParams({ keyword, search_type: 'video', page: 1, page_size: 20, order }, key);
@@ -373,6 +385,8 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
       if (detail.failure) result.failures.push(detail.failure);
     }
     logger('candidates.ready', '可用分P候选 ' + result.candidates.length + ' 个', { count: result.candidates.length });
+    if (result.candidates.length) return result;
+    }
     return result;
   }
 
