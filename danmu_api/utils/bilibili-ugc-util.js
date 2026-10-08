@@ -134,6 +134,7 @@ export function createUgcLogger(context = {}) {
 export function buildUgcContext(resolved) {
   if (!resolved?.anime || !resolved.link) return null;
   const { anime, link, index } = resolved;
+  if (anime.type === 'B站投稿') return null;
   const parsed = extractAnimeInfo(anime.animeTitle, link.title);
   const mediaType = anime.tmdbIdentity?.mediaType || matchMediaType([anime.type, anime.typeDescription].join(' '));
   // 综艺等以「第N期」编号的作品无法被通用集数解析器识别；先用分集标题自身的期/集号，
@@ -203,6 +204,7 @@ export function isUgcApplicable({ identity = null, source = null, sources = [], 
   const sourceKeys = [source, ...sources].map(value => String(value || '').toLowerCase()).filter(Boolean);
   // 1) B站已有正片：弹幕充足，投稿没有增益。
   if (hasBilibiliPgc) return false;
+  if (identity?.isAnimation === true) return true;
   // 2) 命中的是弹幕本就少的国外平台（巴哈/韩剧TV/人人）。
   if (sourceKeys.some(key => UGC_OVERSEAS_SOURCES.has(key))) return true;
   const typeText = [type, ...types].filter(Boolean).join(' ');
@@ -315,7 +317,7 @@ async function getJson(url) {
 export function createUgcSupplement({ source = new BilibiliSource(), json = getJson } = {}) {
   const cache = new Map(), pending = new Map();
   let cacheGeneration = 0;
-  // 检索投稿并做身份校验（不取弹幕）：匹配阶段的 UGC 兜底源只用这一段。
+  // 检索投稿并做身份校验；独立兜底通过 prepare 继续确认非空弹幕。
   async function search(context, { signal, logger = createUgcLogger(context) } = {}) {
     const result = { candidates: [], failures: [] };
     logger('search.start', '开始检索投稿');

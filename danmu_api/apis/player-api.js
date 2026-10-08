@@ -4,7 +4,7 @@ import { canonicalPlatformName } from '../utils/platform-util.js';
 import { runWithMatchTrace, traceMatchStep, getMatchTracePrefix } from '../utils/match-trace-util.js';
 import { globals } from '../configs/globals.js';
 import { runWithCommentTransform } from '../utils/comment-context.js';
-import { buildUgcContext, createUgcLogger, ugcSupplement, isUgcApplicable, buildUgcRequestContext, pickUgcEpisode } from '../utils/bilibili-ugc-util.js';
+import { buildUgcContext, createUgcLogger, ugcSupplement, isUgcApplicable, buildUgcRequestContext, pickUgcEpisode, mergeUgcComments } from '../utils/bilibili-ugc-util.js';
 import { getPageTitle, jsonResponse, httpGet, sourceLogContext, runWithHttpCache, httpCacheContext } from '../utils/http-util.js';
 import { log } from '../utils/log-util.js'
 import { logEvent } from '../utils/log-util.js';
@@ -549,12 +549,33 @@ function searchScopeCacheKey(key, searchSources) {
 }
 
 // Extracted function for GET /api/v2/search/anime
-export async function searchAnime(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null, sourceSearches = null, searchSources = null) {
+export async function searchAnime(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null, sourceSearches = null, searchSources = null, clientIp = null) {
   // 单次搜索请求内启用 HTTP 响应复用缓存: 作为各源通用的请求级复用安全网, 借助 AsyncLocalStorage 做请求级隔离
-  if (httpCacheContext.getStore()) {
-    return searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress, sourceSearches, searchSources);
+  const run = () => searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress, sourceSearches, searchSources);
+  const response = await (httpCacheContext.getStore() ? run() : runWithHttpCache(run));
+  const previous = clientIp ? getLastSearch(clientIp) : null;
+  const target = previous?.matchIdentity || previous?.failedMatch;
+  const keyword = normalizeTitleForMatch(url.searchParams.get('keyword') || '');
+  if (!target || Date.now() - previous.timestamp >= 180000 ||
+      ![target.title, ...(target.tmdbIdentity?.aliases || [])].some(title => normalizeTitleForMatch(title) === keyword)) return response;
+  const data = await response.json();
+  if (!data.success || !Array.isArray(data.animes)) return jsonResponse(data, response.status);
+  data.animes = data.animes.filter(anime => {
+    if (anime.type === 'B站投稿' && !globals.bilibiliUgcEnabled) return false;
+    const reason = workIdentityConflict(anime, target);
+    if (reason) log('info', `[system] [search-reject] 已确认身份拒绝搜索候选：${anime.animeTitle}，原因=${reason}`);
+    return !reason;
+  });
+  if (globals.bilibiliUgcEnabled) {
+    for (const anime of globals.animes) {
+      if (anime.type !== 'B站投稿' || workIdentityConflict(anime, target) ||
+          !anime.aliases.some(title => normalizeTitleForMatch(title) === keyword) ||
+          data.animes.some(item => item.animeId === anime.animeId && item.source === anime.source)) continue;
+      const { links, ...item } = anime;
+      data.animes.push(item);
+    }
   }
-  return runWithHttpCache(() => searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress, sourceSearches, searchSources));
+  return jsonResponse(data, response.status);
 }
 
 async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null, sourceSearches = null, searchSources = null) {
@@ -1678,6 +1699,7 @@ async function selectReadyMatch({ animes, details, title, season, episode, year,
   let candidates = guard ? filterMappingTargetCandidates(animes, guard) : animes;
   // 快速路径只接受明确季号与集标题，不用数组位置或跨季推算。
   candidates = candidates.filter(anime => {
+    if (anime.type === 'B站投稿' && !globals.bilibiliUgcEnabled) return false;
     if (anime.isHiddenChild || !matchYear(anime, year)) return false;
     const titles = [anime.animeTitle, ...(anime.aliases || [])];
     if (!titles.some(candidate => matchSeason({ ...anime, animeTitle: candidate }, title, season)) &&
@@ -2230,35 +2252,50 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       if (!context) return null;
       // 官方目录里同名条目给出适用画像：候选项类型、命中来源、B站是否已有正片。
       const wanted = normalizeTitleForMatch(String(context.title));
-      const related = wanted ? globals.animes.filter(anime =>
+      const related = wanted ? globals.animes.filter(anime => anime.type !== 'B站投稿' &&
+        !workIdentityConflict(anime, { year: originalYear, mediaType: tmdbIdentity?.mediaType || requestMediaType, tmdbIdentity }) &&
         normalizeTitleForMatch(String(anime.animeTitle).replace(/\s*from\s+.+$/i, '')).includes(wanted)) : [];
       const types = [...new Set(related.map(anime => anime.type || anime.typeDescription).filter(Boolean))];
       const sources = [...new Set(related.map(anime => anime.source).filter(Boolean))];
-      if (!isUgcApplicable({ identity: tmdbIdentity, sources, types, hasBilibiliPgc: sources.includes('bilibili') })) {
+      if (!isUgcApplicable({ identity: tmdbIdentity, sources, types })) {
         log('info', '[system] [match] UGC 兜底不适用当前作品，跳过');
         return null;
       }
       const logger = createUgcLogger(context);
       logger('match.start', '官方源未命中，尝试 B站投稿兜底', { season: originalSeason, episode: originalEpisode });
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), UGC_MATCH_BUDGET_MS);
       let found = null;
       try {
-        found = await ugcSupplement.search(context, { signal: controller.signal, logger });
+        const prepared = await ugcSupplement.prepare(context, { budgetMs: UGC_MATCH_BUDGET_MS, logger });
+        found = prepared.result;
       } catch (error) {
-        logger('match.failure', 'UGC 兜底检索失败：' + error.message, { reason: controller.signal.aborted ? 'timeout' : error.message }, 'warn');
+        logger('match.failure', 'UGC 兜底检索失败：' + error.message, { reason: error.message }, 'warn');
         return null;
-      } finally { clearTimeout(timer); }
-      const candidate = pickUgcEpisode(found?.candidates || []);
+      }
+      const candidate = pickUgcEpisode((found?.candidates || []).filter(item =>
+        found.accepted.some(accepted => accepted.cid === item.cid && accepted.comments.length))
+        .map(item => ({ ...item, searchCount: found.accepted.find(accepted => accepted.cid === item.cid).comments.length })));
       if (!candidate) { logger('match.none', 'UGC 兜底没有可用分集'); return null; }
-      const episode = addEpisode(candidate.url, candidate.part);
+      const accepted = found.accepted.find(item => item.cid === candidate.cid);
+      const comments = convertToDanmakuJson(mergeUgcComments([], [accepted]), 'bilibili');
+      if (!comments.length) { logger('match.none', 'UGC 兜底没有有效时间范围内的弹幕'); return null; }
+      const ugcAnimeId = 900000000 + [...String(candidate.bvid)].reduce((acc, ch) => (acc * 31 + ch.codePointAt(0)) % 99999999, 7);
+      const prior = globals.animes.find(anime => anime.animeId === ugcAnimeId && anime.type === 'B站投稿');
+      const episodeTitle = `第${String(originalEpisode).padStart(2, '0')}集`;
+      const links = [...(prior?.links || []).filter(link => link.url !== candidate.url), { url: candidate.url, title: episodeTitle }];
+      const resAnime = { animeId: ugcAnimeId, source: 'bilibili', bangumiId: 'ugc:' + candidate.bvid, type: 'B站投稿', typeDescription: 'B站投稿',
+        animeTitle: `${context.title}${originalYear ? `(${originalYear})` : ''}${originalSeason > 1 ? ` 第${originalSeason}季` : ''}【B站投稿】`,
+        imageUrl: '', startDate: originalYear ? `${originalYear}-01-01` : '', episodeCount: links.length,
+        aliases: [originalTitle, context.title, ...(context.aliases || [])], tmdbIdentity, links };
+      if (!addAnime(resAnime)) return null;
+      const episode = globals.animes.find(anime => anime.animeId === ugcAnimeId && anime.type === 'B站投稿').links.find(link => link.url === candidate.url);
+      setCommentCache(resolveCommentCacheKey(candidate.url), comments);
+      if (globals.localCacheValid) await updateLocalCaches({ keys: ['animes', 'episodeIds', 'episodeNum'] });
+      if (globals.localRedisValid) await updateLocalRedisCaches({ keys: ['animes', 'episodeIds', 'episodeNum'] });
       logger('match.hit', 'UGC 兜底命中：' + candidate.bvid + ' P' + candidate.page + '，投稿弹幕 ' + candidate.searchCount + ' 条',
         { bvid: candidate.bvid, cid: candidate.cid, episodeId: episode.id, searchCount: candidate.searchCount, episodeTitleMatched: Boolean(candidate.evidence?.episodeTitleMatched) });
-      const ugcAnimeId = 900000000 + [...String(candidate.bvid)].reduce((acc, ch) => (acc * 31 + ch.codePointAt(0)) % 99999999, 7);
       return {
-        resAnime: { animeId: ugcAnimeId, source: 'bilibili', bangumiId: 'ugc', type: 'B站投稿', typeDescription: 'B站投稿',
-          animeTitle: `${context.title}${originalYear ? `(${originalYear})` : ''}【B站投稿】`, imageUrl: '' },
-        resEpisode: { episodeId: episode.id, episodeTitle: candidate.part || candidate.title || '', url: candidate.url },
+        resAnime,
+        resEpisode: { episodeId: episode.id, episodeTitle, url: candidate.url },
         spilloverMatched: false, title: context.title, season: originalSeason, episode: originalEpisode
       };
     };
@@ -2338,13 +2375,33 @@ async function matchAnimeWithTrace(url, req, clientIp) {
 
     attempt ||= { resAnime: null, resEpisode: null, spilloverMatched: false, title: originalTitle, season: originalSeason, episode: originalEpisode };
 
-    const { resAnime, resEpisode, spilloverMatched } = attempt;
+    let { resAnime, resEpisode, spilloverMatched } = attempt;
     if (tmdbIdentity && resAnime && resEpisode && !spilloverMatched) {
       const stored = globals.animes.find(anime => anime.animeId === resAnime.animeId && anime.source === resAnime.source);
       if (stored) {
         stored.tmdbIdentity = tmdbIdentity;
         if (globals.localCacheValid) await updateLocalCaches({ keys: ['animes'] });
         if (globals.localRedisValid) await updateLocalRedisCaches({ keys: ['animes'] });
+      }
+    }
+
+    if (globals.bilibiliUgcEnabled && resEpisode?.url?.includes(MERGE_DELIMITER)) {
+      try {
+        const prefetch = startUgcPrefetch(resEpisode.episodeId, resEpisode.url, false);
+        const comments = await fetchMergedComments(resEpisode.url, resAnime.animeTitle, resEpisode.episodeId);
+        const cacheKey = resolveCommentCacheKey(resEpisode.url);
+        const cachedAddedCount = globals.commentCache.get(cacheKey)?.ugcAddedCount || 0;
+        const supplemented = await supplementUgcForEpisode(resEpisode.episodeId, resEpisode.url, comments, false, prefetch?.logger, prefetch);
+        if (supplemented.length > comments.length) {
+          setCommentCache(cacheKey, supplemented);
+          const cached = globals.commentCache.get(cacheKey);
+          if (cached) cached.ugcAddedCount = cachedAddedCount + supplemented.length - comments.length;
+        }
+        if (supplemented.length > comments.length || cachedAddedCount > 0) {
+          resAnime = { ...resAnime, animeTitle: resAnime.animeTitle + '【B站投稿】' };
+        }
+      } catch (error) {
+        log('warn', '[system] [match] 合并源 UGC 检查失败，保留官方匹配：' + error.message);
       }
     }
 
@@ -2359,6 +2416,11 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     resData["isMatched"] = Boolean(resAnime && resEpisode);
     if (tmdbIdentity) resData.tmdb = tmdbIdentity;
 
+    if (clientIp && !resData.isMatched) {
+      setLastSearch(clientIp, { matchIdentity: { title: originalTitle, year: originalYear,
+        mediaType: tmdbIdentity?.mediaType || requestMediaType, tmdbIdentity } });
+    }
+
     if (resEpisode) {
       if (clientIp && !spilloverMatched) {
         setLastSearch(clientIp, mappingApplied ? {
@@ -2366,13 +2428,15 @@ async function matchAnimeWithTrace(url, req, clientIp) {
           season: originalSeason,
           episode: originalEpisode,
           episodeId: resEpisode.episodeId,
+          matchIdentity: { title: originalTitle, year: originalYear, mediaType: tmdbIdentity?.mediaType || requestMediaType, tmdbIdentity },
           autoMatchMappingApplied: true,
           mappingTargetTitle: mapping.targetTitle
         } : {
           title: attempt.title,
           season: attempt.season,
           episode: attempt.episode,
-          episodeId: resEpisode.episodeId
+          episodeId: resEpisode.episodeId,
+          matchIdentity: { title: originalTitle, year: originalYear, mediaType: tmdbIdentity?.mediaType || requestMediaType, tmdbIdentity }
         });
       }
       resData["matches"] = [
@@ -2412,7 +2476,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
 }
 
 // Extracted function for GET /api/v2/search/episodes
-export async function searchEpisodes(url) {
+export async function searchEpisodes(url, clientIp = null) {
   let anime = url.searchParams.get("anime");
   const episode = url.searchParams.get("episode") || "";
 
@@ -2437,7 +2501,7 @@ export async function searchEpisodes(url) {
   let searchUrl = buildSearchAnimeUrl(url, anime);
   const requestAnimeDetailsMap = new Map();
 
-  const searchRes = await searchAnime(searchUrl, null, null, requestAnimeDetailsMap);
+  const searchRes = await searchAnime(searchUrl, null, null, requestAnimeDetailsMap, null, false, null, null, null, clientIp);
   const searchData = await searchRes.json();
 
   if (!searchData.success || !searchData.animes || searchData.animes.length === 0) {
@@ -2549,7 +2613,7 @@ function buildBangumiData(anime, idParam = "") {
       seasonId: `season-${anime.animeId}`,
       episodeId: link.id,
       episodeTitle: `${link.title}`,
-      episodeNumber: `${anime.source === 'local' ? (extractEpisodeNumberFromTitle(link.title) ?? i + 1) : i + 1}`,
+      episodeNumber: `${anime.source === 'local' || anime.type === 'B站投稿' ? (extractEpisodeNumberFromTitle(link.title) ?? i + 1) : i + 1}`,
       airDate: anime.startDate,
       url: link.url || ""
     });

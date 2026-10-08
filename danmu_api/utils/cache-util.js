@@ -351,7 +351,9 @@ export function isCommentCacheValid(videoUrl) {
     const commentCount = Array.isArray(cached.comments) ? cached.comments.length : 0;
     const minCount = Math.max(0, globals.commentCacheMinCount || 0);
 
-    if (minCount > 0 && commentCount < minCount) {
+    // 独立 UGC 源已在匹配阶段验证非空；少量弹幕也要保留给紧接着的播放器请求。
+    const ugcFallback = globals.animes.some(anime => anime.type === 'B站投稿' && anime.links.some(link => link.url === videoUrl));
+    if (minCount > 0 && commentCount < minCount && !ugcFallback && !(cached.ugcAddedCount > 0)) {
         globals.commentCache.delete(videoUrl);
         log("info", `[cache] Comment cache for "${videoUrl}" has only ${commentCount} comments (minimum ${minCount}), refreshing`);
         return false;

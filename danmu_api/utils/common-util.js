@@ -48,6 +48,10 @@ export function matchMediaType(value) {
 
 // 主源、缓存与投稿都拒绝明确的年份、类型与作品 ID 冲突。
 export function workIdentityConflict(candidate, target) {
+  const typeText = [candidate.type, candidate.typeDescription, candidate.animeTitle || candidate.title].join(' ');
+  const animation = /动漫|番剧|动画|\banime\b/i.test(typeText);
+  if (target.tmdbIdentity?.isAnimation === true && !animation &&
+      (candidate.isAnimation === false || /短剧|综艺|真人|实拍|\b(?:drama|variety)\b/i.test(typeText))) return 'animation-mismatch';
   const mediaType = matchMediaType([candidate.mediaType, candidate.type, candidate.typeDescription].join(' '));
   if (target.mediaType && mediaType && target.mediaType !== mediaType) return 'type-mismatch';
   const key = candidate.tmdbIdentity?.key;

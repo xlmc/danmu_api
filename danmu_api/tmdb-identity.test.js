@@ -110,7 +110,7 @@ test('match endpoint binds TMDB query ID to remote season rules and reuses the v
     assert.equal(urls.length,count,'confirmed alias must not query TMDB again');assert.equal(searches,searchCount,'saved directory must skip platform search');
   }finally{globalThis.fetch=fetch;source.search=savedSearch;source.handleAnimes=savedHandle;}
 });
-async function adaptiveFixture(fileName, catalog, {tmdb=null,env={},probeDirectory=false,events=[],body={}}={}) {
+async function adaptiveFixture(fileName, catalog, {tmdb=null,env={},probeDirectory=false,events=[],body={},fallbackKeyword=null,repeatMatch=false}={}) {
   Globals.init({RATE_LIMIT_MAX_REQUESTS:'0',TOKEN:'87654321',SOURCE_ORDER:'tencent',PLATFORM_ORDER:'tencent',MATCH_SEARCH_BUDGET_MS:'0',MERGE_SOURCE_PAIRS:'',LOCAL_CACHE_ENABLED:'false',LOCAL_REDIS_URL:'',USE_BANGUMI_DATA:'false',TITLE_MAPPING_TABLE:'',TITLE_MAPPING_TABLE_URL:'',AUTO_MATCH_MAPPING_TABLE:'',AUTO_MATCH_MAPPING_TABLE_URL:'',TMDB_API_KEY:'test-key',LOG_LEVEL:'error',...env});
   Globals.animes=[];Globals.episodeIds=[];Globals.episodeNum=10001;Globals.searchCache=new Map();Globals.lastSelectMap=new Map();Globals.queryCacheInitialized=false;
   const source=getSourceByKey('tencent');const saved={search:source.search,handle:source.handleAnimes,comments:source.getComments,fetch:globalThis.fetch};
@@ -135,10 +135,34 @@ async function adaptiveFixture(fileName, catalog, {tmdb=null,env={},probeDirecto
     const response=await handleRequest(new Request('http://localhost/87654321/api/v2/match',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({fileName,...body})}),Globals.env,'node','127.0.0.1');
     const data=await response.json();let comments=null;
     if(data.isMatched){const comment=await handleRequest(new Request('http://localhost/87654321/api/v2/comment/'+data.matches[0].episodeId),Globals.env,'node','127.0.0.1');comments=await comment.json();}
-    return {data,searches,requests,comments};
+    let fallback=null;
+    if(fallbackKeyword){
+      const searchUrl='http://localhost/87654321/api/v2/search/anime?keyword='+encodeURIComponent(fallbackKeyword);
+      const network=await handleRequest(new Request(searchUrl),Globals.env,'node','127.0.0.1');
+      const cached=await handleRequest(new Request(searchUrl),Globals.env,'node','127.0.0.1');
+      const otherClient=await handleRequest(new Request(searchUrl),Globals.env,'node','127.0.0.2');
+      const episodes=await handleRequest(new Request('http://localhost/87654321/api/v2/search/episodes?anime='+encodeURIComponent(fallbackKeyword)+'&episode=2'),Globals.env,'node','127.0.0.1');
+      fallback={network:await network.json(),cached:await cached.json(),otherClient:await otherClient.json(),episodes:await episodes.json()};
+    }
+    const repeated=repeatMatch ? await (await handleRequest(new Request('http://localhost/87654321/api/v2/match',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({fileName,...body})}),Globals.env,'node','127.0.0.1')).json() : null;
+    return {data,searches,requests,comments,fallback,repeated};
   }finally{source.search=saved.search;source.handleAnimes=saved.handle;source.getComments=saved.comments;globalThis.fetch=saved.fetch;}
 }
 const fixtureAnime=(title,year=2024,id=812,type='tvseries')=>({animeId:id,bangumiId:String(id),animeTitle:`${title}(${year})【${type==='movie'?'电影':'动漫'}】from tencent`,source:'tencent',type,startDate:year+'-01-01',episodeCount:2,links:[1,2].map(i=>({url:`https://v.qq.com/x/cover/adaptive${id}/e${i}.html`,title:`【tencent】 第${i}集`}))});
+
+test('failed animation match rejects the same-name short drama in fallback searches and caches',async()=>{
+  const shortDrama={...fixtureAnime('装备我最强',2026),animeTitle:'装备我最强(2026)【短剧】from tencent',type:'短剧',episodeCount:1,
+    links:[{url:'https://v.qq.com/x/cover/short/full.html',title:'【tencent】 全集'}]};
+  const result=await adaptiveFixture('装备我最强 S01E02',()=>[shortDrama],{fallbackKeyword:'装备我最强',
+    env:{BILIBILI_UGC_ENABLED:'false'},tmdb:{results:[{id:324502,name:'装备我最强',first_air_date:'2026-10-02'}],
+      details:{id:324502,name:'装备我最强',first_air_date:'2026-10-02',genres:[{id:16}],seasons:[{season_number:1,air_date:'2026-10-02'}]}}});
+  assert.equal(result.data.isMatched,false);
+  assert.equal(result.data.tmdb.isAnimation,true);
+  assert.deepEqual(result.fallback.network.animes,[]);
+  assert.deepEqual(result.fallback.cached.animes,[]);
+  assert.deepEqual(result.fallback.episodes.animes,[]);
+  assert.equal(result.fallback.otherClient.animes.length,1,'another client does not inherit the failed match identity');
+});
 
 test('player metadata selects its explicit year and typed TMDB ID without title guessing', async () => {
   const catalog = () => [fixtureAnime('魔女嘉莉', 1976, 1, 'movie'), fixtureAnime('魔女嘉莉', 2026, 2)];
@@ -422,21 +446,47 @@ test('unmatched overseas show falls back to a B station submission', async () =>
     anime.links = [1, 2, 3].map(i => ({ url: `https://ani.gamer.com.tw/animeRef.php?sn=${i}`, title: `【bahamut】 第0${i}集` }));
     return [anime]; };
   const bilibili = getSourceByKey('bilibili');
-  const saved = { search: ugcSupplement.search, comments: bilibili.getComments };
+  const saved = { prepare: ugcSupplement.prepare, comments: bilibili.getComments };
   bilibili.getComments = async () => [{ p: '1,1,16777215,ugc', m: '投稿弹幕' }];
-  ugcSupplement.search = async () => ({ failures: [], candidates: [
+  ugcSupplement.prepare = async () => ({ result: { failures: [], accepted: [4242,4343].map(cid=>({cid,comments:[{p:'1,1,25,16777215',m:'投稿弹幕'}],timeline:{status:'metadata-matched',offsetSeconds:0,validRange:[0,100]}})), candidates: [
     { bvid: 'BV1ugcfallback', cid: 4242, page: 4, part: '第04话 麦斯登场',
       url: 'https://www.bilibili.com/video/BV1ugcfallback/?p=4', searchCount: 300, evidence: { episodeTitleMatched: false } },
     { bvid: 'BV1ugcbest', cid: 4343, page: 4, part: '第04话 麦斯登场',
-      url: 'https://www.bilibili.com/video/BV1ugcbest/?p=4', searchCount: 900, evidence: { episodeTitleMatched: true } }] });
+      url: 'https://www.bilibili.com/video/BV1ugcbest/?p=4', searchCount: 900, evidence: { episodeTitleMatched: true } }] } });
   try {
     const result = await adaptiveFixture('假面骑士麦斯 S01E04', catalog, { env: { TMDB_API_KEY: '', PROXY_URL: '', BILIBILI_UGC_ENABLED: 'true' } });
     assert.equal(result.data.isMatched, true, JSON.stringify(result.data));
     assert.match(result.data.matches[0].animeTitle, /B站投稿/);
-    assert.equal(result.data.matches[0].episodeTitle, '第04话 麦斯登场');
+    assert.equal(result.data.matches[0].episodeTitle, '第04集');
     assert.equal(result.data.matches[0].url, 'https://www.bilibili.com/video/BV1ugcbest/?p=4', '标题完全一致的候选优先');
     assert.equal(result.comments.comments[0].m, '投稿弹幕');
-  } finally { ugcSupplement.search = saved.search; bilibili.getComments = saved.comments; }
+  } finally { ugcSupplement.prepare = saved.prepare; bilibili.getComments = saved.comments; }
+});
+
+test('confirmed animation ignores same-name short drama and returns a registered nonempty UGC source',async()=>{
+  const shortDrama={...fixtureAnime('装备我最强',2026),animeTitle:'装备我最强(2026)【短剧】from tencent',type:'短剧',episodeCount:1,
+    links:[{url:'https://v.qq.com/x/cover/short/full.html',title:'【tencent】 全集'}]};
+  const saved=ugcSupplement.prepare;
+  let calls=0;
+  ugcSupplement.prepare=async()=>{calls++;return {result:{failures:[],candidates:[
+    {bvid:'BVempty',cid:1,page:1,url:'https://www.bilibili.com/video/BVempty/',searchCount:9999,evidence:{}},
+    {bvid:'BVvalid',cid:2,page:2,url:'https://www.bilibili.com/video/BVvalid/?p=2',part:'第2话',searchCount:83,evidence:{}}],
+    accepted:[{cid:2,comments:[{p:'1,1,25,16777215',m:'有效投稿弹幕'}],timeline:{status:'metadata-matched',offsetSeconds:0,validRange:[0,100]}}]}};};
+  try{
+    const result=await adaptiveFixture('装备我最强 S01E02',()=>[shortDrama],{fallbackKeyword:'装备我最强',env:{BILIBILI_UGC_ENABLED:'true'},
+      tmdb:{results:[{id:324502,name:'装备我最强',first_air_date:'2026-10-02'}],
+        details:{id:324502,name:'装备我最强',first_air_date:'2026-10-02',genres:[{id:16}],seasons:[{season_number:1,air_date:'2026-10-02'}]}}});
+    assert.equal(result.data.isMatched,true);
+    assert.match(result.data.matches[0].animeTitle,/B站投稿/);
+    assert.equal(result.data.matches[0].url,'https://www.bilibili.com/video/BVvalid/?p=2');
+    assert.equal(result.comments.comments[0]?.m,'有效投稿弹幕',JSON.stringify(result.comments));
+    for(const response of [result.fallback.network,result.fallback.cached,result.fallback.episodes]){
+      assert.equal(response.animes.length,1,JSON.stringify({response,stored:Globals.animes}));
+      assert.match(response.animes[0].animeTitle,/B站投稿/);
+    }
+    assert.equal(calls,1,'generated source must not recursively supplement itself');
+    assert(!result.requests.some(url=>url.includes('bilibili.com')),'comment request reuses validated comments');
+  }finally{ugcSupplement.prepare=saved;}
 });
 
 test('UGC fallback stays off for domestic official platforms', async () => {
@@ -554,6 +604,26 @@ test('ordinary TMDB fallback processes all group members and returns their confi
     // 因此后续平台组只在第一个失败阶段被搜索过一次，第二个阶段不再遍历它。
     assert.equal(bilibiliHandles,1,'the successful metadata stage stops before searching the later group again');
     assert.equal(result.requests.filter(url=>url.includes('/season/1/episode/2')).length,1);
+    const savedPrepare=ugcSupplement.prepare,savedSupplement=ugcSupplement.supplement;
+    const mergedSources=[getSourceByKey('tencent'),iqiyi].map(source=>({source,get:source.getEpisodeDanmu,format:source.formatComments}));
+    try {
+      for(const {source} of mergedSources){source.getEpisodeDanmu=async()=>[{p:'1,1,16777215,test',m:'试用弹幕'}];source.formatComments=comments=>comments;}
+      for(const contributes of [false,true]) {
+        ugcSupplement.prepare=async(_context,options)=>({result:{candidates:[],failures:[],accepted:contributes?
+          [{cid:2,comments:[{p:'2,1,16777215,ugc',m:'投稿补充'}],timeline:{status:'metadata-matched',validRange:[0,100],offsetSeconds:0}}]:[]},
+          cacheState:'hit',durationMs:0,budgetMs:5000,logger:options.logger});
+        ugcSupplement.supplement=async(context,base,options)=>ugcSupplement.settle(context,base,
+          await(options.prepared||ugcSupplement.prepare(context,options)));
+        const merged=await adaptiveFixture('示例 S01E02',()=>[catalog],{repeatMatch:true,tmdb:ordinaryTmdb({season_number:1,episode_number:2,name:'迟来的信',air_date:'2024-01-02'}),
+          env:{SOURCE_ORDER:'tencent,iqiyi,bilibili',PLATFORM_ORDER:'tencent&iqiyi,bilibili',MERGE_SOURCE_PAIRS:'tencent&iqiyi',BILIBILI_UGC_ENABLED:'true'}});
+        assert.equal(merged.data.matches.length,1,'UGC stays inside the configured merged result');
+        assert.equal(merged.data.matches[0].animeTitle.includes('B站投稿'),contributes,'label requires actual added comments');
+        assert.equal(merged.repeated.matches[0].animeTitle.includes('B站投稿'),contributes,'cached contribution keeps the label on repeated matching');
+        assert.equal(merged.comments.comments.some(comment=>comment.m==='投稿补充'),contributes);
+        assert.ok(merged.comments.comments.some(comment=>comment.m==='试用弹幕'));
+      }
+    } finally {ugcSupplement.prepare=savedPrepare;ugcSupplement.supplement=savedSupplement;
+      for(const {source,get,format} of mergedSources){source.getEpisodeDanmu=get;source.formatComments=format;}}
   } finally {for(const {source,search,handle,comments} of saved){source.search=search;source.handleAnimes=handle;source.getComments=comments;}}
 });
 
