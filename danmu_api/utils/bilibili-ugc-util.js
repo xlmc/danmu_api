@@ -220,6 +220,8 @@ export function isUgcApplicable({ identity = null, source = null, sources = [], 
 }
 
 function episodeNumber(text) {
+  const paired = String(text).normalize('NFKC').match(/(?<![a-z0-9])S\d{1,3}\s*E0*(\d{1,3})(?!\d)/iu);
+  if (paired) return number(paired[1]);
   const m = String(text).normalize('NFKC').match(/第\s*([\d一二三四五六七八九十百零两]+)\s*[集话期回]|(?:\bEP?\s*|[\[【(（])0*(\d{1,3})(?:\b|[\]】)）])|(?:^|\s|_)0*(\d{1,3})\s*(?:[集话期回]|[.、_\s]|$)/iu);
   return m ? number(m[1] || m[2] || m[3]) : null;
 }
@@ -230,7 +232,7 @@ export function selectUgcPages(context, video, onReject = () => {}) {
   if (!aliases.some(name => normalize(name).length >= 2 && normalize(title).includes(normalize(name)))) return reject('title-mismatch');
   const precision = calculateUgcTitlePrecision(title, context);
   if (precision < MIN_UGC_TITLE_PRECISION) return reject('title-precision-low');
-  const season = title.match(/第\s*([\d一二三四五六七八九十百]+)\s*季|\bS(\d+)\b/i);
+  const season = title.match(/第\s*([\d一二三四五六七八九十百]+)\s*季|(?<![a-z0-9])S(\d{1,3})(?=\s*E\d|\b)/i);
   if (season && (!context.season || number(season[1] || season[2]) !== context.season)) return reject('season-mismatch');
   const mediaType = context.mediaType || context.tmdbIdentity?.mediaType || matchMediaType(context.type || '');
   const conflict = workIdentityConflict({ ...video, title, type: [video.type, matchMediaType(title)].join(' ') }, { ...context, mediaType });
@@ -241,6 +243,8 @@ export function selectUgcPages(context, video, onReject = () => {}) {
   if (!pages.length) return reject('no-pages');
   return pages.flatMap(p => {
     if (excluded.test(`${title} ${p.part}`)) return reject('non-content', p);
+    const pageSeason = String(p.part).normalize('NFKC').match(/第\s*([\d一二三四五六七八九十百]+)\s*季|(?<![a-z0-9])S(\d{1,3})(?=\s*E\d|\b)/i);
+    if (pageSeason && context.season && number(pageSeason[1] || pageSeason[2]) !== context.season) return reject('season-mismatch', p);
     if ([...String(p.part).matchAll(versions)].some(m => !contextText.includes(m[0]))) return reject('version-mismatch', p);
     // 上下篇：目标集是「第8期下」时，不能用「第8期上」的弹幕替代。
     const contextPart = partMarker(context.episodeTitle);
@@ -353,7 +357,7 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
         const view = await abortable(json('https://api.bilibili.com/x/web-interface/view?bvid=' + v.bvid), signal);
         const selected = selectUgcPages(context, view.data || {}, (reason, page) => logger('candidate.reject',
           '投稿身份校验拒绝：' + v.bvid + '，原因=' + reason,
-          { bvid: v.bvid, cid: page?.cid, page: page?.page, candidateTitle: clean(view.data?.title), reason }));
+          { bvid: v.bvid, cid: page?.cid, page: page?.page, part: page?.part, candidateTitle: clean(view.data?.title), reason }));
         for (const c of selected) logger('candidate.select', '候选通过身份校验：' + c.bvid + ' P' + c.page + '，CID=' + c.cid,
           { bvid: c.bvid, cid: c.cid, page: c.page, candidateTitle: c.title, part: c.part, duration: c.duration, reportedComments: c.searchCount, evidence: c.evidence });
         return { selected };

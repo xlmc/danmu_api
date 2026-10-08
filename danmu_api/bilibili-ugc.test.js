@@ -74,6 +74,18 @@ test('explicit season, year, episode and non-content conflicts are rejected', ()
 test('episode labels cover subtitles, brackets, Chinese numerals and variety periods', () => {
   for (const tag of ['[05]', '【05】', 'E05', 'EP05', '第五话', '05期']) assert.equal(selectUgcPages(context, video(`测试作品 第2季 ${tag}`)).length, 1, tag);
 });
+test('UGC recognizes S01E02 filenames and rejects explicit season and episode conflicts', () => {
+  const ctx = { title: '魔女嘉莉', aliases: ['Carrie'], year: 2026, mediaType: 'tv', season: 1, episode: 2, episodeTitle: '【renren】第02集' };
+  const pages = Array.from({ length: 8 }, (_, i) => ({ cid: i + 1, page: i + 1, part: `魔女嘉莉.S01E0${i + 1}.1080p.VINEnc_trim`, duration: 4800 }));
+  const selected = selectUgcPages(ctx, video('魔女嘉莉 Carrie (2026) 中英字幕', pages));
+  assert.deepEqual(selected.map(p => p.page), [2]);
+  assert.equal(selected[0].evidence.explicitEpisode, 2);
+  assert.equal(selectUgcPages(ctx, video('魔女嘉莉 (2026) S01E02')).length, 1);
+  for (const part of ['魔女嘉莉.S02E02.1080p', '魔女嘉莉.S01E03.1080p'])
+    assert.equal(selectUgcPages(ctx, video('魔女嘉莉 (2026)', [{ ...pages[1], part }])).length, 0, part);
+  assert.equal(selectUgcPages(ctx, video('魔女嘉莉 (2026) S02E02')).length, 0);
+  assert.equal(selectUgcPages(ctx, video('魔女嘉莉 (2002)', pages)).length, 0);
+});
 test('parts identify an episode; page position and conflicting episode cannot override it', () => {
   const pages = [{ cid: 1, page: 1, part: '预告', duration: 40 }, { cid: 2, page: 2, part: '第5集 相逢', duration: 200 }];
   const selected = selectUgcPages(context, video('测试作品 第2季 全集', pages));
