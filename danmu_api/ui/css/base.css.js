@@ -186,14 +186,11 @@ body::before {
     overflow: hidden;
 }
 
-/* 页头品牌标记：白色 X，跟随主题渐变底色 */
+/* 页头品牌标记：Xdanmu 动感弹幕光轨 X，跟随主题底色 */
 .logo-mark {
-    width: 24px;
-    height: 24px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 8;
-    stroke-linecap: round;
+    width: 28px;
+    height: 28px;
+    display: block;
 }
 
 .header h1 {
