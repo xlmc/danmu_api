@@ -2247,6 +2247,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       const context = buildUgcRequestContext({
         title: tmdbIdentity?.title || originalTitle, aliases: tmdbIdentity?.aliases || [],
         year: originalYear, season: originalSeason, episode: originalEpisode, tmdbIdentity,
+        episodeTitle: cleanFileName.match(/(?:\bS\d{1,3}\s*E\d{1,3}|第\s*[\d一二三四五六七八九十百]+\s*[集话期回])\s+(.+?)(?:\.[a-z0-9]{2,4})?$/i)?.[1] || '',
         type: isMovie ? '电影' : '电视剧'
       });
       if (!context) return null;
@@ -2257,11 +2258,13 @@ async function matchAnimeWithTrace(url, req, clientIp) {
         normalizeTitleForMatch(String(anime.animeTitle).replace(/\s*from\s+.+$/i, '')).includes(wanted)) : [];
       const types = [...new Set(related.map(anime => anime.type || anime.typeDescription).filter(Boolean))];
       const sources = [...new Set(related.map(anime => anime.source).filter(Boolean))];
-      if (!isUgcApplicable({ identity: tmdbIdentity, sources, types })) {
+      if (!isUgcApplicable({ identity: tmdbIdentity, sources, types }) && !(context.collectionTitle && !tmdbIdentity)) {
         log('info', '[system] [match] UGC 兜底不适用当前作品，跳过');
         return null;
       }
       const logger = createUgcLogger(context);
+      if (context.collectionTitle) logger('match.keyword', '从合集名称提取检索词：' + context.title,
+        { collectionTitle: context.collectionTitle, keyword: context.title, yearRange: context.yearRange, episodeTitle: context.episodeTitle });
       logger('match.start', '官方源未命中，尝试 B站投稿兜底', { season: originalSeason, episode: originalEpisode });
       let found = null;
       try {

@@ -59,6 +59,57 @@ test('UGC is skipped when bilibili already has the official episode', () => {
   assert.equal(isUgcApplicable({ hasBilibiliPgc: false, source: 'bahamut' }), true);
 });
 
+test('通用 UGC 提取合集关键词并利用普通剧集的中英文单集标题', async () => {
+  const ctx = buildUgcRequestContext({ title: '猫和老鼠：黄金时代合集（1940-1958）', season: 1, episode: 1,
+    episodeTitle: '甜蜜的家 Puss Gets the Boot', type: '电视剧' });
+  assert.equal(ctx.title, '猫和老鼠');
+  assert(ctx.aliases.includes('猫和老鼠：黄金时代合集（1940-1958）'));
+  assert.deepEqual(ctx.yearRange, [1940, 1958]);
+  assert.equal(buildUgcQueries(ctx)[0], '猫和老鼠 甜蜜的家 Puss Gets the Boot');
+  assert(buildUgcQueries(ctx).includes('猫和老鼠 甜蜜的家'));
+  assert(buildUgcQueries(ctx).includes('猫和老鼠 Puss Gets the Boot'));
+  const submission = { bvid: 'BV1nD421W7Vx', title: '甜蜜的家 Puss Gets the Boot（猫和老鼠）',
+    pages: [{ cid: 1494560729, page: 1, part: '甜蜜的家 Puss Gets the Boot（猫和老鼠）', duration: 739 }] };
+  const selected = selectUgcPages(ctx, submission);
+  assert.equal(selected.length, 1);
+  assert.equal(selected[0].evidence.episodeBasis, 'episode-title');
+  for (const part of ['甜蜜的家', 'Puss Gets The Boot', '猫和老鼠 Puss Gets The Boot（甜蜜的家）', '猫和老鼠 Puss Gets The Boot（猫被解雇了／甜蜜的家）']) {
+    const varied = { ...submission, title: '猫和老鼠 Puss Gets The Boot（猫被解雇了／甜蜜的家）', pages: [{ ...submission.pages[0], part }] };
+    assert.equal(selectUgcPages(ctx, varied).length, 1, part);
+  }
+  assert.equal(selectUgcPages(ctx, { ...submission, pages: [{ ...submission.pages[0], part: '第2集 甜蜜的家' }] }).length, 0);
+  assert.equal(selectUgcPages(ctx, { ...submission, pages: [{ ...submission.pages[0], part: '1780256143293' }] }).length, 1);
+  assert.equal(selectUgcPages(ctx, { ...submission, pages: [1, 2].map(page => ({ ...submission.pages[0], page, part: 'P' + page })) }).length, 0);
+  assert.equal(selectUgcPages(ctx, { ...submission, title: submission.title + ' 原版标题卡' }).length, 0);
+  assert.equal(selectUgcPages(ctx, { ...submission, title: submission.title + '（2021）' }).length, 0);
+  assert.equal(selectUgcPages(ctx, { ...submission, pages: [{ ...submission.pages[0], part: '第1集 午夜点心' }] }).length, 0);
+  assert.equal(buildUgcRequestContext({ title: '火影忍者：疾风传合集', episode: 1 }).title, '火影忍者：疾风传');
+  assert.equal(buildUgcRequestContext({ title: '猫和老鼠：星盘奇缘', episode: 1 }).collectionTitle, null);
+  const ordinary = buildUgcRequestContext({ title: '测试作品', aliases: ['Test Series'], season: 2, episode: 5,
+    episodeTitle: '第5集 相逢 Encounter', type: '动漫' });
+  assert(buildUgcQueries(ordinary).includes('测试作品 相逢'));
+  assert(buildUgcQueries(ordinary).includes('Test Series Encounter'));
+  assert.equal(selectUgcPages(ordinary, { bvid: 'BVordinary', title: '测试作品 第2季 第5集 Encounter（相逢）',
+    pages: [{ cid: 55, page: 1, part: '相逢', duration: 100 }] }).length, 1);
+  assert.equal(calculateUgcTitlePrecision('裝備仔 第2話', { title: '装备仔', episode: 2 }), 1);
+  const catalog = buildUgcContext({ anime: { animeTitle: ctx.collectionTitle, type: '动漫' },
+    link: { title: '第1集 甜蜜的家 Puss Gets the Boot', url: 'official' }, index: 0 });
+  assert.equal(catalog.title, '猫和老鼠');
+  assert.deepEqual(catalog.yearRange, [1940, 1958]);
+  const queries = [];
+  const supplement = createUgcSupplement({ source: { _getWbiMixinKey: async () => 'key', _getWbiSignedParams: params => params,
+    getEpisodeDanmu: async () => [{ p: '1,1,25,16777215,0,0,0,1', m: '经典开场' }], formatComments: rows => rows },
+    json: async url => {
+      if (url.includes('/search/type')) { queries.push(new URL(url).searchParams.get('keyword'));
+        return { code: 0, data: { result: [submission.bvid, 'BVadditional'].map(bvid => ({ bvid, title: submission.title })) } }; }
+      return { code: 0, data: url.includes('BVadditional') ? { ...submission, bvid: 'BVadditional',
+        pages: [submission.pages[0], { ...submission.pages[0], cid: 99, page: 2 }] } : submission };
+    } });
+  const result = await supplement.resolve(ctx, { maxCandidates: 2, logger: () => {} });
+  assert.equal(queries[0], '猫和老鼠 甜蜜的家 Puss Gets the Boot');
+  assert.deepEqual(result.accepted.map(row => row.cid), [1494560729, 99], '重复 CID 不占下载名额');
+});
+
 const context = { identity: 'existing:1', title: '测试作品', aliases: ['Test Series'], year: 2020, season: 2, episode: 5, episodeTitle: '第5集 相逢', referenceUrl: 'https://www.bilibili.com/video/BVreference/' };
 const video = (title, pages = [{ cid: 55, page: 1, part: '正片', duration: 40 }]) => ({ bvid: 'BVcandidate', aid: 9, title, pages });
 test('queries consume existing aliases and identity without changing context', () => {

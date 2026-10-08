@@ -11,10 +11,34 @@ const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Apple
 const normalize = s => simplized(String(s || '')).normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]/gu, '');
 const clean = s => decodeHtmlEntities(String(s || '').replace(/<[^>]*>/g, ''));
 const number = s => /^\d+$/.test(s) ? Number(s) : convertChineseNumber(s);
-const excluded = /reaction|第一次看|首看|一口气看|解说|讲解|混剪|预告|花絮|片段|测评|玩具|有声|小说|网盘|资源分享|\bMAD\b|\bCUT\b|纯\s*(?:OP|ED)/iu;
+const excluded = /reaction|第一次看|首看|一口气看|解说|讲解|混剪|预告|花絮|片段|标题卡|测评|玩具|有声|小说|网盘|资源分享|\bMAD\b|\bCUT\b|纯\s*(?:OP|ED)/iu;
 const versions = /精编|(?<!未)删减|重制|英文|日语|粤语|配音|特别版|特別版|番外|续集/g;
 export const MIN_UGC_TITLE_PRECISION = 0.6;
 const RELEASE_DECORATORS = /(?:1080p|720p|4k|2160p|60帧|60fps|高码率|超清|高清|标清|蓝光|bd(?:rip)?|web-?dl|hdr|hevc|h264|h265|x264|x265|aac|中字|简中|繁中|双语|国语|粤语|日语|英语|中英双字|中文字幕|双语字幕|无字|生肉|熟肉|(?:未删减|完整|公映|纯净)+(?:版)?|正片|电影|剧场版|全集|合集|完结|最终话|大结局|自制|搬运|自压|压制|(?:\d{1,2}月)?新番|[^\s【】\[\]()（）]+(?:字幕组|字幕社|汉化组|译制组|压制组|工作组|制作组)|(?:19|20)\d{2}(?:年|版)?|第\s*[\d一二三四五六七八九十百]+\s*[季期部集话回]|s\d+|e\d+|ep\d+|part\s*\d+|\b\d{1,3}\s*期|\b\d{1,3}\b)/gi;
+
+function ugcEpisodeTitles(context) {
+  const title = String(context.episodeTitle || '').replace(/【[^】]+】/g, '')
+    .replace(/第\s*[\d一二三四五六七八九十百]+\s*[集话期回]|^(?:S\d+\s*)?E(?:P)?\s*\d+\s*[:：._-]?/gi, '').trim();
+  if (/^(?:[上下]\s*[:：]?)?\s*(?:正片|完整版|movie|full)?$/i.test(title)) return [];
+  const names = [title];
+  // 文件名同时提供中英文单集名时，两种写法都可确认内容，不依赖顺序或标点。
+  if (/\p{Script=Han}/u.test(title) && /[a-z]/i.test(title) && !/[\u3040-\u30ff]/u.test(title)) {
+    names.push((title.match(/\p{Script=Han}+/gu) || []).join(''),
+      (title.match(/[a-z]+(?:[\s'’:&-]+[a-z]+)*/gi) || []).join(' '));
+  }
+  return [...new Set(names.filter(name => normalize(name).length >= 2))];
+}
+
+function ugcTitleInfo(title) {
+  const baseTitle = String(title || '').trim();
+  // 合集名称是检索装饰，年代范围不等于单集年份；续作等真实副标题仍保留。
+  const range = baseTitle.normalize('NFKC').match(/\(((?:19|20)\d{2})\s*[-~～—–]\s*((?:19|20)\d{2})\)\s*$/u);
+  const withoutRange = range ? baseTitle.replace(/[（(][^）)]*[）)]\s*$/u, '').trim() : baseTitle;
+  const searchTitle = withoutRange.replace(/[:：\s]*(?:(?:黄金时代|黄金|经典|珍藏|典藏|精选|完整|全系列)\s*)?(?:合集|全集|收藏版)\s*$/u, '').trim();
+  const collectionTitle = searchTitle.length >= 2 && searchTitle !== withoutRange ? baseTitle : null;
+  return { title: collectionTitle ? searchTitle : baseTitle, collectionTitle,
+    yearRange: collectionTitle && range ? [Number(range[1]), Number(range[2])] : null };
+}
 
 /**
  * 计算投稿标题相对目标作品的匹配准确率（核心字符覆盖率），排除弱相关解说/影评/盘点等杂音视频。
@@ -24,7 +48,7 @@ export function calculateUgcTitlePrecision(candidateTitle, context) {
   const rawTitle = clean(candidateTitle);
   const aliases = [context.title, ...(context.aliases || [])].filter(Boolean);
 
-  let working = rawTitle.replace(/[【】《》\[\]\(\)（）「」『』]/g, ' ');
+  let working = simplized(rawTitle).normalize('NFKC').toLowerCase().replace(/[【】《》\[\]\(\)（）「」『』]/g, ' ');
 
   const sortedAliases = [...new Set(aliases.filter(s => s && String(s).trim().length >= 2))]
     .sort((a, b) => normalize(b).length - normalize(a).length);
@@ -46,14 +70,10 @@ export function calculateUgcTitlePrecision(candidateTitle, context) {
 
   if (matchedTitleLength === 0) return 0;
 
-  if (context.episodeTitle) {
-    const epName = String(context.episodeTitle)
-      .replace(/【[^】]+】/g, '')
-      .replace(/第\s*[\d一二三四五六七八九十百]+\s*[集话期回]/g, '')
-      .trim();
-    if (epName.length >= 2) {
-      working = working.split(epName).join(' ');
-    }
+  for (const epName of ugcEpisodeTitles(context)) {
+    if (normalize(working).includes(normalize(epName))) matchedTitleLength += normalize(epName).length;
+    const pattern = normalize(epName).split('').map(ch => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s\\p{P}]*');
+    working = working.replace(new RegExp(pattern, 'giu'), ' ');
   }
 
   working = working.replace(RELEASE_DECORATORS, ' ');
@@ -136,7 +156,8 @@ export function buildUgcContext(resolved) {
   if (!resolved?.anime || !resolved.link) return null;
   const { anime, link, index } = resolved;
   if (anime.type === 'B站投稿') return null;
-  const parsed = extractAnimeInfo(anime.animeTitle, link.title);
+  const titleInfo = ugcTitleInfo(String(anime.animeTitle).replace(/\s+from\s+.+$/i, '').replace(/【[^】]*】/g, '').trim());
+  const parsed = extractAnimeInfo(titleInfo.title, link.title);
   const mediaType = anime.tmdbIdentity?.mediaType || matchMediaType([anime.type, anime.typeDescription].join(' '));
   // 综艺等以「第N期」编号的作品无法被通用集数解析器识别；先用分集标题自身的期/集号，
   // 再退回解析器结果，最后才用目录下标。目录下标并不等于作品集号，直接采用会检索到错误的一期。
@@ -145,7 +166,8 @@ export function buildUgcContext(resolved) {
   if (!parsed.baseTitle || !Number.isInteger(episode) || episode < 1) return null;
   return {
     identity: `${anime.source}:${anime.animeId}:${anime.bangumiId}`,
-    title: parsed.baseTitle, aliases: [...new Set([...(anime.aliases || []), ...(anime.tmdbIdentity?.aliases || [])])],
+    ...titleInfo, title: parsed.baseTitle,
+    aliases: [...new Set([...(titleInfo.collectionTitle ? [titleInfo.collectionTitle] : []), ...(anime.aliases || []), ...(anime.tmdbIdentity?.aliases || [])])],
     year: Number(String(anime.startDate || '').slice(0, 4)) || extractYear(anime.animeTitle),
     season: parsed.season ?? anime.tmdbIdentity?.seasonNumber ?? (mediaType === 'tv' ? 1 : null),
     mediaType,
@@ -158,7 +180,8 @@ export function buildUgcContext(resolved) {
 
 export function buildUgcQueries(context) {
   const n = context.episode, padded = String(n).padStart(2, '0');
-  const aliases = [...new Set([...(context.aliases || []), ...(context.tmdbIdentity?.aliases || [])].filter(Boolean))];
+  const aliases = [...new Set([...(context.aliases || []), ...(context.tmdbIdentity?.aliases || [])].filter(Boolean).map(name => ugcTitleInfo(name).title))]
+    .filter(name => name !== context.title);
   // B站优先搜索中文别名；其他已确认别名仍参与，不因列表位置被截断。
   const chinese = name => /[\u3400-\u9fff]/u.test(name) && !/[\u3040-\u30ff]/u.test(name);
   aliases.sort((a, b) => Number(chinese(b)) - Number(chinese(a)));
@@ -168,8 +191,11 @@ export function buildUgcQueries(context) {
   const season = context.season ? ` 第${context.season}季` : '';
   // 综艺用「第N期」，剧集用「第N集」；两种编号都检索，避免用错单位而漏掉真实投稿。
   const units = /第\s*[\d一二三四五六七八九十百零两]+\s*期/.test(String(context.episodeTitle || '')) ? ['期', '集'] : ['集'];
-  return [...new Set(names.flatMap(name =>
-    [...units.map(unit => `${name}${season} 第${n}${unit}`), ...(broadNames.has(name) ? [`${name}${season} ${padded}`, `${name}${season} 合集`] : [])]))];
+  const episodeTitles = ugcEpisodeTitles(context);
+  const episodeQueries = [...broadNames].filter(name => !context.year || name !== `${context.title} ${context.year}`)
+    .flatMap(name => [...episodeTitles.map(episodeTitle => `${name} ${episodeTitle}`), ...(episodeTitles.length ? [`${name} 合集`] : [])]);
+  return [...new Set([...episodeQueries, ...names.flatMap(name =>
+    [...units.map(unit => `${name}${season} 第${n}${unit}`), ...(broadNames.has(name) ? [`${name}${season} ${padded}`, `${name}${season} 合集`] : [])])])];
 }
 
 // 匹配阶段还没有官方分集，只能用请求本身给出的身份构造 UGC context；
@@ -177,9 +203,11 @@ export function buildUgcQueries(context) {
 export function buildUgcRequestContext({ title, aliases = [], year = null, season = null, episode = null, episodeTitle = '', type = '', tmdbIdentity = null } = {}) {
   const baseTitle = String(title || '').trim();
   if (!baseTitle || !Number.isInteger(episode) || episode < 1) return null;
+  const titleInfo = ugcTitleInfo(baseTitle);
   return {
     identity: 'request:' + baseTitle,
-    title: baseTitle, aliases: [...new Set([...aliases, ...(tmdbIdentity?.aliases || [])].filter(Boolean))],
+    ...titleInfo,
+    aliases: [...new Set([...(titleInfo.collectionTitle ? [baseTitle] : []), ...aliases, ...(tmdbIdentity?.aliases || [])].filter(Boolean))],
     year: Number.isInteger(year) ? year : null,
     season: Number.isInteger(season) ? season : null,
     episode, episodeSource: 'request',
@@ -245,6 +273,8 @@ export function selectUgcPages(context, video, onReject = () => {}) {
   const mediaType = context.mediaType || context.tmdbIdentity?.mediaType || matchMediaType(context.type || '');
   const conflict = workIdentityConflict({ ...video, title, type: [video.type, matchMediaType(title)].join(' ') }, { ...context, mediaType });
   if (conflict) return reject(conflict);
+  const candidateYear = extractYear(title);
+  if (context.yearRange && candidateYear && (candidateYear < context.yearRange[0] || candidateYear > context.yearRange[1])) return reject('year-mismatch');
   const contextText = [context.title, ...context.aliases || [], context.episodeTitle].join(' ');
   if ([...title.matchAll(versions)].some(m => !contextText.includes(m[0]))) return reject('version-mismatch');
   const titleEpisode = episodeNumber(title), pages = video.pages || [];
@@ -259,9 +289,17 @@ export function selectUgcPages(context, video, onReject = () => {}) {
     const pagePart = partMarker(p.part) || (pages.length === 1 ? partMarker(title) : '');
     if (contextPart && pagePart && contextPart !== pagePart) return reject('part-mismatch', p);
     const pageEpisode = episodeNumber(p.part);
-    let bareEpisodeTitle = normalize(String(context.episodeTitle || '').replace(/【[^】]+】/g, '').replace(/第\s*[\d一二三四五六七八九十百]+\s*[集话期回]/g, ''));
-    for (const name of aliases) bareEpisodeTitle = bareEpisodeTitle.replace(normalize(name), '');
-    const named = bareEpisodeTitle.length >= 2 && normalize(p.part) === bareEpisodeTitle;
+    const episodeTitles = ugcEpisodeTitles(context).map(title => {
+      let name = normalize(title);
+      for (const alias of aliases) name = name.replace(normalize(alias), '');
+      return name;
+    }).filter(name => name.length >= 2);
+    // 单P的空名称/数字文件名可用投稿标题确认；多P仍必须逐P确认内容。
+    const pageIdentityTitle = pages.length === 1 && /^(?:\d*|p\d+|正片)$/i.test(String(p.part || '').trim()) ? title : String(p.part);
+    let pageTitle = normalize(pageIdentityTitle.replace(/第\s*[\d一二三四五六七八九十百]+\s*[集话期回]/g, '').replace(RELEASE_DECORATORS, ' '));
+    for (const name of aliases) pageTitle = pageTitle.replace(normalize(name), '');
+    const named = ugcEpisodeTitles({ ...context, episodeTitle: pageTitle }).some(name => episodeTitles.includes(normalize(name)));
+    if (context.collectionTitle && context.episodeTitle && !named) return reject('episode-title-mismatch', p);
     // A page's position is not an episode number. Trailer/OP pages often precede E01.
     const episode = pageEpisode ?? (pages.length === 1 ? titleEpisode : null);
     const movie = (mediaType === 'movie' || (!mediaType && context.season === null && context.episode === 1)) && pages.length === 1 && episode === null;
@@ -329,8 +367,11 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
     logger('search.start', '开始检索投稿');
     const videos = new Map(), key = await source._getWbiMixinKey();
     const queries = buildUgcQueries(context).flatMap(keyword => ['totalrank', 'dm'].map(order => ({ keyword, order })));
+    const workNames = [...new Set([context.title, ...(context.aliases || []), ...(context.tmdbIdentity?.aliases || [])]
+      .filter(Boolean).flatMap(name => { const title = ugcTitleInfo(name).title; return [title, simplized(title), traditionalized(title)]; }))]
+      .sort((a, b) => b.length - a.length);
     const chineseQuery = ({ keyword }) => {
-      const name = keyword.replace(/(?: 第\d+季)? (?:第\d+[集期]|\d+|合集)$/u, '');
+      const name = workNames.find(name => keyword.startsWith(name + ' ')) || keyword;
       return /[\u3400-\u9fff]/u.test(name) && !/[\u3040-\u30ff]/u.test(name);
     };
     for (const queryGroup of [queries.filter(chineseQuery), queries.filter(query => !chineseQuery(query))]) {
@@ -384,6 +425,8 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
       result.candidates.push(...(detail.selected || []));
       if (detail.failure) result.failures.push(detail.failure);
     }
+    result.candidates.sort((a, b) => Number(b.evidence.episodeTitleMatched) - Number(a.evidence.episodeTitleMatched)
+      || b.searchCount - a.searchCount || b.precision - a.precision);
     logger('candidates.ready', '可用分P候选 ' + result.candidates.length + ' 个', { count: result.candidates.length });
     if (result.candidates.length) return result;
     }
@@ -397,11 +440,11 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
     result.failures = found.failures;
     logger('mode', '仅匹配投稿元数据并获取弹幕，不请求音视频；时间轴未经音频校验', { mode: 'metadata-only', timelineVerified: false });
     const seen = new Set();
-    const selected = result.candidates.slice(0, maxCandidates).filter(c => {
+    const selected = result.candidates.filter(c => {
       if (seen.has(c.cid)) return false;
       seen.add(c.cid);
       return true;
-    });
+    }).slice(0, maxCandidates);
     const fetched = await mapConcurrent(selected, COMMENT_CONCURRENCY, async c => {
       if (signal?.aborted) return { skipped: true };
       const started = performance.now();
