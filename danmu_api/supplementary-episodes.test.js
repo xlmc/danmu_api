@@ -141,6 +141,53 @@ test('B站附加分区中的分集能继续解析 CID 并生成弹幕请求', as
   });
 });
 
+test('港澳台反代无 Key 搜索贯通分集回退，弹幕直连且账号凭据不发送给反代', async () => {
+  Globals.init({ LOG_LEVEL: 'error', PROXY_URL: 'bilibili@https://reverse.example', LOCAL_CACHE_ENABLED: 'false',
+    BILIBILI_COOKIE: 'SESSDATA=private-session; bili_jct=0123456789abcdef0123456789abcdef; access_key=0123456789abcdef0123456789abcdef' });
+  const source = new BilibiliSource();
+  const calls = [];
+  const ep = { id: 2, aid: 20, cid: 21, title: '1', duration: 600000 };
+  try {
+    await withFetch(async (url, options) => {
+      calls.push({ url: new URL(url), headers: new Headers(options.headers) });
+      if (String(url).includes('/search/type')) return response({ code: 0, data: { result_is_recommend: 0, items: [
+        { season_id: 1, title: '服务器公告', badge: '公告', area: '漫游' },
+        { season_id: 123, title: '测试动画', goto: 'bangumi' }
+      ] } });
+      if (String(url).includes('/seg.so')) return new Response(new Uint8Array());
+      if (String(url).includes('/season/section')) return response({ code: 0, result: { main_section: { episodes: [ep] } } });
+      return response({ code: -404, message: 'not found' });
+    }, async () => {
+      const results = await source._searchOverseaRequest('测试动画', 7, 'media_bangumi');
+      assert.deepEqual(results.map(row => row.mediaId), ['ss123']);
+      assert.equal(results[0].type, '动漫');
+      assert.equal(calls[0].url.searchParams.has('access_key'), false);
+      const animes = [], details = new Map();
+      await source.handleAnimes(results, '测试动画', animes, details);
+      assert.equal(animes.length, 1);
+      const segments = await source.getEpisodeDanmuSegments('https://www.bilibili.com/bangumi/play/ep2?season_id=123&area=hkmt');
+      assert.equal(segments.segmentList.length, 2);
+      await source.getEpisodeSegmentDanmu(segments.segmentList[0]);
+      const proxied = calls.filter(call => call.url.host === 'reverse.example');
+      assert.ok(proxied.some(call => call.url.pathname.includes('/season/section')));
+      assert.ok(proxied.every(call => !call.headers.get('cookie') && !call.url.searchParams.has('access_key')));
+      assert.equal(calls.at(-1).url.host, 'api.bilibili.com');
+      assert.match(calls.at(-1).url.search, /oid=21/);
+      calls.length = 0;
+      await source.getEpisodes('ss123');
+      assert.ok(calls.every(call => call.url.host === 'api.bilibili.com'));
+      const rejected = [];
+      await source.handleAnimes([{ mediaId: 'ss123', title: '其他作品', isOversea: true }], '测试动画', rejected, new Map());
+      assert.equal(rejected.length, 0);
+    });
+    await withFetch(async () => response({ code: 0, data: { result_is_recommend: 1, items: [{ season_id: 123, title: '测试动画' }] } }), async () => {
+      assert.deepEqual(await source._searchOverseaRequest('测试动画', 7, 'media_bangumi'), []);
+    });
+  } finally {
+    Globals.init({ LOG_LEVEL: 'error', PROXY_URL: '', LOCAL_CACHE_ENABLED: 'false' });
+  }
+});
+
 test('源保留的目录通过作品详情入口按设置过滤，关闭手动过滤时全部返回', async () => {
   for (const [filter, enabled, expected] of [
     ['预告', true, ['第1期', '第1期纯享', '先导片']],

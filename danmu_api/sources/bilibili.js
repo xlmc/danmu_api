@@ -389,7 +389,7 @@ export default class BilibiliSource extends BaseSource {
               log("info", `[bilibili] 从本地 Bangumi-Data 补充 ${missingWithoutSeason.length} 条缺漏记录并请求详情...`);
 
               const missingPromises = missingWithoutSeason.map(async (m) => {
-                  const mediaInfo = await this._resolveMediaInfo(m.siteId);
+                  const mediaInfo = await this._resolveMediaInfo(m.siteId, ['bilibili_hk_mo_tw', 'bilibili_hk_mo', 'bilibili_tw'].includes(m.matchedSiteKey));
                   const displayTitle = m.titles.find(t => t && t.includes(keyword)) || m.titles[1] || m.title;
                   const finalTitle = displayTitle + (m.titleSuffix || '');
 
@@ -436,9 +436,10 @@ export default class BilibiliSource extends BaseSource {
    * @param {string|number} mediaId - B站 md 号
    * @returns {Promise<{seasonId: string|null, cover: string}>}
    */
-  async _resolveMediaInfo(mediaId) {
+  async _resolveMediaInfo(mediaId, isOversea = false) {
     try {
-      const res = await httpGet(`https://api.bilibili.com/pgc/review/user?media_id=${mediaId}`);
+      const url = `https://api.bilibili.com/pgc/review/user?media_id=${mediaId}`;
+      const res = await httpGet(isOversea ? this._makeProxyUrl(url) : url);
       const data = typeof res.data === "string" ? JSON.parse(res.data) : res.data;
       if (data.code === 0 && data.result && data.result.media) {
         const media = data.result.media;
@@ -456,7 +457,7 @@ export default class BilibiliSource extends BaseSource {
   /**
    * 获取番剧分集列表
    */
-  async _getPgcEpisodes(seasonId) {
+  async _getPgcEpisodes(seasonId, isOversea = false) {
     let rawEpisodes = [];
     // 增加 Section 接口作为回退，解决港澳台个别条目分集不显式输出
     const apis = [
@@ -466,11 +467,11 @@ export default class BilibiliSource extends BaseSource {
 
     for (const url of apis) {
         try {
-            const response = await httpGet(url, {
+            const response = await httpGet(isOversea ? this._makeProxyUrl(url) : url, {
                 headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Referer": "https://www.bilibili.com/",
-                "Cookie": globals.bilibliCookie || ""
+                "Cookie": isOversea ? "" : (globals.bilibliCookie || "")
                 }
             });
 
@@ -493,7 +494,7 @@ export default class BilibiliSource extends BaseSource {
                 if (rawEpisodes.length > 0 && (data.result.section || data.result.sections || url.includes('/season/section'))) break;
             }
         } catch(e) {
-            // 忽略错误，尝试下一个接口
+            log("warn", `[bilibili] 分集接口请求失败 (season_id=${seasonId}): ${e.message}`);
         }
     }
 
@@ -576,12 +577,12 @@ export default class BilibiliSource extends BaseSource {
     }
   }
 
-  async getEpisodes(id) {
+  async getEpisodes(id, isOversea = false) {
     if (id.startsWith('md')) {
       const mediaId = id.substring(2);
-      const mediaInfo = await this._resolveMediaInfo(mediaId);
+      const mediaInfo = await this._resolveMediaInfo(mediaId, isOversea);
       if (mediaInfo.seasonId) {
-        const episodes = await this._getPgcEpisodes(mediaInfo.seasonId.substring(2));
+        const episodes = await this._getPgcEpisodes(mediaInfo.seasonId.substring(2), isOversea);
         episodes._cover = mediaInfo.cover;
         return episodes;
       }
@@ -590,7 +591,7 @@ export default class BilibiliSource extends BaseSource {
 
     if (id.startsWith('ss')) {
       const seasonId = id.substring(2);
-      return await this._getPgcEpisodes(seasonId);
+      return await this._getPgcEpisodes(seasonId, isOversea);
     } else if (id.startsWith('bv')) {
       const bvid = id.substring(2);
       return await this._getUgcEpisodes(bvid);
@@ -633,9 +634,8 @@ export default class BilibiliSource extends BaseSource {
     smartTitleReplace(sourceAnimes, cnAlias);
 
     // 基础标题与季度匹配过滤
-    // 港澳台资源不做严格标题匹配，其他资源根据当前标题或别名池（已包含原标题和 org_title）验证查询匹配度
+    // 港澳台结果也需验证标题，避免服务器推荐内容进入匹配。
     let filteredAnimes = sourceAnimes.filter(anime => 
-        anime.isOversea || 
         titleMatches(anime.title, queryTitle, querySeason) || 
         (anime.aliases && anime.aliases.some(alias => titleMatches(alias, queryTitle, querySeason)))
     );
@@ -710,7 +710,7 @@ export default class BilibiliSource extends BaseSource {
 
              log("info", `[bilibili] 直接使用搜索结果中的 ${links.length} 集分集`);
           } else {
-             const eps = completeEpisodes || await this.getEpisodes(anime.mediaId);
+             const eps = completeEpisodes || await this.getEpisodes(anime.mediaId, Boolean(anime.isOversea));
              if (eps.length === 0) {
                log("info", `[bilibili] ${anime.title} 无分集，跳过`);
                return;
@@ -876,25 +876,30 @@ export default class BilibiliSource extends BaseSource {
             // 尝试 View 接口 (必须走代理)
             try {
                 const proxyUrl = this._makeProxyUrl(`https://api.bilibili.com/pgc/view/web/season?season_id=${seasonId}`);
-                const res = await httpGet(proxyUrl, { headers: { "Cookie": globals.bilibliCookie || "", "User-Agent": "Mozilla/5.0" } });
+                const res = await httpGet(proxyUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
                 const data = typeof res.data === "string" ? JSON.parse(res.data) : res.data;
                 if (data.code === 0 && data.result) {
                     const ep = this.findPgcEpisode(data.result, epid);
                     if (ep) { cid = ep.cid; aid = ep.aid; duration = ep.duration / 1000; title = ep.long_title; success = true; }
                 }
-            } catch(e) {}
+            } catch(e) {
+                log("warn", `[bilibili] 港澳台分集详情请求失败 (season_id=${seasonId}): ${e.message}`);
+            }
         }
 
-        // 尝试 Section 接口作为回退，直连不走代理，无代理时也能覆盖 Bangumi Data 补充的港澳台条目
+        // Section 回退沿用港澳台反代；国服保持直连。
         if (!success && seasonId) {
             try {
-                const res = await httpGet(`https://api.bilibili.com/pgc/web/season/section?season_id=${seasonId}`, { headers: { "User-Agent": "Mozilla/5.0", "Cookie": globals.bilibliCookie||"" } });
+                const url = `https://api.bilibili.com/pgc/web/season/section?season_id=${seasonId}`;
+                const res = await httpGet(isOversea ? this._makeProxyUrl(url) : url, { headers: { "User-Agent": "Mozilla/5.0", "Cookie": isOversea ? "" : (globals.bilibliCookie || "") } });
                 const data = typeof res.data === "string" ? JSON.parse(res.data) : res.data;
                 if (data.code === 0 && data.result) {
                     const ep = this.findPgcEpisode(data.result, epid);
                     if (ep) { cid = ep.cid; aid = ep.aid; duration = ep.duration ? ep.duration / 1000 : 0; title = ep.long_title; success = true; }
                 }
-            } catch(e) {}
+            } catch(e) {
+                log("warn", `[bilibili] 分集 Section 回退失败 (season_id=${seasonId}): ${e.message}`);
+            }
         }
 
         if (!cid) {
@@ -918,7 +923,7 @@ export default class BilibiliSource extends BaseSource {
 
         log("info", `[bilibili] 获取番剧信息: season_id=${ssid}`);
 
-        const res = await httpGet(ssInfoUrl, {
+        const res = await httpGet(new URL(id).searchParams.get('area') === 'hkmt' ? this._makeProxyUrl(ssInfoUrl) : ssInfoUrl, {
           headers: {
             "Content-Type": "application/json",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -1187,16 +1192,14 @@ export default class BilibiliSource extends BaseSource {
 
   // 港澳台代理搜索请求
   async _searchOverseaRequest(keyword, appType, webSearchType, label="Original", signal = null) {
-    const rawCookie = globals.bilibliCookie || "";
-    const akMatch = rawCookie.match(/([0-9a-fA-F]{32})/);
     const proxy = (globals.proxyUrl||'').includes('bilibili@') || (globals.proxyUrl||'').includes('@');
     if (!proxy) return [];
 
     // 1. 尝试 App 接口
-    if (akMatch) {
-        log("info", `[bilibili][${label}] 检测到 Access Key，启用 APP 端接口模式 (Type: ${appType})...`);
+    {
+        log("info", `[bilibili][${label}] 启用反代无 Key APP 搜索 (Type: ${appType})...`);
         try {
-            const params = { keyword, type: appType, area: 'tw', mobi_app: 'android', platform: 'android', build: '8140200', ts: Math.floor(Date.now()/1000), appkey: BilibiliSource.APP_KEY, access_key: akMatch[1], disable_rcmd: 1 };
+            const params = { keyword, type: appType, area: 'tw', mobi_app: 'android', platform: 'android', build: '8140200', ts: Math.floor(Date.now()/1000), appkey: BilibiliSource.APP_KEY, disable_rcmd: 1 };
             const qs = Object.keys(params).sort().map(k => `${k}=${this._javaUrlEncode(String(params[k]))}`).join('&');
             const sign = md5(qs + BilibiliSource.APP_SEC);
 
@@ -1206,15 +1209,19 @@ export default class BilibiliSource extends BaseSource {
             const data = await this._fetchAppSearchWithStream(url, { "User-Agent": "Mozilla/5.0 Android", "X-From-Biliroaming": "1.0.0" }, label, signal);
 
             if (data && data.code === 0) {
+                if (data.data?.result_is_recommend) {
+                    log("info", `[bilibili][${label}] APP 搜索仅返回推荐内容，拒绝作为匹配候选`);
+                    return [];
+                }
                 // 兼容 items (影视/综艺) 和 result (番剧) 两种字段结构，提取返回的 org_title 字段
                 return (data.data?.items || data.data?.result || data.data || [])
-                    .filter(i => i.goto !== 'recommend_tips' && i.area !== '漫游' && i.badge !== '公告')
+                    .filter(i => !['recommend_tips', 'hot_recommend'].includes(i.goto) && i.area !== '漫游' && i.badge !== '公告')
                     .map(i => ({
                         provider: "bilibili",
-                        mediaId: i.season_id ? `ss${i.season_id}` : (i.uri.match(/season\/(\d+)/)?.[1] ? `ss${i.uri.match(/season\/(\d+)/)[1]}` : ""),
+                        mediaId: i.season_id ? `ss${i.season_id}` : (i.uri?.match(/season\/(\d+)/)?.[1] ? `ss${i.uri.match(/season\/(\d+)/)[1]}` : ""),
                         title: decodeHtmlEntities((i.title||"").replace(/<[^>]+>/g,'')).trim(),
                         org_title: decodeHtmlEntities((i.org_title||"").replace(/<[^>]+>/g,'')).trim(),
-                        type: this._extractMediaType(i.season_type_name),
+                        type: this._extractMediaType(i.season_type_name || (appType === 7 ? '番剧' : '')),
                         year: i.ptime ? new Date(i.ptime*1000).getFullYear() : null,
                         imageUrl: i.cover||i.pic||"",
                         episodeCount: 0,
@@ -1229,8 +1236,6 @@ export default class BilibiliSource extends BaseSource {
             log("error", `[bilibili] App 接口请求异常: ${e.message}`);
         }
         log("info", `[bilibili] App 接口请求失败，自动降级至 Web 接口...`);
-    } else {
-        log("info", `[bilibili][${label}] 未检测到 Access Key，启用 Web 端接口模式 (Type: ${webSearchType})...`);
     }
 
     // 2. Web 接口兜底
@@ -1242,7 +1247,7 @@ export default class BilibiliSource extends BaseSource {
         const url = globals.makeProxyUrl(target);
 
         const res = await httpGet(url, { 
-            headers: { "User-Agent": "Mozilla/5.0", "Cookie": globals.bilibliCookie||"", "X-From-Biliroaming": "1.0.0" },
+            headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/", "X-From-Biliroaming": "1.0.0" },
             signal: signal 
         });
         const data = typeof res.data==="string"?JSON.parse(res.data):res.data;

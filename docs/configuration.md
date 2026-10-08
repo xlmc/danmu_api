@@ -116,7 +116,7 @@ TMDB 身份为 tv:ID 或 movie:ID，随匹配成功的目录保存；失败候�
 | LOCAL_REDIS_URL | text | 本地 Redis 连接URL，示例：redis://:password@127.0.0.1:6379/0，只支持本地部署和docker部署 |
 | BANGUMI_DATA_CACHE_DAYS | number | Bangumi Data 缓存有效期(天)，设置0则每次请求时强制异步更新，默认7天 |
 | UI_THEME | select | 管理界面主题 |
-| PROXY_URL | text | 代理/反代地址 |
+| PROXY_URL | text | 代理/反代地址；`bilibili@https://反代域名` 启用港澳台反代无 Key App 搜索及分集信息获取，不向反代发送账号 Cookie 或 Access Key；国服搜索和弹幕下载保持官方直连。支持与其他代理配置用逗号组合，公共反代可用性由服务提供方决定。 |
 | TMDB_API_KEY | text | TMDB API密钥 |
 | LOG_LEVEL | select | 日志级别配置 |
 
