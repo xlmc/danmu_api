@@ -175,7 +175,7 @@ body[data-theme] .container { background: var(--theme-container-bg); color: var(
 body[data-theme] .header { background: var(--theme-header); border-bottom: 3px solid var(--theme-header-accent); }
 body[data-theme] .content { background: var(--theme-content-bg); }
 body[data-theme] .footer { color: var(--theme-muted); }
-body[data-theme] .footer-text, body[data-theme] .footer-link { color: var(--theme-link); }
+body[data-theme] .footer-text { color: var(--theme-link); }
 body[data-theme] .nav-btn.active { color: #ffffff; }
 body[data-theme] .category-btn, body[data-theme] .tag-option, body[data-theme] .available-tag, body[data-theme] .filter-btn { background: var(--theme-panel-strong); color: var(--theme-text); border-color: var(--theme-border); }
 body[data-theme] .category-btn.active, body[data-theme] .tag-option.selected, body[data-theme] .selected-tag, body[data-theme] .btn-primary, body[data-theme] .number-btn:hover, body[data-theme] .jump-episode-btn, body[data-theme] .offset-source-tag.selected { background: var(--theme-accent); border-color: var(--theme-accent); color: #ffffff; }

@@ -175,15 +175,6 @@ export const responsiveCssContent = `
         box-sizing: border-box;
     }
 
-    .footer-bar {
-        margin: 4px auto 0;
-        padding: 6px 12px;
-        font-size: 11px;
-        gap: 4px 10px;
-        width: calc(100% - 12px);
-        box-sizing: border-box;
-    }
-
     .theme-settings {
         flex-direction: column;
         align-items: stretch;

@@ -106,9 +106,7 @@ export function handleConfig(hasPermission = false) {
     envVarConfig: envVarConfig,
     originalEnvVars: originalEnvVars, // 系统设置使用原始环境变量（已脱敏）
     hasAdminToken: hasAdminToken, // 添加admin token配置状态
-    repository: "https://github.com/xlmc/danmu_api.git",
-    description: "基于上游 danmu_api 的个人自用弹幕 API，保留自用映射、过滤与日志功能，兼容弹弹play接口；仅维护 NAS Docker Compose 部署，镜像由本仓库 GitHub Actions 发布到 GHCR。",
-    notice: "本项目仅为个人学习爱好开发，代码开源。如有任何侵权行为，请联系本人删除。有问题提issue或私信机器人都ok，TG MSG ROBOT: [https://t.me/ddjdd_bot]; 推荐加互助群咨询，TG GROUP: [https://t.me/logvar_danmu_group]; 关注频道获取最新更新内容，TG CHANNEL: [https://t.me/logvar_danmu_channel]。"
+    description: "基于上游 danmu_api 的个人自用弹幕 API，保留自用映射、过滤与日志功能，兼容弹弹play接口；仅维护 NAS Docker Compose 部署，镜像由本仓库 GitHub Actions 发布到 GHCR。"
   });
 }
 

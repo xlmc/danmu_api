@@ -317,40 +317,6 @@ body::before {
     margin: 8px 0;
 }
 
-/* 底部链接独立悬浮栏 */
-.footer-bar {
-    display: flex;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 6px 16px;
-    max-width: 1360px;
-    margin: 6px auto 0;
-    padding: 8px 20px;
-    font-size: 12px;
-    opacity: 0.75;
-}
-
-.footer-bar-link {
-    text-decoration: none;
-    color: var(--theme-muted);
-    transition: color 0.2s ease;
-}
-
-.footer-bar-link:hover {
-    color: var(--theme-accent);
-}
-
-.github-link {
-    display: inline-flex;
-    align-items: center;
-}
-
-.github-icon {
-    width: 14px;
-    vertical-align: middle;
-    margin-right: 5px;
-}
-
 /* ============ 响应式 ============ */
 @media (max-width: 1400px) {
     .container {

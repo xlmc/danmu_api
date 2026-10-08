@@ -441,19 +441,7 @@ export const HTML_TEMPLATE = /* html */ `
         </p>
         <p class="footer-text">本项目仅为个人学习爱好开发，代码开源。如有任何侵权行为，请联系本人删除。</p>
         <p class="footer-text">本项目完全免费，不收取任何费用，请勿上当受骗。</p>
-        <p>有问题提issue或私信机器人都ok</p>
     </footer>
-
-    <!-- 底部链接栏 -->
-    <nav class="footer-bar">
-        <a href="https://t.me/ddjdd_bot" target="_blank" class="footer-bar-link">💬 TG MSG ROBOT</a>
-        <a href="https://t.me/logvar_danmu_group" target="_blank" class="footer-bar-link">👥 TG GROUP</a>
-        <a href="https://t.me/logvar_danmu_channel" target="_blank" class="footer-bar-link">📢 TG CHANNEL</a>
-        <a href="https://github.com/huangxd-/danmu_api" target="_blank" class="footer-bar-link github-link">
-            <img src="https://upload.wikimedia.org/wikipedia/commons/9/91/Octicons-mark-github.svg" alt="GitHub" class="github-icon">
-            GitHub Repo
-        </a>
-    </nav>
 
     <script>
         ${iconJsContent}
