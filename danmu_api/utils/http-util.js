@@ -119,7 +119,7 @@ export async function httpGet(url, options = {}) {
     const currentSource = sourceLogContext.getStore() || "system";
 
     if (attempt > 0) {
-      log("info", `[${currentSource}] [请求模拟] 第 ${attempt} 次重试: ${url}`);
+      log("debug", `[${currentSource}] [请求模拟] 第 ${attempt} 次重试: ${url}`);
       // 针对网络层物理阻断（如 ETIMEDOUT, ECONNRESET, AbortError）取消长退避，实现快速重试
       // 常规服务端报错（如 502, 429）保持指数退避逻辑
       if (lastError && (lastError.cause?.code === 'ETIMEDOUT' || lastError.cause?.code === 'ECONNRESET' || lastError.name === 'AbortError')) {
@@ -128,7 +128,7 @@ export async function httpGet(url, options = {}) {
         await new Promise(resolve => setTimeout(resolve, Math.min(1000 * Math.pow(2, attempt - 1), 5000)));
       }
     } else {
-      log("info", `[${currentSource}] [请求模拟] HTTP GET: ${url}`);
+      log("debug", `[${currentSource}] [请求模拟] HTTP GET: ${url}`);
     }
 
     // 设置超时时间（默认5秒）
@@ -269,7 +269,7 @@ export async function httpGet(url, options = {}) {
 
       // 请求成功，返回结果
       if (attempt > 0) {
-        log("info", `[${currentSource}] [请求模拟] 重试成功`);
+        log("debug", `[${currentSource}] [请求模拟] 重试成功`);
       }
 
       // 将本次响应记入请求内复用缓存, 供同请求内相同 URL 的后续请求直接复用
@@ -294,31 +294,12 @@ export async function httpGet(url, options = {}) {
         throw error;
       }
 
-      // 检查是否是超时错误
-      if (quiet) {
-        log("warn", `[${currentSource}] [请求模拟] 请求失败: ${url}（${error.message}）`);
-      } else if (error.name === 'AbortError') {
-        log("error", `[${currentSource}] [请求模拟] 请求超时:`, error.message);
-        log("error", '详细诊断:');
-        log("error", '- URL:', url);
-        log("error", '- 超时时间:', `${timeout}ms`);
-        log("error", `- 当前尝试: ${attempt + 1}/${maxRetries + 1}`);
-      } else {
-        log("error", `[${currentSource}] [请求模拟] 请求失败:`, error.message);
-        log("error", '详细诊断:');
-        log("error", '- URL:', url);
-        log("error", '- 错误类型:', error.name);
-        log("error", '- 消息:', error.message);
-        log("error", `- 当前尝试: ${attempt + 1}/${maxRetries + 1}`);
-        if (error.cause) {
-          log("error", '- 码:', error.cause.code);
-          log("error", '- 原因:', error.cause.message);
-        }
-      }
+      log("warn", `[${currentSource}] [请求模拟] 请求失败: ${url}（${error.message}），尝试 ${attempt + 1}/${maxRetries + 1}`);
+      if (!quiet) log("debug", error);
 
       // 如果还有重试机会，继续循环；否则在循环结束后抛出错误
       if (attempt < maxRetries) {
-        log("info", `[${currentSource}] [请求模拟] 准备重试...`);
+        log("debug", `[${currentSource}] [请求模拟] 准备重试...`);
         continue;
       }
     } finally {
@@ -344,7 +325,7 @@ export async function httpPost(url, body, options = {}) {
     const currentSource = sourceLogContext.getStore() || "system";
 
     if (attempt > 0) {
-      log("info", `[${currentSource}] [请求模拟] 第 ${attempt} 次重试: ${url}`);
+      log("debug", `[${currentSource}] [请求模拟] 第 ${attempt} 次重试: ${url}`);
       // 针对网络层物理阻断（如 ETIMEDOUT, ECONNRESET, AbortError）取消长退避，实现快速重试
       // 常规服务端报错（如 502, 429）保持指数退避逻辑
       if (lastError && (lastError.cause?.code === 'ETIMEDOUT' || lastError.cause?.code === 'ECONNRESET' || lastError.name === 'AbortError')) {
@@ -353,7 +334,7 @@ export async function httpPost(url, body, options = {}) {
         await new Promise(resolve => setTimeout(resolve, Math.min(1000 * Math.pow(2, attempt - 1), 5000)));
       }
     } else {
-      log("info", `[${currentSource}] [请求模拟] HTTP POST: ${url}`);
+      log("debug", `[${currentSource}] [请求模拟] HTTP POST: ${url}`);
     }
 
     // 设置超时时间（默认5秒）
@@ -408,7 +389,7 @@ export async function httpPost(url, body, options = {}) {
 
       // 请求成功，返回结果
       if (attempt > 0) {
-        log("info", `[${currentSource}] [请求模拟] 重试成功`);
+        log("debug", `[${currentSource}] [请求模拟] 重试成功`);
       }
 
       // 模拟 iOS 环境：返回 { data: ... } 结构
@@ -428,29 +409,12 @@ export async function httpPost(url, body, options = {}) {
         throw error;
       }
 
-      // 检查是否是超时错误
-      if (error.name === 'AbortError') {
-        log("error", `[${currentSource}] [请求模拟] 请求超时:`, error.message);
-        log("error", '详细诊断:');
-        log("error", '- URL:', url);
-        log("error", '- 超时时间:', `${timeout}ms`);
-        log("error", `- 当前尝试: ${attempt + 1}/${maxRetries + 1}`);
-      } else {
-        log("error", `[${currentSource}] [请求模拟] 请求失败:`, error.message);
-        log("error", '详细诊断:');
-        log("error", '- URL:', url);
-        log("error", '- 错误类型:', error.name);
-        log("error", '- 消息:', error.message);
-        log("error", `- 当前尝试: ${attempt + 1}/${maxRetries + 1}`);
-        if (error.cause) {
-          log("error", '- 码:', error.cause.code);
-          log("error", '- 原因:', error.cause.message);
-        }
-      }
+      log("warn", `[${currentSource}] [请求模拟] 请求失败: ${url}（${error.message}），尝试 ${attempt + 1}/${maxRetries + 1}`);
+      log("debug", error);
 
       // 如果还有重试机会，继续循环；否则在循环结束后抛出错误
       if (attempt < maxRetries) {
-        log("info", `[${currentSource}] [请求模拟] 准备重试...`);
+        log("debug", `[${currentSource}] [请求模拟] 准备重试...`);
         continue;
       }
     } finally {
@@ -478,7 +442,7 @@ export async function httpPost(url, body, options = {}) {
  */
 async function httpRequestMethod(method, url, body, options = {}) {
   const currentSource = sourceLogContext.getStore() || "system";
-  log("info", `[${currentSource}] [请求模拟] HTTP ${method}: ${url}`);
+  log("debug", `[${currentSource}] [请求模拟] HTTP ${method}: ${url}`);
 
   const { headers = {}, allow_redirects = true } = options;
   const validStatusCodes = Array.isArray(options.validStatusCodes) ? options.validStatusCodes : [];

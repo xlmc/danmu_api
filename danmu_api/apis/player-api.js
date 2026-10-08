@@ -24,7 +24,7 @@ import { filterMappingQualifierCandidates, filterMappingTargetCandidates, collec
 import { ensureRemoteAutoMatchMapping, getCachedRemoteAutoMatchMappingRules } from "../utils/auto-match-mapping-url-util.js";
 import {
   extractEpisodeTitle, convertChineseNumber, parseFileName, extractReleaseGroups, createDynamicPlatformOrder, normalizeSpaces, normalizeTitleForMatch,
-  extractYear, titleMatches, extractAnimeInfo, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle
+  extractYear, matchMediaType, workIdentityConflict, titleMatches, extractAnimeInfo, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle
 } from "../utils/common-util.js";
 import { getDomesticPersonMetadataForTitle, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
 import { shouldBlockDomesticCelebrities } from '../utils/person-filter-exclusion-util.js';
@@ -1693,14 +1693,18 @@ async function selectReadyMatch({ animes, details, title, season, episode, year,
   return { ...selected, spilloverMatched: false, title, season, episode };
 }
 
-function confidentCandidates(animes, { title, season, episode, year, mapping, tmdbIdentity, details }) {
+function confidentCandidates(animes, { title, season, episode, year, mapping, tmdbIdentity, details, mediaType }) {
   const guard = mapping || { targetTitle: title };
   let candidates = tmdbIdentity
     ? filterTmdbMatchCandidates(animes, tmdbIdentity, mapping, globals.animes)
     : filterMappingTargetCandidates(animes, guard);
   candidates = candidates.filter(anime => {
-    const candidateYear = extractYear(anime.animeTitle) || Number(String(anime.startDate || '').slice(0, 4)) || null;
-    if (year && candidateYear && candidateYear !== Number(year)) return false;
+    const target = { year: mapping?.targetYear || year, mediaType: mapping?.targetType || tmdbIdentity?.mediaType || mediaType || (season && episode ? 'tv' : 'movie'), tmdbIdentity };
+    const conflict = workIdentityConflict(anime, target);
+    if (conflict) {
+      logEvent('info', 'match.candidate.reject', `[system] [match-reject] ${anime.animeTitle}，原因=${conflict}`, { candidateTitle: anime.animeTitle, reason: conflict, year: target.year, mediaType: target.mediaType });
+      return false;
+    }
     if (season && episode) {
       if (isMovieMatchCandidate(anime)) return false;
       return [anime.animeTitle, ...(anime.aliases || [])].some(candidate =>
@@ -1761,7 +1765,8 @@ function needsGroupMerge(sources) {
     rule.secondary.source.split('&').some(source => active.has(source)));
 }
 
-async function executeMatchAttemptBody({ req, title, season, episode, year, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false, tmdbIdentity = null, tmdbEpisode = null, tmdbEpisodeHint = null, fileNameVarietyKey = null, sourceSearches = null, searchSources = null, stagePlatform }) {
+async function executeMatchAttemptBody({ req, title, season, episode, year, mediaType = null, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false, tmdbIdentity = null, tmdbEpisode = null, tmdbEpisodeHint = null, fileNameVarietyKey = null, sourceSearches = null, searchSources = null, stagePlatform }) {
+  if (fileNameVarietyKey && !mediaType) mediaType = 'tv';
   const startedAt = Date.now();
   // A platform-qualified rule describes that platform's numbering. Never
   // apply its offset to another source if the platform has no matching episode.
@@ -1788,7 +1793,7 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, pref
   if (mapping?.targetYear || mapping?.targetType || (mapping?.targetTmdbId && !tmdbIdentity)) fastDisabledReasons.push('映射含年份/类型/未确认TMDB限定');
   logEvent('info', 'match.fast', `[system] [match-fast] ${canUseReady ? `启用，预算 ${budget}ms，优先平台 ${targetPlatform}` : `未启用：${fastDisabledReasons.join('、')}；等待完整搜索`}`, { enabled: Boolean(canUseReady), budgetMs: budget, reasons: fastDisabledReasons, platform: targetPlatform });
   const probe = progress => selectReadyMatch({ ...progress,
-    animes: confidentCandidates(progress.animes, { title, season, episode, year, mapping, tmdbIdentity, details: progress.details }),
+    animes: confidentCandidates(progress.animes, { title, season, episode, year, mapping, tmdbIdentity, mediaType, details: progress.details }),
     title, season, episode, year, platform: targetPlatform, req, mapping, strictTargetTitle });
   if (canUseReady) {
     // 已保存的目录仍包含可用剧集 URL；缺集、不确定季号或优先组无数据时才重新搜索。
@@ -1858,7 +1863,8 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, pref
   }
 
   if (fileNameVarietyKey) {
-    const catalog = searchData.animes.map(anime => ({ ...anime, links:
+    const candidates = tmdbIdentity ? filterTmdbMatchCandidates(searchData.animes, tmdbIdentity) : searchData.animes;
+    const catalog = candidates.filter(anime => !workIdentityConflict(anime, { year, mediaType, tmdbIdentity })).map(anime => ({ ...anime, links:
       resolveAnimeByIdFromDetailStore(anime.bangumiId || anime.animeId, detailStore, anime.source)?.links || anime.links }));
     const selected = selectVarietyEpisodeByKey(catalog, fileNameVarietyKey,
       anime => getBangumiDataForMatch(anime, detailStore)?.bangumi?.episodes);
@@ -1879,7 +1885,7 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, pref
 
   const titleGuard = mapping || (strictTargetTitle ? { targetTitle: title } : null);
   const guardedCandidates = titleGuard ? filterMappingTargetCandidates(searchData.animes, titleGuard) : searchData.animes;
-  const targetCandidates = confidentCandidates(guardedCandidates, { title, season, episode, year, mapping, tmdbIdentity, details: detailStore });
+  const targetCandidates = confidentCandidates(guardedCandidates, { title, season, episode, year, mapping, tmdbIdentity, mediaType, details: detailStore });
   if (titleGuard && targetCandidates.length === 0) {
     log('info', '[system] [match-reject] 映射目标标题过滤后无候选');
     return { resAnime: null, resEpisode: null, spilloverMatched: false, title, season, episode, cacheWarning };
@@ -1938,7 +1944,7 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, pref
   if (tmdbEpisodeHint && !tmdbEpisode) {
     const hint = await tmdbEpisodeHint().catch(() => null);
     if (hint) {
-      const hintCatalog = searchData.animes.map(anime => ({ ...anime, links:
+      const hintCatalog = targetCandidates.map(anime => ({ ...anime, links:
         resolveAnimeByIdFromDetailStore(anime.bangumiId || anime.animeId, detailStore, anime.source)?.links || anime.links }));
       const hinted = selectTmdbEpisode(hintCatalog, hint, tmdbIdentity,
         anime => getBangumiDataForMatch(anime, detailStore)?.bangumi?.episodes);
@@ -2001,6 +2007,12 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     // 处理请求体中的数据
     // 假设请求体包含一个字段，比如 { query: "anime name" }
     const { fileName } = body;
+    const requestMediaType = body.mediaType;
+    if ((requestMediaType !== undefined && !['tv', 'movie'].includes(requestMediaType)) ||
+        (body.year !== undefined && (!Number.isInteger(body.year) || body.year < 1900 || body.year > 2099)) ||
+        (body.tmdbId !== undefined && (!/^[1-9]\d*$/.test(String(body.tmdbId)) || !Number.isSafeInteger(Number(body.tmdbId)) || !requestMediaType))) {
+      return jsonResponse({ errorCode: 400, success: false, errorMessage: 'Invalid year, mediaType or tmdbId; tmdbId requires mediaType (tv/movie)' }, 400);
+    }
     if (!fileName) {
       log("error", "[system] [match] Missing fileName parameter in request body");
       return jsonResponse(
@@ -2015,12 +2027,21 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     log("info", `[system] [match] Parsed cleanFileName: ${cleanFileName}, preferredPlatform: ${preferredPlatform}, releaseGroups: ${releaseGroups.join(',') || 'none'}`);
 
     const parsed = await traceMatchStep(log, '文件名解析', () => extractTitleSeasonEpisode(cleanFileName, releaseGroups));
+    if (body.year !== undefined) parsed.year = body.year;
+    if (requestMediaType) parsed.mediaType = requestMediaType;
+    if (body.tmdbId !== undefined) parsed.tmdbId = String(body.tmdbId);
+    if (requestMediaType === 'movie') { parsed.season = null; parsed.episode = null; }
     const fileNameVarietyKey = varietyKey(extractVarietyFragment(cleanFileName));
     if (fileNameVarietyKey) log('info', `[system] [match] 文件名已写明综艺期号: ${fileNameVarietyKey}`);
     let tmdbIdentity = findSavedTmdbIdentity(globals.animes, parsed);
     let tmdbIdentityAttempted = false;
+    if (parsed.tmdbId) {
+      tmdbIdentityAttempted = true;
+      tmdbIdentity = await traceMatchStep(log, '播放器 TMDB 身份', () => resolveTmdbMatchIdentity(parsed));
+      if (!tmdbIdentity) return jsonResponse({ errorCode: 0, success: true, errorMessage: 'Unable to confirm supplied TMDB identity', isMatched: false, matches: [] });
+    }
     const sourceSearches = new Map();
-    const identity = { title: parsed.title, year: parsed.year, season: parsed.season, episode: parsed.episode, preferredPlatform, releaseGroups, tmdbIdentity };
+    const identity = { title: parsed.title, year: parsed.year, mediaType: requestMediaType, season: parsed.season, episode: parsed.episode, preferredPlatform, releaseGroups, tmdbIdentity };
     logEvent('info', 'match.identity', '[system] [match-trace] 解析身份 ' + JSON.stringify(identity), identity);
     const originalTitle = normalizeMatchTitle(parsed.title);
     const originalSeason = parsed.season;
@@ -2066,6 +2087,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
         season: originalSeason,
         episode: originalEpisode,
         year: originalYear,
+        mediaType: requestMediaType,
         preferredPlatform,
         secondaryPreferredPlatform: null,
         preferAnimeId,
@@ -2099,6 +2121,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
         season: rule.targetSeason,
         episode: rule.targetEpisode,
         year: rule.targetYear,
+        mediaType: requestMediaType,
         preferredPlatform: mappedPlatform,
         secondaryPreferredPlatform: rule.targetPlatform ? preferredPlatform : null,
         preferAnimeId: null,
@@ -2187,7 +2210,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
         log('info', '[system] [match-trace] TMDB 分集身份 ' + JSON.stringify(metadata));
         attempt = await traceMatchStep(log, `${label}对应平台分集`, () => executeMatchAttempt({
           req, title: tmdbIdentity.title, season: metadata.targetSeason, episode: null,
-          year: metadata.year, preferredPlatform, tmdbIdentity, tmdbEpisode: metadata,
+          year: metadata.year, mediaType: requestMediaType, preferredPlatform, tmdbIdentity, tmdbEpisode: metadata,
           sourceSearches, preferAnimeId: null, preferSource: null, offsets: null, mapping: null
         }));
         if (succeeded(attempt)) matchStage = `${label}对应平台分集`;
@@ -2202,7 +2225,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       const context = buildUgcRequestContext({
         title: tmdbIdentity?.title || originalTitle, aliases: tmdbIdentity?.aliases || [],
         year: originalYear, season: originalSeason, episode: originalEpisode, tmdbIdentity,
-        type: isMovie ? '电影' : ''
+        type: isMovie ? '电影' : '电视剧'
       });
       if (!context) return null;
       // 官方目录里同名条目给出适用画像：候选项类型、命中来源、B站是否已有正片。
@@ -2210,7 +2233,6 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       const related = wanted ? globals.animes.filter(anime =>
         normalizeTitleForMatch(String(anime.animeTitle).replace(/\s*from\s+.+$/i, '')).includes(wanted)) : [];
       const types = [...new Set(related.map(anime => anime.type || anime.typeDescription).filter(Boolean))];
-      if (types.some(t => /电影|剧场版/.test(t))) context.type = '电影';
       const sources = [...new Set(related.map(anime => anime.source).filter(Boolean))];
       if (!isUgcApplicable({ identity: tmdbIdentity, sources, types, hasBilibiliPgc: sources.includes('bilibili') })) {
         log('info', '[system] [match] UGC 兜底不适用当前作品，跳过');
@@ -2275,7 +2297,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     if (!succeeded(attempt) && originalSeason !== 0 && fileNameVarietyKey) {
       attempt = await traceMatchStep(log, '文件名期号对应平台分集', () => executeMatchAttempt({
         req, title: normalizeMatchTitle(tmdbIdentity?.title || originalTitle), season: originalSeason, episode: null,
-        year: originalYear, preferredPlatform, fileNameVarietyKey, sourceSearches,
+        year: originalYear, mediaType: requestMediaType, preferredPlatform, fileNameVarietyKey, sourceSearches, tmdbIdentity,
         preferAnimeId: null, preferSource: null, offsets: null, mapping: null
       })) || attempt;
       if (succeeded(attempt)) matchStage = '文件名期号对应平台分集';

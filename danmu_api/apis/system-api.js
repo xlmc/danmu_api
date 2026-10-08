@@ -7,6 +7,7 @@ import { getRemoteMappingLogText, refreshRemoteTitleMappingNow } from "../utils/
 import { refreshRemoteAutoMatchMappingNow } from "../utils/auto-match-mapping-url-util.js";
 
 import { clearBangumiDataCache, initBangumiData } from "../utils/bangumi-data-util.js";
+import { ugcSupplement } from '../utils/bilibili-ugc-util.js';
 
 const UI_THEMES = new Set([
   'lavender', 'shinyo', 'sakura', 'tianyi', 'hatsune', 'sakuragi', 'violet', 'amber'
@@ -56,6 +57,7 @@ export function handleConfig(hasPermission = false) {
     localRedisValid: globals.localRedisValid,
     deployPlatform: globals.deployPlatform
   };
+  delete previewEnvVars.BILIBILI_UGC_BUDGET_MS;
 
   // 将环境变量按分类组织 - 使用原始环境变量进行分类，但保持预览格式
   Object.keys(previewEnvVars).forEach(key => {
@@ -79,6 +81,7 @@ export function handleConfig(hasPermission = false) {
   // 未配置 ADMIN_TOKEN 时，普通 TOKEN 就是配置管理令牌；只有明确配置
   // ADMIN_TOKEN 后，才要求使用 ADMIN_TOKEN 才能读取完整配置。
   let originalEnvVars = { ...globals.originalEnvVars };
+  delete originalEnvVars.BILIBILI_UGC_BUDGET_MS;
   const hasAdminTokenConfigured = adminToken.trim() !== '';
   const hasConfigPermission = globals.tokenAuthDisabled
     ? true
@@ -192,7 +195,7 @@ export async function handleClearCache(req) {
     lastSelectMap: () => { globals.lastSelectMap = new Map(); }, // 重新创建 Map 对象
     // 清理搜索和弹幕缓存
     searchCache: () => { globals.searchCache = new Map(); },
-    commentCache: () => { globals.commentCache = new Map(); },
+    commentCache: () => { globals.commentCache = new Map(); ugcSupplement.clear(); },
     requestHistory: () => { globals.requestHistory = new Map(); },
     bangumiData: () => {
       try {

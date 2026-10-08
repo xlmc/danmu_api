@@ -110,7 +110,7 @@ test('match endpoint binds TMDB query ID to remote season rules and reuses the v
     assert.equal(urls.length,count,'confirmed alias must not query TMDB again');assert.equal(searches,searchCount,'saved directory must skip platform search');
   }finally{globalThis.fetch=fetch;source.search=savedSearch;source.handleAnimes=savedHandle;}
 });
-async function adaptiveFixture(fileName, catalog, {tmdb=null,env={},probeDirectory=false,events=[]}={}) {
+async function adaptiveFixture(fileName, catalog, {tmdb=null,env={},probeDirectory=false,events=[],body={}}={}) {
   Globals.init({RATE_LIMIT_MAX_REQUESTS:'0',TOKEN:'87654321',SOURCE_ORDER:'tencent',PLATFORM_ORDER:'tencent',MATCH_SEARCH_BUDGET_MS:'0',MERGE_SOURCE_PAIRS:'',LOCAL_CACHE_ENABLED:'false',LOCAL_REDIS_URL:'',USE_BANGUMI_DATA:'false',TITLE_MAPPING_TABLE:'',TITLE_MAPPING_TABLE_URL:'',AUTO_MATCH_MAPPING_TABLE:'',AUTO_MATCH_MAPPING_TABLE_URL:'',TMDB_API_KEY:'test-key',LOG_LEVEL:'error',...env});
   Globals.animes=[];Globals.episodeIds=[];Globals.episodeNum=10001;Globals.searchCache=new Map();Globals.lastSelectMap=new Map();Globals.queryCacheInitialized=false;
   const source=getSourceByKey('tencent');const saved={search:source.search,handle:source.handleAnimes,comments:source.getComments,fetch:globalThis.fetch};
@@ -132,13 +132,29 @@ async function adaptiveFixture(fileName, catalog, {tmdb=null,env={},probeDirecto
     throw Error('unexpected URL '+url);
   };
   try{
-    const response=await handleRequest(new Request('http://localhost/87654321/api/v2/match',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({fileName})}),Globals.env,'node','127.0.0.1');
+    const response=await handleRequest(new Request('http://localhost/87654321/api/v2/match',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({fileName,...body})}),Globals.env,'node','127.0.0.1');
     const data=await response.json();let comments=null;
     if(data.isMatched){const comment=await handleRequest(new Request('http://localhost/87654321/api/v2/comment/'+data.matches[0].episodeId),Globals.env,'node','127.0.0.1');comments=await comment.json();}
     return {data,searches,requests,comments};
   }finally{source.search=saved.search;source.handleAnimes=saved.handle;source.getComments=saved.comments;globalThis.fetch=saved.fetch;}
 }
 const fixtureAnime=(title,year=2024,id=812,type='tvseries')=>({animeId:id,bangumiId:String(id),animeTitle:`${title}(${year})【${type==='movie'?'电影':'动漫'}】from tencent`,source:'tencent',type,startDate:year+'-01-01',episodeCount:2,links:[1,2].map(i=>({url:`https://v.qq.com/x/cover/adaptive${id}/e${i}.html`,title:`【tencent】 第${i}集`}))});
+
+test('player metadata selects its explicit year and typed TMDB ID without title guessing', async () => {
+  const catalog = () => [fixtureAnime('魔女嘉莉', 1976, 1, 'movie'), fixtureAnime('魔女嘉莉', 2026, 2)];
+  const result = await adaptiveFixture('魔女嘉莉 S01E01', catalog, { body: { year: 2026, mediaType: 'tv', tmdbId: 288673 },
+    tmdb: { details: { id: 288673, name: '魔女嘉莉', first_air_date: '2026-01-01', seasons: [{ season_number: 1, air_date: '2026-01-01' }] } } });
+  assert.equal(result.data.isMatched, true);
+  assert.equal(result.data.matches[0].animeId, 2);
+  assert.equal(result.data.tmdb.key, 'tv:288673');
+  assert.equal(result.requests.length, 1);
+  assert(!result.requests.some(url => url.includes('/search/')));
+  const conflict = await adaptiveFixture('魔女嘉莉 S01E01', () => [fixtureAnime('魔女嘉莉', 2026)], { body: { year: 1976, mediaType: 'tv' }, env: { TMDB_API_KEY: '', PROXY_URL: '' } });
+  assert.equal(conflict.data.isMatched, false);
+  const invalid = await adaptiveFixture('魔女嘉莉 S01E01', catalog, { body: { tmdbId: 288673 } });
+  assert.equal(invalid.data.errorCode, 400);
+  assert.equal(invalid.searches.length, 0);
+});
 
 test('first match with empty caches reaches official comments without TMDB',async()=>{
   const {data,requests,searches,comments}=await adaptiveFixture('示例 S01E02',()=>[fixtureAnime('示例')]);

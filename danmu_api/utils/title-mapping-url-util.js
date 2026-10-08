@@ -101,7 +101,7 @@ async function loadDiskRemoteMapping(url) {
     remoteState.failedAt = 0;
     remoteState.mergedRef = null;
     ensureMergedIntoGlobals();
-    logRemoteMapping("info", `[system] [remote-mapping] 已加载本地远程映射缓存: ${mappings.size} 条规则, 文件: ${paths.text}`);
+    logRemoteMapping("debug", `[system] [remote-mapping] 已加载本地远程映射缓存: ${mappings.size} 条规则, 文件: ${paths.text}`);
     return true;
   } catch {
     return false;
@@ -133,7 +133,7 @@ async function saveDiskRemoteMapping(url, text) {
     await fs.rename(tmp, paths.text);
     // 更新元信息（记录 URL 和下载时间）
     await fs.writeFile(paths.meta, JSON.stringify({ url, fetchedAt: Date.now() }), 'utf8');
-    logRemoteMapping("info", `[system] [remote-mapping] 远程映射表已覆盖本地缓存: ${paths.text}`);
+    logRemoteMapping("debug", `[system] [remote-mapping] 远程映射表已覆盖本地缓存: ${paths.text}`);
   } catch (e) {
     // 写缓存失败不影响本次使用，只记警告
     logRemoteMapping("warn", `[system] [remote-mapping] 写入本地远程映射缓存失败（不影响本次使用）: ${e?.message || e}`);
@@ -180,6 +180,7 @@ function remoteLogTimestamp() {
  */
 export function logRemoteMapping(level, message) {
   log(level, message);                              // 写入主日志
+  if (level === 'debug' && globals.logLevel !== 'debug') return;
   remoteLogBuffer.push({ timestamp: remoteLogTimestamp(), level, message }); // 写入独立缓冲区
   // 超过 500 条就把最老的一条挤出去（shift 删除数组开头）
   if (remoteLogBuffer.length > MAX_REMOTE_LOGS) remoteLogBuffer.shift();
@@ -313,6 +314,8 @@ export function parseRemoteTitleMappings(text) {
 export function applyRemoteTitleMappingText(url, text) {
   // 1. 解析文本 → 规则表
   const mappings = parseRemoteTitleMappings(text);
+  const changed = remoteState.url !== url || mappings.size !== remoteState.mappings.size ||
+    [...mappings].some(([key, value]) => remoteState.mappings.get(key) !== value);
 
   // 2. 如果本地表快照还不存在（比如第一次使用），先拍一份纯本地表的快照
   if (!remoteState.localMappings) {
@@ -331,7 +334,7 @@ export function applyRemoteTitleMappingText(url, text) {
   remoteState.failedAt = 0;           // 清除“上次失败”标记
   remoteState.mergedRef = null;       // 置空合并引用 → 触发下面的合并逻辑重建全局表
   ensureMergedIntoGlobals();
-  logRemoteMapping("info", `[system] [remote-mapping] 远程剧名映射表已更新: ${mappings.size} 条规则, 来源: ${url}`);
+  if (changed) logRemoteMapping("info", `[system] [remote-mapping] 远程剧名映射表更新成功: ${mappings.size} 条规则，内容已变化`);
   return true;
 }
 
@@ -366,7 +369,7 @@ function ensureMergedIntoGlobals() {
   // 每个进程只记一次合并日志，避免每次启动都刷屏
   if (!remoteState.mergeLogged) {
     remoteState.mergeLogged = true;
-    logRemoteMapping("info", `[system] [remote-mapping] 剧名映射表合并生效: 本地 ${localTable.size} 条 + 远程 ${remoteState.mappings.size} 条（冲突时本地优先）`);
+    logRemoteMapping("debug", `[system] [remote-mapping] 剧名映射表合并生效: 本地 ${localTable.size} 条 + 远程 ${remoteState.mappings.size} 条（冲突时本地优先）`);
   }
 }
 
@@ -383,7 +386,7 @@ function ensureMergedIntoGlobals() {
  */
 async function fetchRemoteMappings(url, { quiet = false } = {}) {
   remoteState.attemptedUrl = url;
-  logRemoteMapping("info", `[system] [remote-mapping] 拉取远程剧名映射表: ${url}`);
+  logRemoteMapping("debug", `[system] [remote-mapping] 拉取远程剧名映射表: ${url}`);
 
   // 单次请求短超时 5 秒：避免远程站点不可达时卡住更新按钮很久
   // 定时重试属于后台任务：失败细节由上层汇总为一条告警，避免每次尝试写入大段错误诊断。
@@ -417,10 +420,10 @@ async function refreshRemoteTitleMapping(url, reason = 'scheduled') {
   remoteRefreshInProgress = (async () => {
     for (let attempt = 1; attempt <= REMOTE_REFRESH_RETRY_COUNT; attempt++) {
       try {
-        logRemoteMapping("info", `[system] [remote-mapping] ${reason} 更新尝试 ${attempt}/${REMOTE_REFRESH_RETRY_COUNT}`);
+        logRemoteMapping("debug", `[system] [remote-mapping] ${reason} 更新尝试 ${attempt}/${REMOTE_REFRESH_RETRY_COUNT}`);
         await fetchRemoteMappings(url, { quiet: true });   // 下载 + 生效 + 写缓存（一步到位）
         remoteState.failedAt = 0;         // 成功：清除失败标记
-        logRemoteMapping("info", `[system] [remote-mapping] 远程映射表更新成功（第 ${attempt} 次尝试）`);
+        logRemoteMapping("debug", `[system] [remote-mapping] 远程映射表更新成功（第 ${attempt} 次尝试）`);
         return true;
       } catch (e) {
         remoteState.failedAt = Date.now();
@@ -705,7 +708,7 @@ function scheduleRemoteRefresh(url) {
 
   // unref()：让这个定时器不阻止程序退出（Node 特性，不影响功能）
   if (typeof remoteSchedulerTimer?.unref === 'function') remoteSchedulerTimer.unref();
-  logRemoteMapping("info", `[system] [remote-mapping] 已安排每日北京时间 05:30 更新`);
+  logRemoteMapping("debug", `[system] [remote-mapping] 已安排每日北京时间 05:30 更新`);
 }
 
 /**
@@ -730,13 +733,13 @@ export async function refreshRemoteTitleMappingNow() {
     return { success: false, count: remoteState.mappings.size, error: '已有远程映射表更新任务进行中' };
   }
 
-  logRemoteMapping("info", '[system] [remote-mapping] 管理员手动更新开始（仅尝试 1 次，超时 5 秒）');
+  logRemoteMapping("debug", '[system] [remote-mapping] 管理员手动更新开始（仅尝试 1 次，超时 5 秒）');
   try {
     // 下载 → 解析 → 校验 → 写入内存 → 写磁盘缓存（一条龙）
     await fetchRemoteMappings(url);
     remoteState.failedAt = 0;
     ensureMergedIntoGlobals();
-    logRemoteMapping("info", `[system] [remote-mapping] 管理员手动更新成功（${remoteState.mappings.size} 条）`);
+    logRemoteMapping("debug", `[system] [remote-mapping] 管理员手动更新成功（${remoteState.mappings.size} 条）`);
     return { success: true, count: remoteState.mappings.size };
   } catch (e) {
     // 失败：记下失败时间，返回具体原因给前端；旧缓存继续保留

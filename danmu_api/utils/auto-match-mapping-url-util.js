@@ -51,7 +51,7 @@ async function loadDisk(url) {
     state.url = url;
     state.rules = rules;
     state.localRulesRef = null;
-    logRemoteMapping('info', `[system] [remote-mapping] [remote-season] 已加载本机缓存: ${rules.length} 条规则`);
+    logRemoteMapping('debug', `[system] [remote-mapping] [remote-season] 已加载本机缓存: ${rules.length} 条规则`);
     return true;
   } catch {
     return false;
@@ -80,11 +80,12 @@ async function fetchRemote(url, { quiet = false } = {}) {
   const text = typeof response?.data === 'string' ? response.data : String(response?.data || '');
   const rules = parseVerifiedRemoteRules(text);
   if (rules.length === 0) throw new Error('远程季集映射表没有可启用的有效季集规则');
+  const changed = state.url !== url || JSON.stringify(state.rules) !== JSON.stringify(rules);
   state.url = url;
   state.rules = rules;
   state.localRulesRef = null;
   await saveDisk(url, text);
-  logRemoteMapping('info', `[system] [remote-mapping] [remote-season] 远程规则已更新并写入本机: ${rules.length} 条`);
+  if (changed) logRemoteMapping('info', `[system] [remote-mapping] [remote-season] 更新成功: ${rules.length} 条规则，内容已变化`);
   return rules.length;
 }
 
@@ -107,13 +108,13 @@ function scheduleRefresh(url) {
     scheduleRefresh(url);
   }, delay);
   if (typeof state.refreshTimer?.unref === 'function') state.refreshTimer.unref();
-  logRemoteMapping('info', '[system] [remote-mapping] [remote-season] 已安排每日北京时间 05:30 更新');
+  logRemoteMapping('debug', '[system] [remote-mapping] [remote-season] 已安排每日北京时间 05:30 更新');
 }
 
 export async function ensureRemoteAutoMatchMapping() {
   const url = normalizeMappingSourceUrl(globals.autoMatchMappingTableUrl);
   if (!url) {
-    logRemoteMapping('info', '[system] [remote-mapping] [remote-season] 未配置远程季集表，跳过缓存检查；当前本机缓存: 0 条规则');
+    logRemoteMapping('debug', '[system] [remote-mapping] [remote-season] 未配置远程季集表，跳过缓存检查；当前本机缓存: 0 条规则');
     return;
   }
   scheduleRefresh(url);
@@ -125,13 +126,13 @@ export async function ensureRemoteAutoMatchMapping() {
 export async function initializeRemoteAutoMatchMapping() {
   const url = normalizeMappingSourceUrl(globals.autoMatchMappingTableUrl);
   if (!url) {
-    logRemoteMapping('info', '[system] [remote-mapping] [remote-season] 未配置远程季集表，跳过初始化；当前本机缓存: 0 条规则');
+    logRemoteMapping('debug', '[system] [remote-mapping] [remote-season] 未配置远程季集表，跳过初始化；当前本机缓存: 0 条规则');
     return;
   }
-  logRemoteMapping('info', `[system] [remote-mapping] [remote-season] 检查远程地址: ${url}`);
+  logRemoteMapping('debug', `[system] [remote-mapping] [remote-season] 检查远程地址: ${url}`);
   scheduleRefresh(url);
   await loadDisk(url);
-  logRemoteMapping('info', `[system] [remote-mapping] [remote-season] 当前本机缓存: ${state.url === url ? state.rules.length : 0} 条规则`);
+  logRemoteMapping('debug', `[system] [remote-mapping] [remote-season] 当前本机缓存: ${state.url === url ? state.rules.length : 0} 条规则`);
   if ((state.url !== url || state.rules.length === 0) && state.initialAttemptedUrl !== url) {
     state.initialAttemptedUrl = url;
     state.fetching ||= fetchRemote(url, { quiet: true }).catch(error => {

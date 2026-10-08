@@ -5,7 +5,7 @@ import { Globals } from './configs/globals.js';
 import { addAnime } from './utils/cache-util.js';
 import { getComment, isMovieFeatureFilmEpisode } from './apis/player-api.js';
 import { getSourceByKey } from './sources/registry.js';
-import { handleConfig } from './apis/system-api.js';
+import { handleConfig, handleClearCache } from './apis/system-api.js';
 
 // UGC 的适用范围：番剧/国外剧、以及弹幕本来就少的国外平台；
 // 国内官方平台命中的国产剧/综艺不参与，画像未知时保守不参与。
@@ -265,6 +265,9 @@ test('handleConfig exposes BILIBILI_UGC_ENABLED and defaults budget to 10s witho
   assert.equal(data.envVarConfig.BILIBILI_UGC_ENABLED.category, 'danmu');
   assert.equal(data.envVarConfig.BILIBILI_UGC_ENABLED.type, 'boolean');
   assert.equal(data.envVarConfig.BILIBILI_UGC_BUDGET_MS, undefined, 'BILIBILI_UGC_BUDGET_MS should not be in envVarConfig');
+  assert.equal(data.envs.BILIBILI_UGC_BUDGET_MS, undefined);
+  assert.equal(data.originalEnvVars.BILIBILI_UGC_BUDGET_MS, undefined);
+  assert(!Object.values(data.categorizedEnvVars).flat().some(v => v.key === 'BILIBILI_UGC_BUDGET_MS'));
 
   const danmuVars = data.categorizedEnvVars.danmu;
   assert(danmuVars.some(v => v.key === 'BILIBILI_UGC_ENABLED'));
@@ -312,7 +315,45 @@ test('UGC metadata-only path never requests media and logs truthful final counts
     assert(!rows.some(e => e.event.startsWith('ugc.audio') || e.event.startsWith('ugc.alignment')));
     await service.supplement(context, base);
     assert(Globals.logBuffer.some(e => e.event === 'ugc.cache' && e.data.cacheState === 'hit'));
+    const cached = Globals.logBuffer.find(e => e.event === 'ugc.candidate.accept' && e.data.cacheState === 'hit');
+    assert.equal(cached.data.candidateTitle, '测试作品 第2季 第5集');
+    assert.equal(cached.data.bvid, 'BVcandidate');
+    assert.equal(cached.data.page, 1);
+    assert.equal(cached.data.evidence.episodeBasis, 'explicit-episode');
   } finally { Globals.init({}); }
+});
+
+test('Carrie TV context retains identity and refuses a movie or conflicting compact year', () => {
+  const ctx = buildUgcContext({ anime: { animeId: 58553, source: 'renren', animeTitle: '魔女嘉莉(2026)【电视剧】from renren', type: '电视剧', startDate: '2026-01-01' }, link: { title: '第01集' }, index: 0 });
+  assert.equal(ctx.season, 1);
+  assert.equal(ctx.year, 2026);
+  assert.equal(ctx.mediaType, 'tv');
+  assert(buildUgcQueries(ctx).includes('魔女嘉莉 2026 第1季 第1集'));
+  for (const title of ['魔女嘉莉1976 第1集', '魔女嘉莉(1976) 第1集', '魔女嘉莉 电影 第1集', '魔女嘉莉 正片']) {
+    assert.equal(selectUgcPages(ctx, video(title, [{ cid: 55, page: 1, part: '正片', duration: 6000 }])).length, 0, title);
+  }
+  assert.equal(selectUgcPages(ctx, video('魔女嘉莉 第1集')).length, 1, 'missing year remains allowed');
+});
+
+test('clearing comments also clears UGC; pending work cannot restore the old cache', async () => {
+  const savedClear = ugcSupplement.clear;
+  let cleared = 0;
+  try {
+    ugcSupplement.clear = () => { cleared++; };
+    await handleClearCache(new Request('http://localhost/api/cache/clear', { method: 'POST', body: JSON.stringify({ items: ['commentCache'] }) }));
+    assert.equal(cleared, 1);
+  } finally { ugcSupplement.clear = savedClear; }
+  const deps = dependencies();
+  let release, searches = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  deps.source._getWbiMixinKey = async () => { if (++searches === 1) await gate; return 'key'; };
+  const service = createUgcSupplement(deps);
+  const pending = service.prepare(context);
+  service.clear();
+  release();
+  await pending;
+  await service.prepare(context);
+  assert.equal(searches, 2);
 });
 
 test('UGC diagnostics distinguish timeout, network failure and empty results', async () => {

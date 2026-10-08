@@ -134,7 +134,7 @@ function compareVersions(verA, verB) {
 async function fetchCdnLatestVersion(packageName) {
     try {
         const url = `https://cdn.jsdelivr.net/npm/${encodeURIComponent(packageName)}@0.3/dist/data.json`;
-        log("info", `[system] [请求模拟] HTTP HEAD: ${url}`);
+        log("debug", `[system] [请求模拟] HTTP HEAD: ${url}`);
         const response = await fetch(url, {
             method: 'HEAD',
             headers: { 'Accept': '*/*' },
@@ -439,7 +439,7 @@ async function downloadAndCache(cachePath) {
         const controllers = CDNS.map(() => new AbortController());
 
         CDNS.forEach(url => {
-            log("info", `[system] [请求模拟] HTTP GET: ${url}`);
+            log("debug", `[system] [请求模拟] HTTP GET: ${url}`);
         });
 
         // 构建完整下载任务的 Promise 数组

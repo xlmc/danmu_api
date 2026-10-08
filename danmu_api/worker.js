@@ -38,9 +38,9 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   globals.deployPlatform = deployPlatform;
 
   if (!isLogReadRequest) {
-    log("info", `[system] [server] request url: ${JSON.stringify(url)}`);
-    log("info", `[system] [server] request path: ${path}`);
-    log("info", `[system] [server] client ip: ${clientIp}`);
+    log("debug", `[system] [server] request url: ${JSON.stringify(url)}`);
+    log("debug", `[system] [server] request path: ${path}`);
+    log("debug", `[system] [server] client ip: ${clientIp}`);
   }
 
 
@@ -138,7 +138,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   // 兼容部分客户端将自定义弹幕短地址再次拼接官方完整路径的情况
   // 例如: /danmaku/api/v2/fongmi/danmaku?name=...&episode=...
   if (path.endsWith("/danmaku/api/v2/fongmi/danmaku")) {
-    log("info", `[system] [path fix] Collapsed nested danmaku path: "${path}" -> "/danmaku"`);
+    log("debug", `[system] [path fix] Collapsed nested danmaku path: "${path}" -> "/danmaku"`);
     path = "/danmaku";
   }
 
@@ -156,28 +156,28 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   
 
-  if (!isLogReadRequest) log("info", `[system] [server] ${path}`);
+  if (!isLogReadRequest) log("debug", `[system] [server] ${path}`);
 
   // 智能处理API路径前缀，确保最终有一个正确的 /api/v2
   if (path !== "/" && path !== "/danmaku" && path !== "/api/logs" && !path.startsWith('/api/env') && !path.startsWith('/api/cache')
     && !path.startsWith('/api/cookie') && !path.startsWith('/api/config')
     && !path.startsWith('/api/title-mapping') && !path.startsWith('/api/auto-match-mapping')) {
-      log("info", `[system] [path check] Starting path normalization for: "${path}"`);
+      log("debug", `[system] [path check] Starting path normalization for: "${path}"`);
       const pathBeforeCleanup = path; // 保存清理前的路径检查是否修改
 
       // 清理：应对"用户填写/api/v2"+"客户端添加/api/v2"导致的重复前缀
       path = path.replace(/\/+/g, '/');
       while (path.startsWith('/api/v2/api/v2/')) {
-          log("info", `[system] [path check] Found redundant /api/v2 prefix. Cleaning...`);
+          log("debug", `[system] [path check] Found redundant /api/v2 prefix. Cleaning...`);
           // 从第二个 /api/v2 的位置开始截取，相当于移除第一个
           path = path.substring('/api/v2'.length);
       }
 
       // 打印日志：只有在发生清理时才显示清理后的路径，否则显示"无需清理"
       if (path !== pathBeforeCleanup) {
-          log("info", `[system] [path check] Path after cleanup: "${path}"`);
+          log("debug", `[system] [path check] Path after cleanup: "${path}"`);
       } else {
-          log("info", `[system] [path check] Path after cleanup: No cleanup needed.`);
+          log("debug", `[system] [path check] Path after cleanup: No cleanup needed.`);
       }
 
       // 补全：如果路径缺少前缀（例如请求原始路径为 /search/anime 或 /v2/search/anime），则智能补全
@@ -187,23 +187,23 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
         && !path.startsWith('/api/cookie') && !path.startsWith('/api/config')
         && !path.startsWith('/api/title-mapping') && !path.startsWith('/api/auto-match-mapping')) {
           if (path.startsWith('/v2/') || path === '/v2') {
-              log("info", `[system] [path check] Path is missing /api prefix. Adding /api...`);
+              log("debug", `[system] [path check] Path is missing /api prefix. Adding /api...`);
               path = '/api' + path;
           } else if (path.startsWith('/api/') || path === '/api') {
-              log("info", `[system] [path check] Path is missing /v2 prefix. Adding /v2...`);
+              log("debug", `[system] [path check] Path is missing /v2 prefix. Adding /v2...`);
               path = '/api/v2' + path.substring(4);
           } else {
-              log("info", `[system] [path check] Path is missing /api/v2 prefix. Adding /api/v2...`);
+              log("debug", `[system] [path check] Path is missing /api/v2 prefix. Adding /api/v2...`);
               path = '/api/v2' + (path.startsWith('/') ? path : '/' + path);
           }
       }
 
       // 打印日志：只有在发生添加前缀时才显示添加后的路径，否则显示"无需补全"
       if (path === pathBeforePrefixCheck) {
-          log("info", `[system] [path check] Prefix Check: No prefix addition needed.`);
+          log("debug", `[system] [path check] Prefix Check: No prefix addition needed.`);
       }
 
-      log("info", `[system] [path check] Final normalized path: "${path}"`);
+      log("debug", `[system] [path check] Final normalized path: "${path}"`);
   }
 
   // GET /

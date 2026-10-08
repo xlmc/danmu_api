@@ -2,7 +2,7 @@ import BilibiliSource from '../sources/bilibili.js';
 import { globals } from '../configs/globals.js';
 import { httpGet } from './http-util.js';
 import { logEvent } from './log-util.js';
-import { convertChineseNumber, extractAnimeInfo } from './common-util.js';
+import { convertChineseNumber, extractAnimeInfo, extractYear, matchMediaType, workIdentityConflict } from './common-util.js';
 import { decodeHtmlEntities } from './codec-util.js';
 import { isDomesticTmdbProduction } from './tmdb-util.js';
 
@@ -126,7 +126,7 @@ export function createUgcLogger(context = {}) {
   const ugcId = Date.now().toString(36) + '-' + (++ugcLogSequence).toString(36);
   const logger = (event, message, data = {}, level = 'info') => logEvent(level, 'ugc.' + event,
     '[ugc] [ugc-id=' + ugcId + '] 「' + (context.title || '未知作品') + '」第' + (context.episode ?? '?') + '集 ' + message,
-    { ...data, ugcId, identity: context.identity, title: context.title, season: context.season, episode: context.episode });
+    { ...data, ugcId, identity: context.identity, title: context.title, year: context.year, mediaType: context.mediaType, season: context.season, episode: context.episode });
   logger.ugcId = ugcId;
   return logger;
 }
@@ -135,6 +135,7 @@ export function buildUgcContext(resolved) {
   if (!resolved?.anime || !resolved.link) return null;
   const { anime, link, index } = resolved;
   const parsed = extractAnimeInfo(anime.animeTitle, link.title);
+  const mediaType = anime.tmdbIdentity?.mediaType || matchMediaType([anime.type, anime.typeDescription].join(' '));
   // 综艺等以「第N期」编号的作品无法被通用集数解析器识别；先用分集标题自身的期/集号，
   // 再退回解析器结果，最后才用目录下标。目录下标并不等于作品集号，直接采用会检索到错误的一期。
   const fromTitle = episodeNumber(link.title);
@@ -143,8 +144,9 @@ export function buildUgcContext(resolved) {
   return {
     identity: `${anime.source}:${anime.animeId}:${anime.bangumiId}`,
     title: parsed.baseTitle, aliases: [...(anime.aliases || [])],
-    year: Number(String(anime.startDate || '').slice(0, 4)) || null,
-    season: parsed.season ?? anime.tmdbIdentity?.seasonNumber ?? null,
+    year: Number(String(anime.startDate || '').slice(0, 4)) || extractYear(anime.animeTitle),
+    season: parsed.season ?? anime.tmdbIdentity?.seasonNumber ?? (mediaType === 'tv' ? 1 : null),
+    mediaType,
     episode, episodeSource: fromTitle !== null ? 'episode-title' : parsed.episode !== null ? 'catalog-title' : 'catalog-index',
     episodeTitle: link.title, referenceUrl: link.url,
     type: anime.typeDescription || anime.type || '',
@@ -155,6 +157,7 @@ export function buildUgcContext(resolved) {
 export function buildUgcQueries(context) {
   const n = context.episode, padded = String(n).padStart(2, '0');
   const names = [...new Set([context.title, ...(context.aliases || [])].filter(Boolean))].slice(0, 3);
+  if (context.year) names.unshift(`${context.title} ${context.year}`);
   const season = context.season ? ` 第${context.season}季` : '';
   // 综艺用「第N期」，剧集用「第N集」；两种编号都检索，避免用错单位而漏掉真实投稿。
   const units = /第\s*[\d一二三四五六七八九十百零两]+\s*期/.test(String(context.episodeTitle || '')) ? ['期', '集'] : ['集'];
@@ -174,7 +177,7 @@ export function buildUgcRequestContext({ title, aliases = [], year = null, seaso
     season: Number.isInteger(season) ? season : null,
     episode, episodeSource: 'request',
     episodeTitle: String(episodeTitle || ''),
-    referenceUrl: null, type: String(type || ''), tmdbIdentity: tmdbIdentity || null
+    referenceUrl: null, type: String(type || ''), mediaType: tmdbIdentity?.mediaType || matchMediaType(type), tmdbIdentity: tmdbIdentity || null
   };
 }
 
@@ -229,8 +232,9 @@ export function selectUgcPages(context, video, onReject = () => {}) {
   if (precision < MIN_UGC_TITLE_PRECISION) return reject('title-precision-low');
   const season = title.match(/第\s*([\d一二三四五六七八九十百]+)\s*季|\bS(\d+)\b/i);
   if (season && (!context.season || number(season[1] || season[2]) !== context.season)) return reject('season-mismatch');
-  const year = title.match(/\b((?:19|20)\d{2})\s*(?:年|版)/);
-  if (year && context.year && Number(year[1]) !== context.year) return reject('year-mismatch');
+  const mediaType = context.mediaType || context.tmdbIdentity?.mediaType || matchMediaType(context.type || '');
+  const conflict = workIdentityConflict({ ...video, title, type: [video.type, matchMediaType(title)].join(' ') }, { ...context, mediaType });
+  if (conflict) return reject(conflict);
   const contextText = [context.title, ...context.aliases || [], context.episodeTitle].join(' ');
   if ([...title.matchAll(versions)].some(m => !contextText.includes(m[0]))) return reject('version-mismatch');
   const titleEpisode = episodeNumber(title), pages = video.pages || [];
@@ -248,7 +252,7 @@ export function selectUgcPages(context, video, onReject = () => {}) {
     const named = bareEpisodeTitle.length >= 2 && normalize(p.part) === bareEpisodeTitle;
     // A page's position is not an episode number. Trailer/OP pages often precede E01.
     const episode = pageEpisode ?? (pages.length === 1 ? titleEpisode : null);
-    const movie = (/电影|剧场版/.test(context.type || '') || (context.season === null && context.episode === 1)) && pages.length === 1 && episode === null;
+    const movie = (mediaType === 'movie' || (!mediaType && context.season === null && context.episode === 1)) && pages.length === 1 && episode === null;
     if (episode !== context.episode && !named && !movie) return reject('episode-unconfirmed-or-mismatch', p);
     if (pageEpisode !== null && pageEpisode !== context.episode) return reject('episode-mismatch', p);
     if (pages.length === 1 && titleEpisode !== null && titleEpisode !== context.episode) return reject('episode-mismatch', p);
@@ -256,7 +260,9 @@ export function selectUgcPages(context, video, onReject = () => {}) {
     if (movie && p.duration < 2400) return reject('movie-duration-too-short', p);
     return [{ bvid: video.bvid, aid: video.aid, cid: p.cid, page: p.page, duration: p.duration, title, part: p.part,
       precision, url: `https://www.bilibili.com/video/${video.bvid}/?p=${p.page}`, searchCount: video.stat?.danmaku || 0,
-      evidence: { title, part: p.part, explicitEpisode: episode, episodeTitleMatched: named, titlePrecision: precision } }];
+      evidence: { title, part: p.part, explicitEpisode: episode, episodeTitleMatched: named, titlePrecision: precision,
+        expectedYear: context.year, candidateYear: extractYear(title), expectedType: mediaType,
+        candidateType: matchMediaType(title), episodeBasis: movie ? 'movie-feature' : named ? 'episode-title' : 'explicit-episode' } }];
   });
 }
 
@@ -304,6 +310,7 @@ async function getJson(url) {
 
 export function createUgcSupplement({ source = new BilibiliSource(), json = getJson } = {}) {
   const cache = new Map(), pending = new Map();
+  let cacheGeneration = 0;
   // 检索投稿并做身份校验（不取弹幕）：匹配阶段的 UGC 兜底源只用这一段。
   async function search(context, { signal, logger = createUgcLogger(context) } = {}) {
     const result = { candidates: [], failures: [] };
@@ -348,7 +355,7 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
           '投稿身份校验拒绝：' + v.bvid + '，原因=' + reason,
           { bvid: v.bvid, cid: page?.cid, page: page?.page, candidateTitle: clean(view.data?.title), reason }));
         for (const c of selected) logger('candidate.select', '候选通过身份校验：' + c.bvid + ' P' + c.page + '，CID=' + c.cid,
-          { bvid: c.bvid, cid: c.cid, page: c.page, duration: c.duration, reportedComments: c.searchCount });
+          { bvid: c.bvid, cid: c.cid, page: c.page, candidateTitle: c.title, part: c.part, duration: c.duration, reportedComments: c.searchCount, evidence: c.evidence });
         return { selected };
       } catch (e) {
         logger('candidate.failure', '投稿详情获取失败：' + v.bvid + '，' + e.message, { bvid: v.bvid, reason: e.message }, 'warn');
@@ -396,7 +403,7 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
         const duration = Math.min(c.duration, rangeSeconds ?? c.duration);
         c.timeline = { status: 'metadata-matched', offsetSeconds: 0, validRange: [0, duration] };
         logger('candidate.accept', '候选身份匹配，保留原始弹幕时间戳；时间轴未经音频校验',
-          { bvid: c.bvid, cid: c.cid, status: 'metadata-matched', timelineVerified: false, offsetSeconds: 0, validRange: [0, duration], durationMs: Math.round(performance.now() - started) });
+          { bvid: c.bvid, cid: c.cid, page: c.page, candidateTitle: c.title, part: c.part, evidence: c.evidence, status: 'metadata-matched', timelineVerified: false, offsetSeconds: 0, validRange: [0, duration], durationMs: Math.round(performance.now() - started) });
         return { accepted: { cid: c.cid, comments, timeline: c.timeline } };
       } catch (e) {
         const reason = signal?.aborted ? 'timeout' : e.message;
@@ -420,12 +427,17 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
     const budgetMs = options.budgetMs ?? 10000;
     logger('start', options.prefetch ? '开始UGC补充（与主源弹幕并行检索），预算 ' + budgetMs + 'ms' : '开始UGC补充，预算 ' + budgetMs + 'ms',
       { budgetMs, prefetch: Boolean(options.prefetch) });
-    const key = JSON.stringify(['ugc-metadata-v2', context, options.rangeSeconds ?? null, options.maxCandidates ?? 8]);
+    const key = JSON.stringify(['ugc-metadata-v3', context, options.rangeSeconds ?? null, options.maxCandidates ?? 8]);
     const entry = cache.get(key);
     let result, cacheState = 'miss';
     if (entry && entry.expires > Date.now()) {
       result = entry.result; cacheState = 'hit';
       logger('cache', '命中UGC校验缓存', { cacheState });
+      for (const accepted of result.accepted) {
+        const candidate = result.candidates.find(item => item.cid === accepted.cid);
+        logger('candidate.accept', '复用已校验投稿：' + candidate.title + '，' + candidate.bvid + ' P' + candidate.page,
+          { cacheState, candidateTitle: candidate.title, bvid: candidate.bvid, cid: candidate.cid, page: candidate.page, part: candidate.part, evidence: candidate.evidence, timelineVerified: false });
+      }
     } else {
       let task = pending.get(key);
       if (task) {
@@ -433,6 +445,7 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
         logger('cache', '复用同集正在执行的UGC任务，关联流程=' + (task.ugcId || '未知'), { cacheState, sharedUgcId: task.ugcId });
       } else {
         logger('cache', 'UGC缓存未命中，启动检索校验', { cacheState });
+        const generation = cacheGeneration;
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), budgetMs);
         task = resolve(context, { ...options, logger, signal: controller.signal }).catch(e => {
@@ -440,8 +453,8 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
           return { candidates: [], accepted: [], failures: [{ reason: controller.signal.aborted ? 'timeout' : e.message }] };
         }).then(result => {
           if (cache.size >= 128) cache.delete(cache.keys().next().value);
-          cache.set(key, { result, expires: Date.now() + (result.accepted.length ? 3600000 : 60000) }); return result;
-        }).finally(() => { clearTimeout(timeout); pending.delete(key); });
+          if (generation === cacheGeneration) cache.set(key, { result, expires: Date.now() + (result.accepted.length ? 3600000 : 60000) }); return result;
+        }).finally(() => { clearTimeout(timeout); if (pending.get(key) === task) pending.delete(key); });
         task.ugcId = logger.ugcId;
         pending.set(key, task);
       }
@@ -475,7 +488,7 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
     const prepared = options.prepared ? await options.prepared : await prepare(context, options);
     return settle(context, base, prepared);
   }
-  return { search, prepare, settle, resolve, supplement, clear: () => cache.clear() };
+  return { search, prepare, settle, resolve, supplement, clear: () => { cacheGeneration++; cache.clear(); pending.clear(); } };
 }
 
 export const ugcSupplement = createUgcSupplement();

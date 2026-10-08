@@ -1,5 +1,5 @@
 import { searchTmdbTitles, getTmdbMatchDetails, getTmdbMatchEpisode } from './tmdb-util.js';
-import { extractSeasonNumberFromAnimeTitle } from './common-util.js';
+import { extractSeasonNumberFromAnimeTitle, workIdentityConflict } from './common-util.js';
 import { filterMappingTargetCandidates } from './auto-match-mapping-util.js';
 
 const normalize = value => String(value || '').normalize('NFKC').toLowerCase().replace(/[\s._:：·-]+/g, '');
@@ -7,18 +7,23 @@ const yearOf = value => Number(String(value || '').slice(0, 4)) || null;
 
 // TMDB identifies the work; platform IDs still identify its playable episodes.
 // Never discard the media type: TV and movie IDs occupy different namespaces.
-export async function resolveTmdbMatchIdentity({ title, year = null, season = null, episode = null },
+export async function resolveTmdbMatchIdentity({ title, year = null, season = null, episode = null, tmdbId = null, mediaType = null },
   { search = searchTmdbTitles, details = getTmdbMatchDetails, getTmdbMatchEpisode } = {}) {
-  const mediaType = season != null || episode != null ? 'tv' : 'movie';
-  const response = await search(title, mediaType, { page: 1 });
-  const data = typeof response?.data === 'string' ? JSON.parse(response.data) : response?.data;
-  const candidates = (data?.results || []).filter(item => Number.isSafeInteger(item.id) && item.id > 0 &&
-    (!item.media_type || item.media_type === mediaType) &&
-    (!year || (mediaType === 'tv' && season > 1) || yearOf(item.first_air_date || item.release_date) === Number(year)));
-  const exact = candidates.filter(item => [item.name, item.title, item.original_name, item.original_title].some(name => normalize(name) === normalize(title)));
-  // An ambiguous result is not evidence for a platform association.
-  if (exact.length > 1 || (exact.length === 0 && candidates.length > 1)) return null;
-  const selected = exact[0] || candidates[0];
+  mediaType ||= season != null || episode != null ? 'tv' : 'movie';
+  let selected;
+  if (tmdbId) {
+    selected = { id: Number(tmdbId) };
+  } else {
+    const response = await search(title, mediaType, { page: 1 });
+    const data = typeof response?.data === 'string' ? JSON.parse(response.data) : response?.data;
+    const candidates = (data?.results || []).filter(item => Number.isSafeInteger(item.id) && item.id > 0 &&
+      (!item.media_type || item.media_type === mediaType) &&
+      (!year || (mediaType === 'tv' && season > 1) || yearOf(item.first_air_date || item.release_date) === Number(year)));
+    const exact = candidates.filter(item => [item.name, item.title, item.original_name, item.original_title].some(name => normalize(name) === normalize(title)));
+    // An ambiguous result is not evidence for a platform association.
+    if (exact.length > 1 || (exact.length === 0 && candidates.length > 1)) return null;
+    selected = exact[0] || candidates[0];
+  }
   if (!selected) return null;
   const detail = await details(mediaType, selected.id);
   if (!detail || detail.id !== selected.id || !(detail.name || detail.title)) return null;
@@ -27,7 +32,7 @@ export async function resolveTmdbMatchIdentity({ title, year = null, season = nu
     ...(detail.alternative_titles?.results || detail.alternative_titles?.titles || []).map(item => item.title),
     ...(detail.translations?.translations || []).flatMap(item => [item.data?.name, item.data?.title])
   ].filter(value => typeof value === 'string' && value.trim()))];
-  if (!aliases.some(alias => normalize(alias) === normalize(title))) return null;
+  if (!tmdbId && !aliases.some(alias => normalize(alias) === normalize(title))) return null;
   const identityYear = yearOf(detail.first_air_date || detail.release_date);
   const seasonYear = mediaType === 'tv' && season != null
     ? yearOf(detail.seasons?.find(item => item.season_number === Number(season))?.air_date) : null;
@@ -63,6 +68,10 @@ export function filterTmdbMatchCandidates(animes, identity, mapping = null, save
     if (keys.some(key => key !== identity.key)) return false;
     const ids = [anime.tmdbId, anime.tmdb_id, anime.externalIds?.tmdb, anime.externalIds?.tmdbId].filter(Boolean);
     if (ids.some(id => String(id) !== identity.tmdbId)) return false;
+    const candidateSeason = extractSeasonNumberFromAnimeTitle(anime.animeTitle).season;
+    const expectedYear = identity.mediaType === 'movie' ? identity.year :
+      candidateSeason ? identity.seasons?.find(item => item.season === candidateSeason)?.year : identity.seasonYear;
+    if (workIdentityConflict(anime, { year: expectedYear, mediaType: identity.mediaType, tmdbIdentity: identity })) return false;
     const type = String(anime.type || '').toLowerCase();
     if (identity.mediaType === 'tv' && ['movie', '电影'].includes(type)) return false;
     if (identity.mediaType === 'movie' && ['tv', 'tvseries', 'tv_series', '电视剧'].includes(type)) return false;

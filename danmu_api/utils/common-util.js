@@ -36,8 +36,25 @@ export const extractAnimeTitle = (str) => str.split('(')[0].trim();
 
 // 提取年份的辅助函数
 export function extractYear(animeTitle) {
-  const match = animeTitle.match(/\((\d{4})\)/);
+  const match = String(animeTitle).normalize('NFKC').match(/(?:\(|(?<!\d))((?:19|20)\d{2})(?:\)|年|版|(?=$|[\s【]))/);
   return match ? parseInt(match[1]) : null;
+}
+
+export function matchMediaType(value) {
+  if (/电影|剧场版|\b(?:movie|film)\b/i.test(value)) return 'movie';
+  if (/电视剧|动漫|番剧|动画|综艺|\b(?:tv|tvseries|tv_series|series|anime|variety)\b/i.test(value)) return 'tv';
+  return null;
+}
+
+// 主源、缓存与投稿都拒绝明确的年份、类型与作品 ID 冲突。
+export function workIdentityConflict(candidate, target) {
+  const mediaType = matchMediaType([candidate.mediaType, candidate.type, candidate.typeDescription].join(' '));
+  if (target.mediaType && mediaType && target.mediaType !== mediaType) return 'type-mismatch';
+  const key = candidate.tmdbIdentity?.key;
+  if (target.tmdbIdentity && key && key !== target.tmdbIdentity.key) return 'tmdb-mismatch';
+  const year = Number(String(candidate.startDate || '').slice(0, 4)) || extractYear(candidate.animeTitle || candidate.title || '');
+  if (target.year && year && Number(target.year) !== year) return 'year-mismatch';
+  return null;
 }
 
 export function convertChineseNumber(chineseNumber) {

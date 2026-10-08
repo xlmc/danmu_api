@@ -6,6 +6,8 @@ import path from 'node:path';
 import { handleRequest } from './worker.js';
 import { getCachedRemoteAutoMatchMappingRules, initializeRemoteAutoMatchMapping } from './utils/auto-match-mapping-url-util.js';
 import { Globals } from './configs/globals.js';
+import { applyRemoteTitleMappingText } from './utils/title-mapping-url-util.js';
+import { httpGet } from './utils/http-util.js';
 
 const endpoint = '/api/auto-match-mapping/refresh';
 const remoteUrl = 'https://mapping-test.example/season.txt';
@@ -15,6 +17,24 @@ const env = {
 };
 const request = (prefix = '') => new Request('http://localhost' + prefix + endpoint, { method: 'POST' });
 const handle = (req, config) => handleRequest(req, config, 'cloudflare', '127.0.0.1');
+
+test('info keeps changed mapping summaries and failures but hides routine requests', async () => {
+  Globals.init({ LOG_LEVEL: 'info' }); Globals.logBuffer = [];
+  const savedFetch = globalThis.fetch;
+  try {
+    const url = 'https://mapping-test.example/log-summary.txt';
+    applyRemoteTitleMappingText(url, '旧名->新名');
+    applyRemoteTitleMappingText(url, '旧名->新名');
+    assert.equal(Globals.logBuffer.filter(row => row.message.includes('更新成功')).length, 1);
+    globalThis.fetch = async () => new Response('ok');
+    await httpGet('https://mapping-test.example/download', { retries: 0 });
+    assert(!Globals.logBuffer.some(row => row.message.includes('HTTP GET:')));
+    globalThis.fetch = async () => { throw Error('download failed'); };
+    await assert.rejects(httpGet('https://mapping-test.example/failure', { retries: 0 }), /download failed/);
+    assert(Globals.logBuffer.some(row => row.level === 'warn' && row.message.includes('请求失败')));
+    assert(Globals.logBuffer.some(row => row.level === 'error' && row.message.includes('所有重试均失败')));
+  } finally { globalThis.fetch = savedFetch; Globals.init({}); }
+});
 
 test('season refresh reaches its handler instead of being rewritten to /api/v2', async () => {
   const response = await handle(request(), { TOKEN_AUTH_DISABLED: 'true' });
