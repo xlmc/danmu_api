@@ -342,7 +342,8 @@ export default class YoukuSource extends BaseSource {
 
     // 格式化分集标题
     const formattedEpisodes = filteredEpisodes.map((ep, index) => {
-      const episodeIndex = index + 1;
+      const episodeIndex = (mediaType === 'anime' || mediaType === 'drama') && /^\d+$/.test(String(ep.stage))
+        ? Number(ep.stage) : index + 1;
       const title = this._formatEpisodeTitle(ep, episodeIndex, mediaType);
 
       return {

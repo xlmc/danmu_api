@@ -457,7 +457,7 @@ function allocateEpisode(url, title) {
     // 添加新对象
     globals.episodeIds.push(newEpisode);
 
-    log("info", `[cache] Added to episodeIds: ${JSON.stringify(newEpisode)}`);
+    log("debug", `[cache] Added to episodeIds: ${JSON.stringify(newEpisode)}`);
     return newEpisode; // 返回新添加的对象
 }
 
@@ -626,7 +626,7 @@ export function addAnime(anime, detailStore = null) {
         // 诊断日志只用于排查，不能反过来把已经写入成功的 anime 判成失败：
         // 外部恢复的历史快照里可能残留 links 为 null 的条目，序列化会抛错。
         try {
-            log("info", `[cache] animes: ${JSON.stringify(
+            log("debug", `[cache] animes: ${JSON.stringify(
               globals.animes.map(anime => ({
                 links: anime.links,
                 animeId: anime.animeId,

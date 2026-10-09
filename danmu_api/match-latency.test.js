@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Globals } from './configs/globals.js';
 import { handleRequest } from './worker.js';
-import { getBangumi, matchAniAndEp, searchAnime, searchEpisodes, selectCollectionEpisode } from './apis/player-api.js';
+import { extractTitleSeasonEpisode, getBangumi, matchAniAndEp, searchAnime, searchEpisodes, selectCollectionEpisode } from './apis/player-api.js';
+import YoukuSource from './sources/youku.js';
 import { buildUgcRequestContext, ugcSupplement } from './utils/bilibili-ugc-util.js';
 import { addAnime } from './utils/cache-util.js';
 import { getSourceByKey } from './sources/registry.js';
@@ -67,6 +68,57 @@ async function waitForCompleteCache() {
   }
   assert.fail('完整搜索未完成缓存');
 }
+
+test('文件名不同季集分隔形式沿同一匹配入口选择真实集号，技术后缀不进入UGC单集名', async () => {
+  reset({ SOURCE_ORDER: 'youku', PLATFORM_ORDER: 'youku', TITLE_MAPPING_TABLE: '',
+    TMDB_API_KEY: '', BILIBILI_UGC_ENABLED: 'false', LOG_LEVEL: 'error' });
+  const data = { animeId: 7003, bangumiId: 'cangyuan-filenames', source: 'youku', type: '动漫',
+    animeTitle: '沧元图(2023)【动漫】from youku', episodeCount: 2,
+    links: [97, 98].map(n => ({ url: `https://v.youku.com/v_show/id_${n}.html`, title: `【youku】 第${n}集` })) };
+  const restore = installSource('youku', data);
+  try {
+    for (const fileName of ['沧元图_S01E98.mkv', '沧元图_2023_S01E98.mkv', '沧元图S01E98', '沧元图 S01 E98.ts', '沧元图 第98集.mkv', '沧元图 第一季 第九十八集.mkv']) {
+      const result = await match(fileName);
+      assert.equal(result.matches[0]?.episodeTitle, '【youku】 第98集', fileName);
+    }
+    const parsed = await extractTitleSeasonEpisode('猫和老鼠：黄金时代合集（1940-1958）_S01E01_甜蜜的家 Puss Gets the Boot.1080p.WEB-DL.mkv');
+    assert.equal(parsed.episodeTitle, '甜蜜的家 Puss Gets the Boot');
+    assert.equal(parsed.title, '猫和老鼠：黄金时代合集（1940-1958）');
+    const secondSeason = await extractTitleSeasonEpisode('测试作品 第两季 第两集.mkv');
+    assert.equal(secondSeason.season, 2);
+    assert.equal(secondSeason.episode, 2);
+    const bad = await handleRequest(new Request('http://localhost/87654321/api/v2/match', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fileName: 98 }) }), Globals.env);
+    assert.equal(bad.status, 400);
+  } finally { restore(); Globals.logBuffer = []; }
+});
+
+test('稀疏优酷目录保留源集号，手工选集锚点顺延真实条目，FongMi拒绝明确冲突分集', async () => {
+  reset({ SOURCE_ORDER: 'youku', PLATFORM_ORDER: 'youku', TITLE_MAPPING_TABLE: '', TMDB_API_KEY: '', LOG_LEVEL: 'error' });
+  const formatted = new YoukuSource()._processAndFormatEpisodes([
+    { id: '97', stage: '97', title: '妖族脑子不太好' }, { id: '98', stage: '98', title: '战神' }
+  ], 'anime');
+  assert.equal(formatted[1].title, '第98集 战神');
+  const data = { animeId: 7004, bangumiId: 'cangyuan-anchor', source: 'youku', type: '动漫',
+    animeTitle: '沧元图(2023)【动漫】from youku', episodeCount: 2,
+    links: formatted.map(ep => ({ url: `https://v.youku.com/v_show/id_${ep.vid}.html`, title: `【youku】 ${ep.title}` })) };
+  const restore = installSource('youku', data);
+  const details = new Map(); addAnime(data, details);
+  const request = new Request('http://localhost/api/v2/match');
+  try {
+    const offsets = { '1': '1:【youku】 第97集 妖族脑子不太好' };
+    const found = await matchAniAndEp(1, 2, null, { animes: [data] }, '沧元图', request, null, null, offsets, details);
+    assert.equal(found.resEpisode.episodeTitle, '【youku】 第98集 战神');
+    const missing = await matchAniAndEp(1, 3, null, { animes: [data] }, '沧元图', request, null, null, offsets, details);
+    assert.equal(missing.resEpisode, null);
+    for (const [number, count] of [[98, 1], [99, 0]]) {
+      const response = await handleRequest(new Request(`http://localhost/87654321/api/v2/fongmi/danmaku?name=沧元图&episode=第${number}集`), Globals.env);
+      const items = await response.json();
+      assert.equal(items.length, count);
+      if (count) assert.ok(items[0].name.includes('第98集 战神'));
+    }
+  } finally { restore(); Globals.logBuffer = []; }
+});
 
 test('过滤番外保留原集号，自动匹配与分集搜索均能选择98集，缺集不按位置补选', async () => {
   reset({ SOURCE_ORDER: 'youku', PLATFORM_ORDER: 'youku', TITLE_MAPPING_TABLE: '',

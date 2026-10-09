@@ -222,6 +222,9 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   // GET /api/v2/search/episodes
   if (path === "/api/v2/search/episodes" && method === "GET") {
+    log('info', '[system] [player-request] ' + JSON.stringify({ method, endpoint: path,
+      anime: url.searchParams.get('anime'), episode: url.searchParams.get('episode'),
+      userAgent: req.headers.get('user-agent'), clientIp }));
     return searchEpisodes(url, clientIp);
   }
 
@@ -246,6 +249,8 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   // GET /api/v2/bangumi/:animeId
   if (path.startsWith("/api/v2/bangumi/") && method === "GET") {
+    log('info', '[system] [player-request] ' + JSON.stringify({ method, endpoint: '/api/v2/bangumi/:animeId',
+      animeId: path.split('/').pop(), userAgent: req.headers.get('user-agent'), clientIp }));
     return getBangumi(path, null, url.searchParams.get('source'));
   }
 
@@ -257,6 +262,9 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     const durationParam = url.searchParams.get('duration');
     const segmentFlag = segmentFlagParam === 'true' || segmentFlagParam === '1';
     const includeDuration = durationParam === 'true' || durationParam === '1';
+    log('info', '[system] [player-request] ' + JSON.stringify({ method, endpoint: '/api/v2/comment',
+      commentId: videoUrl ? null : path.split('/').pop(), byUrl: Boolean(videoUrl), format: queryFormat,
+      segmentFlag, userAgent: req.headers.get('user-agent'), clientIp }));
 
     // ⚠️ 限流设计说明：
     // 1. 先检查缓存，缓存命中时直接返回，不计入限流次数

@@ -323,6 +323,8 @@ function scoreFongmiEpisodeMatch(anime, episode, targetEpisode, index) {
   const targetNum = extractFongmiEpisodeNumber(normalizedTargetEpisode);
   const episodeNum = extractFongmiEpisodeNumber(episodeTitle);
   const episodeIndexNum = parseInt(episode?.episodeNumber || `${index + 1}`, 10);
+  if (targetNum !== null && (episodeNum !== null || Number.isFinite(episodeIndexNum)) &&
+      targetNum !== (episodeNum ?? episodeIndexNum)) return -Infinity;
   if (targetNum !== null && episodeNum !== null && targetNum === episodeNum) score += 7000;
   if (targetNum !== null && Number.isFinite(episodeIndexNum) && targetNum === episodeIndexNum) score += 4000;
 
@@ -332,11 +334,13 @@ function scoreFongmiEpisodeMatch(anime, episode, targetEpisode, index) {
   const targetSeason = extractFongmiSeasonNumber(targetEpisode);
   const animeSeason = extractSeasonNumberFromAnimeTitle(anime?.animeTitle || "").season;
   if (targetSeason !== null && animeSeason !== null) {
-    score += targetSeason === animeSeason ? 5000 : -12000;
+    if (targetSeason !== animeSeason) return -Infinity;
+    score += 5000;
   }
 
   const targetDate = extractDateDigits(normalizedTargetEpisode);
   const episodeDate = extractDateDigits(episodeTitle);
+  if (targetDate && episodeDate && targetDate !== episodeDate) return -Infinity;
   if (targetDate && episodeDate && targetDate === episodeDate) score += 9000;
 
   if (targetDate && targetText.includes(targetDate)) score += 800;
@@ -426,6 +430,7 @@ export async function getFongmiDanmaku(url, req) {
       ...item,
       score: scoreFongmiEpisodeMatch(item.anime, item.episode, episode, item.index)
     }))
+    .filter(item => Number.isFinite(item.score))
     .sort((a, b) => b.score - a.score);
 
   const seen = new Set();

@@ -1230,11 +1230,14 @@ function computeTargetEpisode(offsets, season, episode, filteredEpisodes, target
   const offset = episode - offsetEpisode;
   // 通过offsetEpisodeTitle获取保存的所在集index
   const offsetIndex = filteredEpisodes.findIndex(episode => episode.episodeTitle === offsetEpisodeTitle);
-  if (offsetIndex !== -1) {
-    // 计算本次获取的目标index
-    targetEpisode = offsetIndex + offset + 1;
-    log("info", `Applying offset "${offsets[seasonKey]}" for S${season}E${episode} -> ${targetEpisode}`);
+  const mappedEpisode = offsetIndex < 0 ? null : filteredEpisodes[offsetIndex + offset];
+  if (!mappedEpisode) {
+    log('info', `[system] [match-reject] 保存的选集定位不存在或越界: ${offsets[seasonKey]} / S${season}E${episode}`);
+    return NaN;
   }
+  // 人工锚点按目录位置顺延，但后续匹配必须使用该条目的真实集号。
+  targetEpisode = extractEpisodeNumberFromTitle(mappedEpisode.episodeTitle) ?? Number(mappedEpisode.episodeNumber);
+  log("info", `Applying offset "${offsets[seasonKey]}" for S${season}E${episode} -> ${targetEpisode}`);
   return targetEpisode;
 }
 
@@ -1528,7 +1531,13 @@ export async function extractTitleSeasonEpisode(cleanFileName, suppliedReleaseGr
   // 同时去掉结尾的视频扩展名（.mkv/.mp4 等）。
   let normalizedFileName = String(cleanFileName || '')
     .replace(/^(?:\s*(?:\[[^\]]+\]|【[^】]+】)\s*)+/, '')
-    .replace(/\.(?:mkv|mp4|avi|mov|wmv)$/i, '');
+    .replace(/\.(?:mkv|mp4|avi|mov|wmv|m4v|ts)$/i, '');
+  // 中文季集与 SxxExx 共用后续解析，避免被当成电影名或检索关键词。
+  const chineseEpisode = normalizedFileName.match(/^(.+?)[.\s_-]*(?:第\s*([\d零一二三四五六七八九十百两]+)\s*季[.\s_-]*)?第\s*([\d零一二三四五六七八九十百两]+)\s*[集话回]/);
+  if (chineseEpisode && !/S\d+[.\s_-]*E\d+/i.test(normalizedFileName)) {
+    const seasonNumber = chineseEpisode[2] ? convertChineseNumber(chineseEpisode[2].replace(/两/g, '二')) : 1;
+    normalizedFileName = `${chineseEpisode[1]} S${seasonNumber}E${convertChineseNumber(chineseEpisode[3].replace(/两/g, '二'))}${normalizedFileName.slice(chineseEpisode[0].length)}`;
+  }
   // A suffix group such as `-ADWeb` is useful as a rule qualifier but must
   // not become part of the search title. Leading bracket groups were removed
   // above; remove only the explicit suffix form to avoid trimming real title
@@ -1541,19 +1550,19 @@ export async function extractTitleSeasonEpisode(cleanFileName, suppliedReleaseGr
   }
   // 第二步：用正则找“剧名 + S季E集”模式。
   // 例："宝可梦 地平线.S01E01" → 前面是剧名，S01=季1，E01=集1
-  const regex = /^(.+?)[.\s]+S(\d+)E(\d+)/i;
+  const regex = /^(.+?)[.\s_-]*S(\d+)[.\s_-]*E(\d+)/i;
   const match = normalizedFileName.match(regex);
 
   let title, season, episode, year;
 
   if (match) {
     // ----- 情况 A：文件名里带 S##E##（最标准、最常见的格式） -----
-    title = match[1].trim();    // 剧名 = S 前面那段
+    title = match[1].replace(/[.\s_-]+$/, '');    // 剧名 = S 前面那段
     season = parseInt(match[2], 10);  // 季数 = S 后面的数字
     episode = parseInt(match[3], 10); // 集数 = E 后面的数字
 
     // 年份位于 SxxExx 前时也支持空格分隔，避免留在剧名里。
-    const titleYear = title.match(/^(.+?)[.\s(（]+((?:19|20)\d{2})[)）]?$/);
+    const titleYear = title.match(/^(.+?)[._\s(（]+((?:19|20)\d{2})[)）]?$/);
     if (titleYear) {
       title = titleYear[1].trim();
       year = Number(titleYear[2]);
@@ -1580,7 +1589,7 @@ export async function extractTitleSeasonEpisode(cleanFileName, suppliedReleaseGr
     // 情况2：开头是英文（欧美剧常见，如 Blood.River）
     else if (/^[A-Za-z0-9]/.test(title)) {
       // 从开头一直取到第一个明显的技术字段或年份之前
-      const engMatch = title.match(/^([A-Za-z0-9.&\s]+?)(?=\.\d{4}|$)/);
+      const engMatch = title.match(/^([A-Za-z0-9._&\s]+?)(?=\.\d{4}|$)/);
       if (engMatch) {
         title = engMatch[1].trim().replace(/[._]/g, ' '); // Blood.River → Blood River（也可以保留.看你喜好）
         // 如果你想保留原样点号，就去掉上面这行 replace
@@ -1616,7 +1625,9 @@ export async function extractTitleSeasonEpisode(cleanFileName, suppliedReleaseGr
     }
   }
 
-  return {title, season, episode, year, releaseGroups};
+  const episodeTitle = match ? normalizedFileName.slice(match[0].length).replace(/^[.\s_-]+/, '')
+    .replace(/(?:^|[.\s_-])(?:\d{3,4}p|WEB(?:-?DL)?|BluRay|HDTV|[xh]\.?26[45]|AAC|DDP|HDR|HEVC)\b.*$/i, '').trim() : '';
+  return {title, season, episode, year, releaseGroups, episodeTitle};
 }
 
 // 综艺文件名里的「第N期[上下]」已经写明了是哪一期，直接用它去官方目录定位即可，
@@ -2079,7 +2090,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
         (body.tmdbId !== undefined && (!/^[1-9]\d*$/.test(String(body.tmdbId)) || !Number.isSafeInteger(Number(body.tmdbId)) || !requestMediaType))) {
       return jsonResponse({ errorCode: 400, success: false, errorMessage: 'Invalid year, mediaType or tmdbId; tmdbId requires mediaType (tv/movie)' }, 400);
     }
-    if (!fileName) {
+    if (typeof fileName !== 'string' || !fileName.trim()) {
       log("error", "[system] [match] Missing fileName parameter in request body");
       return jsonResponse(
         { errorCode: 400, success: false, errorMessage: "Missing fileName parameter" },
@@ -2112,7 +2123,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     const originalTitle = normalizeMatchTitle(parsed.title);
     const originalSeason = parsed.season;
     const originalEpisode = parsed.episode;
-    const fileEpisodeTitle = cleanFileName.match(/(?:\bS\d{1,3}\s*E\d{1,3}|第\s*[\d一二三四五六七八九十百]+\s*[集话期回])\s+(.+?)(?:\.[a-z0-9]{2,4})?$/i)?.[1] || '';
+    const fileEpisodeTitle = parsed.episodeTitle;
     const fileContext = buildUgcRequestContext({ title: parsed.title, year: parsed.year,
       season: originalSeason, episode: originalEpisode, episodeTitle: fileEpisodeTitle, type: '电视剧' });
     const collectionContext = fileContext?.collectionTitle ? fileContext : null;
