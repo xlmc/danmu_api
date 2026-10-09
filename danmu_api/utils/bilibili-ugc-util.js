@@ -16,7 +16,7 @@ const versions = /精编|(?<!未)删减|重制|英文|日语|粤语|配音|特�
 export const MIN_UGC_TITLE_PRECISION = 0.6;
 const RELEASE_DECORATORS = /(?:1080p|720p|4k|2160p|60帧|60fps|高码率|超清|高清|标清|蓝光|bd(?:rip)?|web-?dl|hdr|hevc|h264|h265|x264|x265|aac|中字|简中|繁中|双语|国语|粤语|日语|英语|中英双字|中文字幕|双语字幕|无字|生肉|熟肉|(?:未删减|完整|公映|纯净)+(?:版)?|正片|电影|剧场版|全集|合集|完结|最终话|大结局|自制|搬运|自压|压制|(?:\d{1,2}月)?新番|[^\s【】\[\]()（）]+(?:字幕组|字幕社|汉化组|译制组|压制组|工作组|制作组)|(?:19|20)\d{2}(?:年|版)?|第\s*[\d一二三四五六七八九十百]+\s*[季期部集话回]|s\d+|e\d+|ep\d+|part\s*\d+|\b\d{1,3}\s*期|\b\d{1,3}\b)/gi;
 
-function ugcEpisodeTitles(context) {
+export function ugcEpisodeTitles(context) {
   const title = String(context.episodeTitle || '').replace(/【[^】]+】/g, '')
     .replace(/第\s*[\d一二三四五六七八九十百]+\s*[集话期回]|^(?:S\d+\s*)?E(?:P)?\s*\d+\s*[:：._-]?/gi, '').trim();
   if (/^(?:[上下]\s*[:：]?)?\s*(?:正片|完整版|movie|full)?$/i.test(title)) return [];
@@ -31,7 +31,7 @@ function ugcEpisodeTitles(context) {
 
 function ugcTitleInfo(title) {
   const baseTitle = String(title || '').trim();
-  // 合集名称是检索装饰，年代范围不等于单集年份；续作等真实副标题仍保留。
+  // 合集名称用于检索别名和版本校验，年代范围不等于单集年份；真实副标题仍保留。
   const range = baseTitle.normalize('NFKC').match(/\(((?:19|20)\d{2})\s*[-~～—–]\s*((?:19|20)\d{2})\)\s*$/u);
   const withoutRange = range ? baseTitle.replace(/[（(][^）)]*[）)]\s*$/u, '').trim() : baseTitle;
   const searchTitle = withoutRange.replace(/[:：\s]*(?:(?:黄金时代|黄金|经典|珍藏|典藏|精选|完整|全系列)\s*)?(?:合集|全集|收藏版)\s*$/u, '').trim();

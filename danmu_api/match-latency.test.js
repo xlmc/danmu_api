@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Globals } from './configs/globals.js';
 import { handleRequest } from './worker.js';
-import { matchAniAndEp, searchAnime } from './apis/player-api.js';
+import { getBangumi, matchAniAndEp, searchAnime, searchEpisodes, selectCollectionEpisode } from './apis/player-api.js';
+import { buildUgcRequestContext, ugcSupplement } from './utils/bilibili-ugc-util.js';
 import { addAnime } from './utils/cache-util.js';
 import { getSourceByKey } from './sources/registry.js';
 
@@ -66,6 +67,88 @@ async function waitForCompleteCache() {
   }
   assert.fail('完整搜索未完成缓存');
 }
+
+test('过滤番外保留原集号，自动匹配与分集搜索均能选择98集，缺集不按位置补选', async () => {
+  reset({ SOURCE_ORDER: 'youku', PLATFORM_ORDER: 'youku', TITLE_MAPPING_TABLE: '',
+    BILIBILI_UGC_ENABLED: 'false', TMDB_API_KEY: '', LOG_LEVEL: 'error',
+    EPISODE_TITLE_FILTER: '番外', ENABLE_ANIME_EPISODE_FILTER: 'true' });
+  const data = { animeId: 4283592, bangumiId: 'cangyuan', animeTitle: '沧元图(2023)【动漫】from youku',
+    source: 'youku', type: '动漫', typeDescription: '动漫', startDate: '2023-01-01', episodeCount: 98,
+    links: Array.from({ length: 98 }, (_, i) => ({ id: 10489 + i,
+      title: `【youku】 第${i + 1}集 ${i >= 59 && i <= 65 ? '元初山番外篇' : i === 97 ? '战神' : '正片'}`,
+      url: `https://v.youku.com/v_show/id_cangyuan${i + 1}.html` })) };
+  const restore = installSource('youku', data, async () => [{ title: '沧元图' }]);
+  try {
+    const result = await match('沧元图 S01E98');
+    assert.equal(result.isMatched, true);
+    assert.equal(result.matches[0].episodeTitle, '【youku】 第98集 战神');
+    const details = new Map([['cangyuan', data]]);
+    const catalog = await (await getBangumi('/api/v2/bangumi/cangyuan', details, 'youku')).json();
+    assert.equal(catalog.bangumi.episodes.length, 91);
+    assert.equal(catalog.bangumi.episodes.at(-1).episodeNumber, '98');
+    const episodes = await (await searchEpisodes(new URL('http://localhost/api/v2/search/episodes?anime=沧元图&episode=98'))).json();
+    assert.equal(episodes.animes[0].episodes[0].episodeTitle, '【youku】 第98集 战神');
+    const missing = await matchAniAndEp(1, 60, null, { animes: [data] }, '沧元图',
+      new Request('http://localhost/api/v2/match'), null, null, null, details);
+    assert.equal(missing.resEpisode, null);
+  } finally {
+    restore();
+    Globals.logBuffer = [];
+  }
+});
+
+test('合集文件名保留版本与单集身份，拒绝西部牛仔；UGC不等待慢源且保留Sen原始文件名', async () => {
+  reset({ SOURCE_ORDER: 'tencent,youku', PLATFORM_ORDER: 'tencent,youku', TITLE_MAPPING_TABLE: '',
+    BILIBILI_UGC_ENABLED: 'true', TMDB_API_KEY: '', PROXY_URL: '', LOG_LEVEL: 'info' });
+  const fileName = '猫和老鼠：黄金时代合集（1940-1958） S01E01 甜蜜的家 Puss Gets the Boot';
+  const wrong = { animeId: 7101, bangumiId: 'wrong-collection', source: 'tencent', type: '动漫',
+    animeTitle: '猫和老鼠(1965)【动漫】from tencent', aliases: [], episodeCount: 2,
+    links: [{ url: 'https://v.qq.com/x/cover/test/western.html', title: '【tencent】 第1集 西部牛仔' },
+      { url: 'https://v.qq.com/x/cover/test/other.html', title: '【tencent】 第2集 其他短片' }] };
+  const context = buildUgcRequestContext({ title: '猫和老鼠：黄金时代合集（1940-1958）',
+    season: 1, episode: 1, episodeTitle: '甜蜜的家 Puss Gets the Boot', type: '电视剧' });
+  const earlier = { ...wrong, animeTitle: '猫和老鼠(1940)【动漫】from tencent' };
+  const getEpisodes = anime => anime.links.map(link => ({ episodeTitle: link.title, url: link.url, episodeId: 1 }));
+  assert.equal(selectCollectionEpisode([wrong], context, getEpisodes), null);
+  assert.equal(selectCollectionEpisode([earlier], context, getEpisodes), null);
+  const sameShort = { ...earlier, links: [{ url: 'https://v.qq.com/x/cover/test/puss.html', title: '【tencent】 第3集 Puss Gets The Boot' }] };
+  assert.equal(selectCollectionEpisode([sameShort], context, getEpisodes).resEpisode.episodeTitle, sameShort.links[0].title);
+  const numberedContext = { ...context, episodeTitle: '' };
+  assert.equal(selectCollectionEpisode([earlier], numberedContext, getEpisodes), null);
+  const exactCollection = { ...earlier, animeTitle: context.collectionTitle + '【动漫】from tencent' };
+  assert.equal(selectCollectionEpisode([exactCollection], numberedContext, getEpisodes).resEpisode.episodeTitle, earlier.links[0].title);
+  let release, officialFinished = false, laterSearches = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const restore = installSource('tencent', wrong, async () => { await gate; officialFinished = true; return []; });
+  const restoreLater = installSource('youku', null, async () => { laterSearches++; return []; });
+  const savedPrepare = ugcSupplement.prepare;
+  const comments = [{ p: '1,1,16777215,0', m: '确认短片内容' }];
+  ugcSupplement.prepare = async supplied => {
+    assert.equal(supplied.collectionTitle, context.collectionTitle);
+    assert.deepEqual(supplied.yearRange, [1940, 1958]);
+    assert.equal(supplied.episodeTitle, context.episodeTitle);
+    return { result: { candidates: [{ bvid: 'BV1nD421W7Vx', cid: 1494560729, page: 1,
+      title: context.episodeTitle, part: context.episodeTitle, url: 'https://www.bilibili.com/video/BV1nD421W7Vx/?p=1',
+      evidence: { episodeTitleMatched: true, titlePrecision: 1 } }], accepted: [{ cid: 1494560729, comments,
+        timeline: { status: 'metadata-matched', offsetSeconds: 0, validRange: [0, 739] } }], failures: [] } };
+  };
+  try {
+    const req = new Request('http://localhost/87654321/api/v2/match', { method: 'POST',
+      headers: { 'content-type': 'application/json', 'user-agent': 'SenPlayer/test' }, body: JSON.stringify({ fileName }) });
+    const response = await handleRequest(req, Globals.env, 'node', '127.0.0.1');
+    const result = await response.json();
+    assert.equal(result.isMatched, true);
+    assert.equal(result.matches[0].type, 'B站投稿');
+    assert.equal(officialFinished, false);
+    assert.ok(Globals.logBuffer.some(line => line.data?.fileName === fileName && line.data?.userAgent === 'SenPlayer/test'));
+    assert.ok(Globals.logBuffer.some(line => line.message.includes('year-outside-collection')));
+  } finally {
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    restore(); restoreLater(); ugcSupplement.prepare = savedPrepare; Globals.logBuffer = [];
+  }
+  assert.equal(laterSearches, 0);
+});
 
 test('真实命名：紧凑标题映射命中后，腾讯分集季号证据选中第四季第9集', async () => {
   reset();

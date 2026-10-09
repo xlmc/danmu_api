@@ -213,6 +213,10 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   // GET /api/v2/search/anime
   if (path === "/api/v2/search/anime" && method === "GET") {
+    log('info', '[system] [player-request] ' + JSON.stringify({ method, endpoint: path,
+      keyword: url.searchParams.get('keyword'), fileName: url.searchParams.get('fileName'),
+      season: url.searchParams.get('season'), episode: url.searchParams.get('episode'),
+      userAgent: req.headers.get('user-agent'), clientIp }));
     return searchAnime(url, null, null, null, null, false, null, null, null, clientIp);
   }
 
@@ -232,6 +236,10 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   }
 
   // GET /api/v2/match
+  if (path === '/api/v2/match' && method !== 'POST') {
+    log('info', '[system] [player-request] ' + JSON.stringify({ method, endpoint: path,
+      fileName: url.searchParams.get('fileName'), userAgent: req.headers.get('user-agent'), clientIp }));
+  }
   if (path === "/api/v2/match" && method === "POST") {
     return matchAnime(url, req, clientIp);
   }

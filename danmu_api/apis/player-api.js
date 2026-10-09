@@ -4,7 +4,7 @@ import { canonicalPlatformName } from '../utils/platform-util.js';
 import { runWithMatchTrace, traceMatchStep, getMatchTracePrefix } from '../utils/match-trace-util.js';
 import { globals } from '../configs/globals.js';
 import { runWithCommentTransform } from '../utils/comment-context.js';
-import { buildUgcContext, createUgcLogger, ugcSupplement, isUgcApplicable, buildUgcRequestContext, pickUgcEpisode, mergeUgcComments } from '../utils/bilibili-ugc-util.js';
+import { buildUgcContext, createUgcLogger, ugcSupplement, isUgcApplicable, buildUgcRequestContext, pickUgcEpisode, mergeUgcComments, ugcEpisodeTitles } from '../utils/bilibili-ugc-util.js';
 import { getPageTitle, jsonResponse, httpGet, sourceLogContext, runWithHttpCache, httpCacheContext } from '../utils/http-util.js';
 import { log } from '../utils/log-util.js'
 import { logEvent } from '../utils/log-util.js';
@@ -1168,7 +1168,7 @@ function extractPlatformFromTitle(title) {
     return match ? match[1] : null;
 }
 
-// 根据集数匹配episode（优先使用集标题中的集数，其次使用episodeNumber，最后使用数组索引）
+// 根据集数匹配episode（优先使用集标题中的集数，其次使用episodeNumber）
 function findEpisodeByNumber(filteredEpisodes, episode, targetEpisode, platform = null) {
   if (!filteredEpisodes || filteredEpisodes.length === 0) {
     return null;
@@ -1199,20 +1199,9 @@ function findEpisodeByNumber(filteredEpisodes, episode, targetEpisode, platform 
 
   // 策略2：使用episodeNumber字段匹配
   for (const ep of platformEpisodes) {
-    if (ep.episodeNumber && parseInt(ep.episodeNumber, 10) === targetEpisode) {
+    if (extractEpisodeNumberFromTitle(ep.episodeTitle) === null && ep.episodeNumber && parseInt(ep.episodeNumber, 10) === targetEpisode) {
       log("info", `Found episode by episodeNumber: ${ep.episodeTitle} (episodeNumber: ${ep.episodeNumber})`);
       return ep;
-    }
-  }
-
-  // 策略3：最后才按数组索引兜底，避免不同站点的缺集/特别篇导致错位
-  if (targetEpisode > 0 && platformEpisodes.length >= targetEpisode) {
-    const fallbackEp = platformEpisodes[targetEpisode - 1];
-    // 本地上传可能只有第 5、10 集，已标明集数的资源不能按列表位置补成第 1、2 集。
-    const numberedLocalEpisode = fallbackEp?.url?.startsWith('local:') && extractEpisodeNumberFromTitle(fallbackEp.episodeTitle) !== null;
-    if (fallbackEp && !numberedLocalEpisode) {
-      log("info", `Using fallback array index for episode ${targetEpisode}: ${fallbackEp.episodeTitle}`);
-      return fallbackEp;
     }
   }
 
@@ -1758,6 +1747,7 @@ async function executeMatchAttempt(options) {
   let attempt = { resAnime: null, resEpisode: null, spilloverMatched: false,
     title: options.title, season: options.season, episode: options.episode };
   for (const platform of platformOrder) {
+    if (options.collectionRace?.ugcMatched) break;
     const members = new Set(String(platform || '').split(/[&＆]/).map(canonicalPlatformName).filter(Boolean));
     // The final default pass only searches enabled sources not covered by earlier groups.
     const searchSources = globals.sourceOrderArr.filter(source => platform ? members.has(source) : !searchedSources.has(source));
@@ -1787,7 +1777,7 @@ function needsGroupMerge(sources) {
     rule.secondary.source.split('&').some(source => active.has(source)));
 }
 
-async function executeMatchAttemptBody({ req, title, season, episode, year, mediaType = null, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false, tmdbIdentity = null, tmdbEpisode = null, tmdbEpisodeHint = null, fileNameVarietyKey = null, sourceSearches = null, searchSources = null, stagePlatform }) {
+async function executeMatchAttemptBody({ req, title, season, episode, year, mediaType = null, preferredPlatform, secondaryPreferredPlatform, preferAnimeId, preferSource, offsets, mapping, strictTargetTitle = false, tmdbIdentity = null, tmdbEpisode = null, tmdbEpisodeHint = null, fileNameVarietyKey = null, collectionContext = null, sourceSearches = null, searchSources = null, stagePlatform }) {
   if (fileNameVarietyKey && !mediaType) mediaType = 'tv';
   const startedAt = Date.now();
   // A platform-qualified rule describes that platform's numbering. Never
@@ -1801,10 +1791,11 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, medi
   const budget = globals.matchSearchBudgetMs;
   const catalogKey = `${title}_S${season}`;
   const mustCompleteMerge = needsGroupMerge(searchSources ?? globals.sourceOrderArr);
-  const canUseReady = !tmdbEpisode && !mustCompleteMerge && budget > 0 && season && episode && targetPlatform && !preferAnimeId && !offsets &&
+  const canUseReady = !collectionContext && !tmdbEpisode && !mustCompleteMerge && budget > 0 && season && episode && targetPlatform && !preferAnimeId && !offsets &&
     !(mapping?.targetYear || mapping?.targetType || (mapping?.targetTmdbId && !tmdbIdentity));
   const fastDisabledReasons = [];
   if (mustCompleteMerge) fastDisabledReasons.push('先完成当前平台组的源合并');
+  if (collectionContext) fastDisabledReasons.push('合集需要核对版本与单集标题');
   if (!(budget > 0)) fastDisabledReasons.push('搜索预算关闭');
   if (!season || !episode) fastDisabledReasons.push('缺少明确季集');
   if (!targetPlatform) fastDisabledReasons.push('缺少优先平台');
@@ -1882,6 +1873,17 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, medi
 
   if (!searchData?.success || !Array.isArray(searchData.animes) || searchData.animes.length === 0) {
     return { resAnime: null, resEpisode: null, spilloverMatched: false, title, season, episode, cacheWarning };
+  }
+
+  if (collectionContext) {
+    const candidates = searchData.animes.filter(anime => {
+      const reason = workIdentityConflict(anime, { year, mediaType: mediaType || 'tv', tmdbIdentity });
+      if (reason) log('info', `[system] [match-reject] ${anime.animeTitle}，原因=${reason}`);
+      return !reason;
+    });
+    const selected = selectCollectionEpisode(candidates, collectionContext,
+      anime => getBangumiDataForMatch(anime, detailStore)?.bangumi?.episodes || []);
+    return { resAnime: null, resEpisode: null, spilloverMatched: false, ...selected, title, season, episode, cacheWarning };
   }
 
   if (fileNameVarietyKey) {
@@ -1980,6 +1982,45 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, medi
   return { resAnime: null, resEpisode: null, spilloverMatched: false, title, season, episode, cacheWarning };
 }
 
+export function selectCollectionEpisode(animes, context, getEpisodes) {
+  const normalize = title => normalizeTitleForMatch(String(title).normalize('NFKC').toLowerCase());
+  const names = ugcEpisodeTitles(context).map(normalize);
+  const related = new Set([...filterMappingTargetCandidates(animes, { targetTitle: context.title }),
+    ...filterMappingTargetCandidates(animes, { targetTitle: context.collectionTitle })]);
+  const candidates = animes.filter(anime => related.has(anime));
+  for (const anime of candidates) {
+    const candidateYear = extractYear(anime.animeTitle) || Number(String(anime.startDate || '').slice(0, 4));
+    let reason = null;
+    if (context.yearRange && candidateYear &&
+        (candidateYear < context.yearRange[0] || candidateYear > context.yearRange[1])) reason = 'year-outside-collection';
+    const sameCollection = [anime.animeTitle, ...(anime.aliases || [])]
+      .some(title => normalize(String(title).replace(/\s*from\s+.+$/i, '').replace(/【[^】]*】/g, '')) === normalize(context.collectionTitle));
+    if (!names.length && !sameCollection) reason ||= 'collection-version-unconfirmed';
+    if (reason) {
+      logEvent('info', 'match.candidate.reject', `[system] [match-reject] ${anime.animeTitle}，原因=${reason}`,
+        { candidateTitle: anime.animeTitle, reason, collectionTitle: context.collectionTitle, yearRange: context.yearRange });
+      continue;
+    }
+    // 合集编号只在同一合集目录中有效；其他目录必须通过具体短片名确认内容。
+    const episodes = getEpisodes(anime).filter(ep => !globals.episodeTitleFilter.test(ep.episodeTitle));
+    const matching = episodes.filter(ep => names.length
+      ? ugcEpisodeTitles({ episodeTitle: ep.episodeTitle }).some(candidate => {
+        const normalized = normalize(candidate).replace(normalize(context.title), '').trim();
+        return names.includes(normalized);
+      })
+      : extractEpisodeNumberFromTitle(ep.episodeTitle) === context.episode);
+    if (matching.length !== 1) {
+      const reason = matching.length ? 'collection-episode-ambiguous' : 'episode-title-mismatch';
+      logEvent('info', 'match.candidate.reject', `[system] [match-reject] ${anime.animeTitle}，原因=${reason}`,
+        { candidateTitle: anime.animeTitle, reason, episodeTitle: context.episodeTitle, matchingCount: matching.length });
+      continue;
+    }
+    log('info', `[system] [match] 合集分集确认: ${context.collectionTitle} S${context.season}E${context.episode} / ${context.episodeTitle} -> ${anime.animeTitle} / ${matching[0].episodeTitle}`);
+    return { resAnime: anime, resEpisode: matching[0] };
+  }
+  return null;
+}
+
 function normalizeMatchTitle(title) {
   let normalized = String(title || '').trim();
   if (globals.animeTitleSimplified) normalized = simplized(normalized);
@@ -2029,6 +2070,9 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     // 处理请求体中的数据
     // 假设请求体包含一个字段，比如 { query: "anime name" }
     const { fileName } = body;
+    logEvent('info', 'match.request', '[system] [match-trace] 播放器原始请求 ' + JSON.stringify({ fileName,
+      method: req.method, endpoint: '/api/v2/match', userAgent: req.headers.get('user-agent'), clientIp }),
+      { fileName, method: req.method, endpoint: '/api/v2/match', userAgent: req.headers.get('user-agent'), clientIp });
     const requestMediaType = body.mediaType;
     if ((requestMediaType !== undefined && !['tv', 'movie'].includes(requestMediaType)) ||
         (body.year !== undefined && (!Number.isInteger(body.year) || body.year < 1900 || body.year > 2099)) ||
@@ -2068,6 +2112,11 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     const originalTitle = normalizeMatchTitle(parsed.title);
     const originalSeason = parsed.season;
     const originalEpisode = parsed.episode;
+    const fileEpisodeTitle = cleanFileName.match(/(?:\bS\d{1,3}\s*E\d{1,3}|第\s*[\d一二三四五六七八九十百]+\s*[集话期回])\s+(.+?)(?:\.[a-z0-9]{2,4})?$/i)?.[1] || '';
+    const fileContext = buildUgcRequestContext({ title: parsed.title, year: parsed.year,
+      season: originalSeason, episode: originalEpisode, episodeTitle: fileEpisodeTitle, type: '电视剧' });
+    const collectionContext = fileContext?.collectionTitle ? fileContext : null;
+    if (collectionContext) logEvent('info', 'match.collection', '[system] [match-trace] 保留合集身份 ' + JSON.stringify(collectionContext), collectionContext);
     let originalYear = parsed.year || (tmdbIdentity ? (originalSeason > 1 ? tmdbIdentity.seasonYear : tmdbIdentity.year) : null);
     const originalReleaseGroups = parsed.releaseGroups || releaseGroups || [];
 
@@ -2080,6 +2129,8 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     let matchStage = '';
     let localTitleMapping = null;
     let remoteTitleMapping = null;
+    let collectionRace = null;
+    let ugcAttemptPromise = null;
 
     const succeeded = value => Boolean(value?.resAnime && value?.resEpisode);
 
@@ -2087,7 +2138,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     // 才会真正发起，命中后当前平台组直接返回，不再遍历后续平台组。
     let tmdbEpisodeHintPromise = null;
     const tmdbEpisodeHint = () => {
-      if (!tmdbIdentity || originalSeason === 0 || !Number.isInteger(originalSeason) ||
+      if (collectionContext || !tmdbIdentity || originalSeason === 0 || !Number.isInteger(originalSeason) ||
           !Number.isInteger(originalEpisode) || originalEpisode < 1) return Promise.resolve(null);
       tmdbEpisodeHintPromise ||= resolveTmdbEpisodeMetadata(tmdbIdentity, originalSeason, originalEpisode)
         .catch(error => { log('warn', `[system] [match] TMDB 分集提示查询失败: ${error.message}`); return null; });
@@ -2119,10 +2170,12 @@ async function matchAnimeWithTrace(url, req, clientIp) {
         tmdbIdentity,
         tmdbEpisodeHint,
         sourceSearches,
-        strictTargetTitle
+        strictTargetTitle,
+        collectionContext: !strictTargetTitle && !preferAnimeId && !offsets ? collectionContext : null,
+        collectionRace
       }));
-      if (!succeeded(result)) log('info', `[system] [match-waterfall] ${stage} 未得到有效作品与分集，继续回退`);
-      if (succeeded(result)) {
+      if (!succeeded(result) && !collectionRace?.ugcMatched) log('info', `[system] [match-waterfall] ${stage} 未得到有效作品与分集，继续回退`);
+      if (succeeded(result) && !collectionRace?.ugcMatched) {
         matchStage = stage;
         log('info', `[system] [match-waterfall] ${stage} 实际匹配成功，停止后续匹配`);
       }
@@ -2221,7 +2274,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     }
 
     const tryTmdbEpisodePath = async () => {
-      if (!tmdbIdentity || !Number.isInteger(originalSeason) || !Number.isInteger(originalEpisode)) return;
+      if (collectionContext || !tmdbIdentity || !Number.isInteger(originalSeason) || !Number.isInteger(originalEpisode)) return;
       const label = originalSeason === 0 ? 'TMDB 特别篇' : 'TMDB 普通分集';
       let metadata = null;
       try {
@@ -2245,9 +2298,9 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       if (!globals.bilibiliUgcEnabled || !Number.isInteger(originalEpisode) || originalEpisode < 1) return null;
       const isMovie = originalSeason === null || (originalEpisode === 1 && originalSeason === 1 && !parsed.season && !parsed.episode);
       const context = buildUgcRequestContext({
-        title: tmdbIdentity?.title || originalTitle, aliases: tmdbIdentity?.aliases || [],
+        title: collectionContext ? originalTitle : tmdbIdentity?.title || originalTitle, aliases: tmdbIdentity?.aliases || [],
         year: originalYear, season: originalSeason, episode: originalEpisode, tmdbIdentity,
-        episodeTitle: cleanFileName.match(/(?:\bS\d{1,3}\s*E\d{1,3}|第\s*[\d一二三四五六七八九十百]+\s*[集话期回])\s+(.+?)(?:\.[a-z0-9]{2,4})?$/i)?.[1] || '',
+        episodeTitle: fileEpisodeTitle,
         type: isMovie ? '电影' : '电视剧'
       });
       if (!context) return null;
@@ -2334,7 +2387,27 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     if (!succeeded(attempt) && originalSeason !== 0) {
       const [preferAnimeId, preferSource, offsets] = globals.rememberLastSelect
         ? getPreferAnimeId(originalTitle, originalSeason) : [null, null, null];
-      attempt = await tryTitlePath({ stage: tmdbIdentity ? 'TMDB 作品直接搜索' : '本机普通匹配', title: tmdbIdentity?.title || originalTitle, preferAnimeId, preferSource, offsets }) || attempt;
+      const options = { stage: tmdbIdentity ? 'TMDB 作品直接搜索' : '本机普通匹配',
+        title: collectionContext?.title || tmdbIdentity?.title || originalTitle, preferAnimeId, preferSource, offsets };
+      if (collectionContext && ugcEpisodeTitles(collectionContext).length && globals.bilibiliUgcEnabled &&
+          !preferredPlatform && !preferAnimeId && !offsets) {
+        // 已有具体短片身份时，两边仍各自校验；返回最先确认的内容，不等所有平台失败。
+        collectionRace = { ugcMatched: false };
+        ugcAttemptPromise = traceMatchStep(log, '合集单集投稿并行匹配', tryUgcFallback);
+        const ordinary = tryTitlePath(options);
+        let winner = await Promise.race([
+          ordinary.then(value => ({ kind: 'official', value })),
+          ugcAttemptPromise.then(value => ({ kind: 'ugc', value }))
+        ]);
+        if (!succeeded(winner.value)) winner = winner.kind === 'official'
+          ? { kind: 'ugc', value: await ugcAttemptPromise }
+          : { kind: 'official', value: await ordinary };
+        attempt = winner.value || attempt;
+        if (succeeded(attempt) && winner.kind === 'ugc') {
+          collectionRace.ugcMatched = true;
+          matchStage = '合集单集投稿快速匹配';
+        }
+      } else attempt = await tryTitlePath(options) || attempt;
     }
 
     // 文件名已经写明「第N期[上下]」时直接用它在官方目录里定位，先不问 TMDB：
@@ -2348,7 +2421,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       if (succeeded(attempt)) matchStage = '文件名期号对应平台分集';
     }
 
-    if (!succeeded(attempt) && !tmdbIdentity && !tmdbIdentityAttempted && (globals.tmdbApiKey || globals.proxyUrl)) {
+    if (!succeeded(attempt) && !collectionContext && !tmdbIdentity && !tmdbIdentityAttempted && (globals.tmdbApiKey || globals.proxyUrl)) {
       tmdbIdentityAttempted = true;
       try { tmdbIdentity = await traceMatchStep(log, 'TMDB 辅助识别', () => resolveTmdbMatchIdentity(parsed)); }
       catch (error) { log('warn', '[system] [match] TMDB 辅助识别失败: ' + error.message); }
@@ -2377,7 +2450,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     if (!succeeded(attempt) && tmdbIdentity && originalSeason !== 0) await tryTmdbEpisodePath();
 
     if (!succeeded(attempt) && originalSeason !== 0) {
-      const ugcAttempt = await traceMatchStep(log, 'B站投稿兜底', tryUgcFallback);
+      const ugcAttempt = await (ugcAttemptPromise ||= traceMatchStep(log, 'B站投稿兜底', tryUgcFallback));
       if (ugcAttempt) { attempt = ugcAttempt; matchStage = 'B站投稿兜底'; }
     }
 
@@ -2560,7 +2633,7 @@ export async function searchEpisodes(url, clientIp = null) {
           // 纯数字，仅保留指定集数
           const targetEpisode = parseInt(episode);
           filteredEpisodes = bangumiData.bangumi.episodes.filter(ep =>
-            parseInt(ep.episodeNumber) === targetEpisode
+            (extractEpisodeNumberFromTitle(ep.episodeTitle) ?? parseInt(ep.episodeNumber)) === targetEpisode
           );
         }
       }
@@ -2621,7 +2694,7 @@ function buildBangumiData(anime, idParam = "") {
       seasonId: `season-${anime.animeId}`,
       episodeId: link.id,
       episodeTitle: `${link.title}`,
-      episodeNumber: `${anime.source === 'local' || anime.type === 'B站投稿' ? (extractEpisodeNumberFromTitle(link.title) ?? i + 1) : i + 1}`,
+      episodeNumber: `${extractEpisodeNumberFromTitle(link.title) ?? i + 1}`,
       airDate: anime.startDate,
       url: link.url || ""
     });
@@ -2645,11 +2718,7 @@ function buildBangumiData(anime, idParam = "") {
       };
     }
 
-    // 重新排序episodeNumber
-    episodesList = episodesList.map((episode, index) => ({
-      ...episode,
-      episodeNumber: anime.source === 'local' ? episode.episodeNumber : `${index+1}`
-    }));
+    // 过滤只删除条目，保留原集号，不能用剩余列表的位置改写分集身份。
   }
 
   const bangumi = Bangumi.fromJson({
