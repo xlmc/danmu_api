@@ -139,7 +139,7 @@ test('同一弹幕缓存随人物名单热更新，其他作品仍屏蔽角色',
   const key = await personCacheIdentity([title, '', '', '', Boolean(Globals.envs.useBangumiData)]);
   await cachedPersonSource(`${key}:identity`, async () => ({ id: 990099, media_type: 'tv', name: title,
     original_language: 'zh', origin_country: ['CN'], genre_ids: [] }), () => true);
-  await cachedPersonSource(`${key}:tv/990099:credits`, async () => ({ actorNames: ['黄景瑜', '于和伟', '陆川'], characterNames: ['张小凡'] }), () => true);
+  await cachedPersonSource(`${key}:tv/990099:credits-v2`, async () => ({ actorNames: ['黄景瑜', '于和伟', '陆川'], characterNames: ['张小凡'] }), () => true);
   await cachedPersonSource(`${key}:wiki`, async () => ({ actorNames: [], characterNames: [] }), () => true);
   Globals.animes = [{ animeTitle: title, links: [{ id: 990099, url }] }];
   Globals.commentCache = new Map();

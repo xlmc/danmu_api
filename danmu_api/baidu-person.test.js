@@ -6,6 +6,7 @@ import { getDomesticPersonMetadataForTitle } from './utils/tmdb-util.js';
 import { cachedPersonSource, personCacheIdentity } from './utils/person-source-cache.js';
 import { getComment, getCommentByUrl, getSegmentComment } from './apis/player-api.js';
 import { setCommentCache } from './utils/cache-util.js';
+import { filterDanmusByBlockedNames } from './utils/danmu-util.js';
 
 const castRow = (actor, role) => `<div class="actorItem_example"><dl><dt><a>${actor}</a>&nbsp;饰&nbsp;<span>${role}</span></dt></dl></div>`;
 const html = (title, rows = castRow('方逸伦', '宁长樾'), {year = '2026', region = '中国大陆', type = '电视剧'} = {}) =>
@@ -13,6 +14,50 @@ const html = (title, rows = castRow('方逸伦', '宁长樾'), {year = '2026', r
    <div><dt class="basicInfoItem_test">制片地区</dt><dd>${region}</dd></div>
    <div><dt class="basicInfoItem_test">首播时间</dt><dd>${year}年9月24日<sup>[1]</sup></dd></div>
    <p>剧情提到无关人物，导演也不能当作演员。</p>${rows}`;
+
+test('人物本名和别名从 TMDB 详情及百科演员链接补全，缓存复用且不采集简介人名', async () => {
+  Globals.init({LOG_LEVEL:'error'});
+  const original = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async url => {
+    const path = decodeURIComponent(new URL(url).pathname);
+    calls.push(path);
+    if (path.endsWith('/aggregate_credits')) return Response.json({cast:[
+      {id:990801,name:'演员甲',original_name:'演员甲',roles:[{character:'角色甲'}]},
+      {id:990802,name:'演员乙',roles:[{character:'角色乙'}]},
+    ]});
+    if (path === '/3/person/990801') return Response.json({id:990801,name:'演员甲',also_known_as:['本名甲','演员甲','Former Name']});
+    if (path === '/3/person/990802') return new Response('Forbidden',{status:403});
+    if (path === '/item/演员丙/990803') return new Response('<title>演员丙（中国内地演员）_百度百科</title>'
+      + '<div><dt class="basicInfoItem_test">艺名</dt><dd>演员丙</dd></div>'
+      + '<div><dt class="basicInfoItem_test">本名</dt><dd>本名丙</dd></div>'
+      + '<div><dt class="basicInfoItem_test">别名</dt><dd>别名丙、昵称丙</dd></div>'
+      + '<p>合作演员无关人物，亲属另一人物。</p>');
+    if (path === '/item/演员丁/990804') return new Response('Forbidden',{status:403});
+    return new Response(html('百科别名回归', castRow('<a href="/item/演员丙/990803">演员丙</a>','角色丙')
+      + castRow('<a href="/item/演员丁/990804">演员丁</a>','角色丁')));
+  };
+  try {
+    const key = await personCacheIdentity(['别名回归','2026','','',Boolean(Globals.envs.useBangumiData)]);
+    await cachedPersonSource(`${key}:identity`,async()=>({id:990801,media_type:'tv',name:'别名回归',first_air_date:'2026-01-01'}),()=>true);
+    await cachedPersonSource(`${key}:wiki`,async()=>({actorNames:[],characterNames:[]}),()=>true);
+    const metadata = await getDomesticPersonMetadataForTitle('别名回归(2026)');
+    assert.deepEqual(metadata.actorNames,['演员甲','演员乙','本名甲']);
+    assert.equal(metadata.status,'partial', 'one failed person detail preserves the cast and reports partial data');
+    const again = await getDomesticPersonMetadataForTitle('别名回归(2026)');
+    assert.deepEqual(again.actorNames,metadata.actorNames);
+    assert.equal(calls.filter(path=>path.startsWith('/3/person/')).length,2);
+    const baidu = await getBaiduPersonMetadata('百科别名回归','2026','tv');
+    assert.deepEqual(baidu.actorNames,['演员丙','演员丁','本名丙','别名丙','昵称丙']);
+    assert.equal(baidu.aliasesIncomplete,true);
+    await getBaiduPersonMetadata('百科别名回归','2026','tv');
+    assert.equal(calls.filter(path=>path==='/item/演员丙/990803').length,1);
+    assert.equal(calls.filter(path=>path==='/item/演员丁/990804').length,1);
+    const actors = [...metadata.actorNames,...baidu.actorNames];
+    const comments = ['本名甲来了','本名丙来了','别名丙来了','昵称丙来了','无关人物来了','剧情很好看'].map(m=>({m}));
+    assert.deepEqual(filterDanmusByBlockedNames(comments,[],{actorNames:actors}).danmus.map(c=>c.m),['无关人物来了','剧情很好看']);
+  } finally { globalThis.fetch=original; Globals.init({}); }
+});
 
 test('百度演员表只提取姓名，排除注释、简介和空角色', () => {
   const result = extractBaiduPersonMetadata(html('长生契', castRow('方逸伦<sup>[2]</sup>', '宁长樾')
@@ -86,7 +131,7 @@ async function seed(title, actors, roles, {candidate=true, wikiRoles=[]} = {}) {
   const key = await personCacheIdentity([title,'2026','','',Boolean(Globals.envs.useBangumiData)]);
   await cachedPersonSource(`${key}:identity`, async () => candidate ? {id:990701,media_type:'tv',name:title,
     original_language:'zh',origin_country:['CN'],first_air_date:'2026-09-24',genre_ids:[]} : null, value=>Boolean(value));
-  if (candidate) await cachedPersonSource(`${key}:tv/990701:credits`,async()=>({actorNames:actors,characterNames:roles}),()=>true);
+  if (candidate) await cachedPersonSource(`${key}:tv/990701:credits-v2`,async()=>({actorNames:actors,characterNames:roles}),()=>true);
   await cachedPersonSource(`${key}:wiki`,async()=>({actorNames:[],characterNames:wikiRoles}),()=>true);
 }
 

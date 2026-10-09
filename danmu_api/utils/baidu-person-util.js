@@ -2,6 +2,7 @@ import { parse } from 'parse5';
 import { globals } from '../configs/globals.js';
 import { httpGet } from './http-util.js';
 import { simplized } from './zh-util.js';
+import { cachedPersonSource, personCacheIdentity } from './person-source-cache.js';
 
 const BASE = 'https://bkso.baidu.com';
 const normalized = value => simplized(String(value || '').normalize('NFKC')).replace(/[\s\p{P}\p{S}]/gu, '');
@@ -142,6 +143,19 @@ export function extractBaiduPersonMetadata(html, { title, year = '', mediaType =
   return { actorNames: [...actorNames], characterNames: [...characterNames], sourceUrl };
 }
 
+// 只取已确认演员的身份字段，不把人物简介中的亲属、合作演员等姓名混入当前作品。
+export function extractBaiduActorAliases(html, actorName) {
+  const { root, heading } = page(html);
+  const info = basicInfo(root);
+  const names = new Set();
+  const headingName = heading.replace(/（.*?）|\(.*?\)|_百度百科/g, '').trim();
+  for (const value of [headingName, ...['中文名', '本名', '原名', '曾用名', '艺名', '别名'].map(key => info.get(normalized(key)) || '')]) {
+    chineseNames(value).forEach(name => names.add(name));
+  }
+  if (![...names].some(name => normalized(name) === normalized(actorName))) throw new Error('百度百科演员身份不一致');
+  return [...names];
+}
+
 export async function getBaiduPersonMetadata(title, year = '', mediaType = '') {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8000);
@@ -156,7 +170,7 @@ export async function getBaiduPersonMetadata(title, year = '', mediaType = '') {
   try {
     let url = `${BASE}/item/${encodeURIComponent(title)}`;
     let html = await read(url);
-    const { root } = page(html);
+    let { root } = page(html);
     const links = descendants(root, 'a').filter(node => attr(node, 'href').includes('fromModule=disambiguation'));
     if (links.length) {
       const choices = new Set(links.filter(node => isWorkDescription(text(node), mediaType)
@@ -166,7 +180,28 @@ export async function getBaiduPersonMetadata(title, year = '', mediaType = '') {
       if (choices.size !== 1) throw new Error('百度百科同名作品无法唯一匹配');
       url = [...choices][0];
       html = await read(url);
+      root = page(html).root;
     }
-    return extractBaiduPersonMetadata(html, { title, year, mediaType, sourceUrl: url });
+    const result = extractBaiduPersonMetadata(html, { title, year, mediaType, sourceUrl: url });
+    const actors = new Map();
+    for (const link of descendants(root, 'a')) {
+      const name = text(link).trim();
+      if (!result.actorNames.includes(name) || !attr(link, 'href')) continue;
+      const target = new URL(attr(link, 'href'), BASE);
+      if (!['bkso.baidu.com', 'baike.baidu.com'].includes(target.hostname) || !/^\/item\/[^/]+\/\d+$/.test(target.pathname)) continue;
+      actors.set(name, `${BASE}${target.pathname}`);
+    }
+    const actorLinks = [...actors];
+    for (let i = 0; i < actorLinks.length; i += 5) {
+      const aliases = await Promise.all(actorLinks.slice(i, i + 5).map(async ([name, actorUrl]) => {
+        const key = await personCacheIdentity(['baidu-actor-alias-v1', name, actorUrl, globals.proxyUrl || '']);
+        return cachedPersonSource(`${key}:actor-aliases`, async () => extractBaiduActorAliases(await read(actorUrl), name), Array.isArray);
+      }));
+      for (const alias of aliases) {
+        result.actorNames = [...new Set([...result.actorNames, ...(alias.value || [])])];
+        if (alias.stale) result.aliasesIncomplete = true;
+      }
+    }
+    return result;
   } finally { clearTimeout(timer); }
 }

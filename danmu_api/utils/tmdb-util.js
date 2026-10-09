@@ -364,10 +364,27 @@ export async function getDomesticPersonMetadataForTitle(title) {
         const response = readTmdbData(await tmdbApiGet(
           `${candidate.media_type}/${candidate.id}/${creditsPath}?${tmdbQuery({ language: 'zh-CN' })}`));
         if (!Array.isArray(response?.cast)) throw new Error('TMDB 演员表获取失败');
-        return extractTmdbChineseCastNames(response, candidate.media_type);
+        const names = extractTmdbChineseCastNames(response, candidate.media_type);
+        const ids = [...new Set(response.cast.filter(person => Number.isInteger(person.id) && person.id > 0).map(person => person.id))];
+        // 演员表不含本名/别名；按人物 ID 补详情，缓存跨作品复用，分批避免同时请求整个演员表。
+        for (let i = 0; i < ids.length; i += 5) {
+          const aliases = await Promise.all(ids.slice(i, i + 5).map(async id => {
+            const key = await personCacheIdentity(['tmdb-person-alias-v1', id, globals.tmdbApiKey || '', globals.proxyUrl || '']);
+            return cachedPersonSource(`${key}:person-aliases`, async () => {
+              const person = readTmdbData(await tmdbApiGet(`person/${id}?${tmdbQuery({ language: 'zh-CN' })}`));
+              if (person?.id !== id || !Array.isArray(person.also_known_as)) throw new Error('TMDB 人物详情缺少有效别名字段');
+              return [...new Set([person.name, ...person.also_known_as].map(normalizeTmdbChineseName).filter(Boolean))];
+            }, value => Array.isArray(value));
+          }));
+          for (const result of aliases) {
+            names.actorNames = [...new Set([...names.actorNames, ...(result.value || [])])];
+            if (result.stale) names.aliasesIncomplete = true;
+          }
+        }
+        return names;
       };
       const [creditsResult, bangumiResult, wikiResult] = await Promise.all([
-        candidate ? cachedPersonSource(`${cacheKey}:${candidate.media_type}/${candidate.id}:credits`, creditsLoader, value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames) && value.actorNames.length + value.characterNames.length > 0) : Promise.resolve({ value: null, stale: true }),
+        candidate ? cachedPersonSource(`${cacheKey}:${candidate.media_type}/${candidate.id}:credits-v2`, creditsLoader, value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames) && value.actorNames.length + value.characterNames.length > 0, value => !value.aliasesIncomplete) : Promise.resolve({ value: null, stale: true }),
         isAnimation ? cachedPersonSource(`${cacheKey}:bangumi`, () => getBangumiCharacterNames(bangumiTitle),
           value => Array.isArray(value?.names) && value.names.length > 0, value => !value.incomplete) : Promise.resolve(null),
         cachedPersonSource(`${cacheKey}:wiki`, async () => {
@@ -415,7 +432,7 @@ export async function getDomesticPersonMetadataForTitle(title) {
       if (resolved.characterNames.length === 0 || resolved.actorNames.length === 0) {
         const baiduTitle = context.hasSeason ? searchTitle : sourceTitle;
         const baiduYear = context.hasSeason ? year : sourceYear;
-        const baiduResult = await cachedPersonSource(`${cacheKey}:baidu-v1`,
+        const baiduResult = await cachedPersonSource(`${cacheKey}:baidu-v2`,
           async () => {
             let res = null;
             let reason = '';
@@ -435,7 +452,7 @@ export async function getDomesticPersonMetadataForTitle(title) {
           },
           value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames)
             && value.actorNames.length + value.characterNames.length > 0,
-          value => value.actorNames.length > 0 || value.characterNames.length > 0);
+          value => !value.aliasesIncomplete && (value.actorNames.length > 0 || value.characterNames.length > 0));
         if (baiduResult.value) {
           const baidu = baiduResult.value;
           // 取并集，而不是只在演员表为空时采用：综艺的百度条目常比 TMDB 的中文演员表全
