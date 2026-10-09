@@ -2479,11 +2479,10 @@ async function matchAnimeWithTrace(url, req, clientIp) {
 
     if (globals.bilibiliUgcEnabled && resEpisode?.url?.includes(MERGE_DELIMITER) && resAnime.type !== 'B站投稿') {
       try {
-        const prefetch = startUgcPrefetch(resEpisode.episodeId, resEpisode.url, false);
         const comments = await fetchMergedComments(resEpisode.url, resAnime.animeTitle, resEpisode.episodeId);
         const cacheKey = resolveCommentCacheKey(resEpisode.url);
         const cachedAddedCount = globals.commentCache.get(cacheKey)?.ugcAddedCount || 0;
-        const supplemented = await supplementUgcForEpisode(resEpisode.episodeId, resEpisode.url, comments, false, prefetch?.logger, prefetch);
+        const supplemented = await supplementUgcForEpisode(resEpisode.episodeId, resEpisode.url, comments, false);
         if (supplemented.length > comments.length) {
           setCommentCache(cacheKey, supplemented);
           const cached = globals.commentCache.get(cacheKey);
@@ -2965,27 +2964,7 @@ export function getComment(path, queryFormat, segmentFlag, clientIp, includeDura
   return runWithCommentTransform(() => getCommentResponse(path, queryFormat, segmentFlag, clientIp, includeDuration));
 }
 
-// UGC 只需要作品/集号信息，不必等主源弹幕到手：在抓弹幕之前就把检索发起，随后再合并。
-// 只对「非B站主源」预取——B站主源要先按弹幕数量决定是否补充，保持原来的串行顺序。
-function startUgcPrefetch(commentId, url, segmentFlag) {
-  if (!globals.bilibiliUgcEnabled || segmentFlag) return null;
-  if (globals.danmuOffsetRules?.length) return null;
-  const parts = String(url).split(MERGE_DELIMITER);
-  if (parts.some(part => stripLinkOffset(part).offset)) return null;
-  // 与 supplementUgcForEpisode 里的 ref 判定保持一致：只剥「来源:」前缀，不能把 https: 也剥掉。
-  const bilibiliPrimary = parts.some(part => /^bilibili:/i.test(part)
-    || /^https:\/\/www\.bilibili\.com\/(?:video\/BV|bangumi\/play\/ep)/.test(part));
-  if (bilibiliPrimary) return null;
-  const context = buildUgcContext(resolveEpisodeContextById(commentId));
-  if (!context) return null;
-  const logger = createUgcLogger(context);
-  const task = ugcSupplement.prepare(context, { budgetMs: globals.bilibiliUgcBudgetMs, logger, prefetch: true });
-  // 若后续因其它原因跳过合并（例如弹幕不是数组），避免出现未处理的拒绝。
-  task.catch(() => {});
-  return { task, logger };
-}
-
-async function supplementUgcForEpisode(commentId, url, comments, segmentFlag, suppliedLogger = null, ugcPrefetch = null) {
+async function supplementUgcForEpisode(commentId, url, comments, segmentFlag, suppliedLogger = null) {
   const context = buildUgcContext(resolveEpisodeContextById(commentId));
   const logger = suppliedLogger || createUgcLogger(context || { title: findAnimeTitleById(commentId) });
   const skip = reason => {
@@ -2999,18 +2978,17 @@ async function supplementUgcForEpisode(commentId, url, comments, segmentFlag, su
   // Preserve user-selected timing rather than mix aligned UGC with shifted originals.
   if (globals.danmuOffsetRules?.length || String(url).split(MERGE_DELIMITER).some(p => stripLinkOffset(p).offset)) return skip('manual-offset');
   const UGC_THIN_THRESHOLD = 1000;
+  if (comments.length >= UGC_THIN_THRESHOLD) return skip('sufficient-comments');
   const parts = String(url).split(MERGE_DELIMITER);
   const ref = parts.map(p => p.replace(/^bilibili:/, '')).find(p => /^https:\/\/www\.bilibili\.com\/(video\/BV|bangumi\/play\/ep)/.test(p));
   if (ref) {
-    if (comments.length >= UGC_THIN_THRESHOLD) return skip('sufficient-comments');
     context.referenceUrl = ref;
   }
-  logger('trigger', ref ? 'B站单集弹幕不足1000条，触发UGC补充' : '非B站主源，触发UGC补充',
+  logger('trigger', ref ? 'B站单集弹幕不足1000条，触发UGC补充' : '主源单集弹幕不足1000条，触发UGC补充',
     { commentId, reason: ref ? 'thin-bilibili' : 'non-bilibili', originalCount: comments.length, threshold: UGC_THIN_THRESHOLD, referenceMode: ref ? 'primary' : 'candidate' });
   const started = performance.now();
   try {
-    const augmented = await ugcSupplement.supplement(context, comments, { budgetMs: globals.bilibiliUgcBudgetMs, logger,
-      ...(ugcPrefetch?.task ? { prepared: ugcPrefetch.task } : {}) });
+    const augmented = await ugcSupplement.supplement(context, comments, { budgetMs: globals.bilibiliUgcBudgetMs, logger });
     const original = new Set(comments);
     const originalKeys = new Set(comments.map(c => c.p + '\u0000' + c.m));
     const additions = augmented === comments ? [] : augmented.filter(c => !original.has(c) && !originalKeys.has(c.p + '\u0000' + c.m));
@@ -3032,12 +3010,11 @@ async function supplementUgcForEpisode(commentId, url, comments, segmentFlag, su
 
 
 
-async function supplementAndFilterForEpisode(commentId, url, comments, animeTitle, pendingMetadata, ugcPrefetch = null) {
+async function supplementAndFilterForEpisode(commentId, url, comments, animeTitle, pendingMetadata) {
   const context = buildUgcContext(resolveEpisodeContextById(commentId));
-  // 预取已经开了 ugc-id，沿用同一个，日志里只出现一条流程。
-  const logger = ugcPrefetch?.logger || createUgcLogger(context || { title: animeTitle });
+  const logger = createUgcLogger(context || { title: animeTitle });
   const started = performance.now();
-  const supplemented = await supplementUgcForEpisode(commentId, url, comments, false, logger, ugcPrefetch);
+  const supplemented = await supplementUgcForEpisode(commentId, url, comments, false, logger);
   const filtered = await applyDomesticCelebrityFilter(supplemented, animeTitle, pendingMetadata);
   const originalKeys = new Set(comments.map(c => c.p + '\u0000' + c.m));
   const addedCount = filtered.filter(c => !originalKeys.has(c.p + '\u0000' + c.m)).length;
@@ -3098,9 +3075,6 @@ async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, incl
   if (singleUrlOffset !== 0) {
     log("info", `[system] [LogVar-API] 检测到链接${singleUrlOffsetPercent ? '百分比' : ''}偏移: ${singleUrlOffset}s`);
   }
-
-  // UGC 检索与主源弹幕抓取并行：两者互不依赖，串行会让首帧多等一次检索（冷启动可达数秒）。
-  const ugcPrefetch = startUgcPrefetch(commentId, url, segmentFlag);
 
   if (url && url.includes(MERGE_DELIMITER)) {
     danmus = await fetchMergedComments(url, animeTitle, commentId);
@@ -3252,7 +3226,7 @@ async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, incl
         setCommentCache(cacheKey, danmus);
     }
     // 缓存原始结果，确保关闭演员屏蔽开关后不会继续返回已过滤的旧缓存。
-    danmus = await supplementAndFilterForEpisode(commentId, url, danmus, animeTitle, pendingMetadata, ugcPrefetch);
+    danmus = await supplementAndFilterForEpisode(commentId, url, danmus, animeTitle, pendingMetadata);
   }
 
   const responseData = buildDanmuResponse(

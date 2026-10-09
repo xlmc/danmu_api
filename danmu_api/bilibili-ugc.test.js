@@ -207,7 +207,7 @@ test('episode context inherits existing metadata and does not invent a season', 
   const resolved = { anime: { animeId: 3, source: 'tencent', bangumiId: 'cover', animeTitle: '测试作品', aliases: ['Alias'], startDate: '2020-01-01' }, link: { title: '测试作品_05', url: 'https://v.qq.com/x/a' }, index: 4 };
   assert.equal(buildUgcContext(resolved).episode, 5); assert.equal(buildUgcContext(resolved).season, null); assert.equal(buildUgcContext(null), null);
 });
-test('ugc gate: bilibili thin triggers supplement; bilibili rich skips; non-bilibili always supplements', async () => {
+test('ugc gate: thin sources trigger supplement; rich sources skip', async () => {
   Globals.init({ BILIBILI_UGC_ENABLED: 'true', BLOCK_DOMESTIC_CELEBRITIES: 'false', LOG_LEVEL: 'info', REMEMBER_LAST_SELECT: 'false' });
   Globals.animes = []; Globals.episodeIds = []; Globals.commentCache = new Map(); Globals.searchCache = new Map();
   let calls = 0;
@@ -245,7 +245,7 @@ test('ugc gate: bilibili thin triggers supplement; bilibili rich skips; non-bili
     assert(Globals.logBuffer.some(e => e.event === 'ugc.response' && e.data.addedCount === 1 && e.data.finalCount === 1000));
   } finally { biliSource2.getComments = orig2; }
 
-  // 3. Non-bilibili primary source (tencent) → UGC always runs
+  // 3. Non-bilibili primary source (tencent), thin pool → UGC runs
   Globals.animes = []; Globals.episodeIds = []; Globals.commentCache = new Map(); Globals.searchCache = new Map(); calls = 0;
   const tencent = getSourceByKey('tencent'), originalTencentComments = tencent.getComments;
   const nonBiliUrl = 'https://v.qq.com/x/cover/test-series/ep005.html';
@@ -273,6 +273,37 @@ test('ugc gate: bilibili thin triggers supplement; bilibili rich skips; non-bili
   } finally {
     tencent.getComments = originalTencentComments;
     ugcSupplement.supplement = originalSupplement;
+    Globals.animes = []; Globals.episodeIds = []; Globals.commentCache = new Map();
+  }
+});
+
+test('rich Tencent comments skip UGC search and supplement on cold and cached requests', async () => {
+  Globals.init({ BILIBILI_UGC_ENABLED: 'true', BLOCK_DOMESTIC_CELEBRITIES: 'false', LOG_LEVEL: 'info', REMEMBER_LAST_SELECT: 'false' });
+  Globals.animes = []; Globals.episodeIds = []; Globals.commentCache = new Map(); Globals.searchCache = new Map();
+  const tencent = getSourceByKey('tencent'), originalComments = tencent.getComments;
+  const originalPrepare = ugcSupplement.prepare, originalSupplement = ugcSupplement.supplement;
+  let searches = 0, supplements = 0, fetches = 0;
+  ugcSupplement.prepare = async () => { searches++; return {}; };
+  ugcSupplement.supplement = async (ctx, base) => { supplements++; return base; };
+  tencent.getComments = async () => {
+    fetches++;
+    return Array.from({ length: 1000 }, (_, i) => ({ p: `${i + 1},1,25,0`, m: `弹幕${i}` }));
+  };
+  try {
+    assert(addAnime({ animeId: 20, bangumiId: 'cover-20', animeTitle: '美人余(2026)【电视剧】', source: 'tencent', startDate: '2026-01-01',
+      links: [{ id: 23456, title: '第1集', url: 'https://v.qq.com/x/cover/test-series/ep001.html' }] }));
+    const commentId = Globals.animes[0].links[0].id;
+    for (let i = 0; i < 2; i++) {
+      const response = await getComment(`/api/v2/comment/${commentId}`, 'json', false, '127.0.0.1');
+      assert.equal((await response.json()).count, 1000);
+    }
+    assert.equal(fetches, 1, 'second request uses cached primary comments');
+    assert.equal(searches, 0, 'sufficient comments never start a UGC search');
+    assert.equal(supplements, 0, 'sufficient comments never run a UGC supplement');
+    assert(Globals.logBuffer.some(e => e.event === 'ugc.skip' && e.data.reason === 'sufficient-comments' && e.data.originalCount === 1000));
+  } finally {
+    tencent.getComments = originalComments;
+    ugcSupplement.prepare = originalPrepare; ugcSupplement.supplement = originalSupplement;
     Globals.animes = []; Globals.episodeIds = []; Globals.commentCache = new Map();
   }
 });
