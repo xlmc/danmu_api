@@ -425,9 +425,10 @@ test('UGC metadata-only path never requests media and logs truthful final counts
     const service = createUgcSupplement(deps), base = [{ p: '1,1,25,0', m: '原有' }];
     assert.equal((await service.supplement(context, base)).length, 2);
     const rows = Globals.logBuffer.filter(e => e.event?.startsWith('ugc.'));
-    for (const event of ['start', 'search.query', 'search.result', 'candidate.select', 'mode', 'candidate.comments', 'candidate.accept', 'end']) {
+    for (const event of ['start', 'search.start', 'search.end', 'candidate.select', 'mode', 'candidate.comments', 'candidate.accept', 'end']) {
       assert(rows.some(e => e.event === 'ugc.' + event), event);
     }
+    assert(!rows.some(e => ['ugc.search.query', 'ugc.search.result', 'ugc.candidate.reject', 'ugc.candidate.detail', 'ugc.candidate.fetch'].includes(e.event)));
     assert.equal(new Set(rows.map(e => e.data.ugcId)).size, 1);
     assert(rows.every(e => e.categories.includes('match') && e.data.title === context.title && e.data.episode === 5));
     const end = rows.find(e => e.event === 'ugc.end');

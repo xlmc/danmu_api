@@ -125,17 +125,18 @@ function renderMatchLogs(entries) {
   let groups=[...ids].map(id=>{
     const rows=logs.filter(e=>e.requestId===id);
     const last=event=>rows.filter(e=>e.event===event).at(-1)?.data;
-    return { id,rows,identity:last('match.identity'),result:last('match.result'),returned:last('match.return'),fast:last('match.fast') };
+    return { id,rows,request:last('match.request'),identity:last('match.identity'),result:last('match.result'),returned:last('match.return'),fast:last('match.fast') };
   });
   if(logViewState.sort==='slow')groups.sort((a,b)=>(b.returned?.durationMs??-1)-(a.returned?.durationMs??-1));
   else groups.reverse();
   return groups.map(g=>{
-    const {rows,identity,result,returned,fast}=g; const completeStart=rows.some(e=>e.event==='match.start');
+    const {rows,request,identity,result,returned,fast}=g; const completeStart=rows.some(e=>e.event==='match.start');
     const pending=new Map();for(const e of rows){if(e.event==='step.start')pending.set(e.data.name,e);if(e.event==='step.end')pending.delete(e.data.name);}
     const incomplete=!completeStart || (logConfiguredLevel!=='info' && logConfiguredLevel!=='debug');
     const searchPending=[...pending.keys()].some(n=>n.startsWith('完整搜索'));
     const status=result ? (result.isMatched?'匹配成功':'未匹配') : returned?.status>=400?'请求错误':returned?'结果记录缺失':incomplete?'过程不完整':'尚无返回记录';
-    const title=identity?identity.title + ' S'+(identity.season??'?')+'E'+(identity.episode??'?'):'请求 #'+g.id;
+    const title=identity?identity.title + ' S'+(identity.season??'?')+'E'+(identity.episode??'?'):request?.fileName || '请求 #'+g.id;
+    const requestInfo=request?'<pre>'+escapeLogHTML('原始文件名：'+request.fileName+'\n播放器：'+(request.userAgent || '未提供'))+'</pre>':'';
     const steps=rows.filter(e=>e.event==='step.end'&&!e.data.source);
     const sourceSteps=rows.filter(e=>e.event==='step.end'&&e.data.source);
     const sourceNames=[...new Set(sourceSteps.map(e=>e.data.source).concat([...pending.values()].map(e=>e.data.source).filter(Boolean)))];
@@ -145,7 +146,7 @@ function renderMatchLogs(entries) {
       const failed=done.some(e=>e.data.status==='failed');
       return '<div class="lv-source-time"><span>'+escapeLogHTML(logSources[source]||source)+'</span><span>'+logDuration(ms)+(waiting?' + 未结束阶段':'')+'</span><span>'+ (failed?'阶段失败':waiting?'尚未结束':'阶段已结束')+'</span></div>';
     }).join('');
-    return '<details class="lv-request" data-log-open="request:'+g.id+'" '+(logOpenIds.has('request:'+g.id)?'open':'')+'><summary><span class="lv-request-name">'+escapeLogHTML(title)+'<small>'+escapeLogHTML(result?.stage||'阶段记录待确认')+(returned&&searchPending?' · 匹配已返回，其余来源仍在搜索':'')+'</small></span><span class="lv-status '+(result?.isMatched?'lv-success':'')+'">'+status+'</span><strong>'+logDuration(returned?.durationMs)+'</strong></summary><div class="lv-detail">'+(incomplete?'<p class="lv-note">过程不完整：起始日志已淘汰或当前日志级别未保留完整过程。</p>':'')+(fast?'<p class="lv-note">快速路径：'+(fast.enabled?'启用 · 预算 '+fast.budgetMs+' ms':'未启用 · '+escapeLogHTML(fast.reasons.join('、')))+'</p>':'')+steps.map(e=>'<div class="lv-step"><span>'+escapeLogHTML(e.data.name)+'</span><span>'+ (e.data.status==='failed'?'失败 · ':'')+logDuration(e.data.durationMs)+'</span></div>').join('')+(sourceRows?'<div class="lv-source-times"><div class="lv-note">本次来源阶段累计耗时 · 各来源并行，不相加计算响应时间</div>'+sourceRows+'</div>':'')+(result?.matches?.length?'<p>最终选择：'+escapeLogHTML(result.matches.map(m=>m.animeTitle+' / '+m.episodeTitle).join('、'))+'</p>':'')+'<div class="lv-actions"><button type="button" class="btn btn-small" data-log-context="'+g.id+'">查看本次全部日志</button><button type="button" class="btn btn-small" data-log-copy="request:'+g.id+'">复制本次日志</button><span class="lv-note">#'+g.id+'</span></div></div></details>';
+    return '<details class="lv-request" data-log-open="request:'+g.id+'" '+(logOpenIds.has('request:'+g.id)?'open':'')+'><summary><span class="lv-request-name">'+escapeLogHTML(title)+'<small>'+escapeLogHTML(logTime(rows[0].timestamp))+(request?.userAgent?' · '+escapeLogHTML(request.userAgent):'')+' · '+escapeLogHTML(result?.stage||'阶段记录待确认')+(returned&&searchPending?' · 匹配已返回，其余来源仍在搜索':'')+'</small></span><span class="lv-status '+(result?.isMatched?'lv-success':'')+'">'+status+'</span><strong>'+logDuration(returned?.durationMs)+'</strong></summary><div class="lv-detail">'+requestInfo+(incomplete?'<p class="lv-note">过程不完整：起始日志已淘汰或当前日志级别未保留完整过程。</p>':'')+(fast?'<p class="lv-note">快速路径：'+(fast.enabled?'启用 · 预算 '+fast.budgetMs+' ms':'未启用 · '+escapeLogHTML(fast.reasons.join('、')))+'</p>':'')+steps.map(e=>'<div class="lv-step"><span>'+escapeLogHTML(e.data.name)+'</span><span>'+ (e.data.status==='failed'?'失败 · ':'')+logDuration(e.data.durationMs)+'</span></div>').join('')+(sourceRows?'<div class="lv-source-times"><div class="lv-note">本次来源阶段累计耗时 · 各来源并行，不相加计算响应时间</div>'+sourceRows+'</div>':'')+(result?.matches?.length?'<p>最终选择：'+escapeLogHTML(result.matches.map(m=>m.animeTitle+' / '+m.episodeTitle).join('、'))+'</p>':'')+'<div class="lv-actions"><button type="button" class="btn btn-small" data-log-context="'+g.id+'">查看本次全部日志</button><button type="button" class="btn btn-small" data-log-copy="request:'+g.id+'">复制本次日志</button><span class="lv-note">#'+g.id+'</span></div></div></details>';
   }).join('') || '<div class="lv-empty">暂无匹配追踪记录。完整过程需要 LOG_LEVEL=info 或 debug。</div>';
 }
 function renderLogs() {

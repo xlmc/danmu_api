@@ -445,7 +445,7 @@ function allocateEpisode(url, title) {
           || globals.episodeIds.some(episode => episode.id === existingEpisode.id && episode.url !== url)) {
             throw new Error('剧集 ID 映射无效，请清理剧集缓存后重试');
         }
-        log("info", `[cache] Episode with URL ${url} and title ${title} already exists in episodeIds, returning existing episode.`);
+        log("debug", `[cache] Episode with URL ${url} and title ${title} already exists in episodeIds, returning existing episode.`);
         return existingEpisode; // 返回已存在的 episode
     }
 

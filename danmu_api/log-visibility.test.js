@@ -7,6 +7,26 @@ import { Globals } from './configs/globals.js';
 import { handleRequest } from './worker.js';
 import vm from 'node:vm';
 import { logviewJsContent } from './ui/js/logview.js';
+import { createUgcLogger } from './utils/bilibili-ugc-util.js';
+
+test('投稿筛选细节不会挤掉默认级别的播放器请求，debug仍可查看细节', () => {
+  Globals.init({ LOG_LEVEL: 'info' }); Globals.logBuffer = [];
+  try {
+    logEvent('info', 'match.request', '[system] 播放器请求', { fileName: '猫和老鼠 S01E01' });
+    const logger = createUgcLogger({ title: '猫和老鼠', episode: 1 });
+    for (let i = 0; i < Globals.MAX_LOGS + 1; i++) logger('candidate.reject', '投稿初筛拒绝', { reason: 'non-content' });
+    logger('search.end', '检索结束', { discovered: 500, eligible: 8 });
+    logger('candidate.failure', '投稿详情获取失败', {}, 'warn');
+    assert.deepEqual(Globals.logBuffer.map(e => e.event), ['match.request', 'ugc.search.end', 'ugc.candidate.failure']);
+    assert.equal(Globals.logBuffer.at(-1).level, 'warn');
+    Globals.init({ LOG_LEVEL: 'debug' });
+    for (const event of ['search.query', 'search.result', 'candidate.reject', 'candidate.detail', 'candidate.fetch']) {
+      logger(event, '调试细节');
+      assert.equal(Globals.logBuffer.at(-1).level, 'debug');
+      assert.equal(Globals.logBuffer.at(-1).event, 'ugc.' + event);
+    }
+  } finally { Globals.init({}); }
+});
 
 test('前端保留未知来源，拒绝将不安全请求编号插入追踪界面', () => {
   const context = vm.createContext({ window: {} });

@@ -145,7 +145,7 @@ async function mapConcurrent(items, limit, worker) {
 let ugcLogSequence = 0;
 export function createUgcLogger(context = {}) {
   const ugcId = Date.now().toString(36) + '-' + (++ugcLogSequence).toString(36);
-  const logger = (event, message, data = {}, level = 'info') => logEvent(level, 'ugc.' + event,
+  const logger = (event, message, data = {}, level = ['search.query', 'search.result', 'candidate.reject', 'candidate.detail', 'candidate.fetch'].includes(event) ? 'debug' : 'info') => logEvent(level, 'ugc.' + event,
     '[ugc] [ugc-id=' + ugcId + '] 「' + (context.title || '未知作品') + '」第' + (context.episode ?? '?') + '集 ' + message,
     { ...data, ugcId, identity: context.identity, title: context.title, year: context.year, mediaType: context.mediaType, season: context.season, episode: context.episode });
   logger.ugcId = ugcId;
