@@ -1390,9 +1390,15 @@ function findBestAlignmentOffset(
     });
     const seasonShift = (minNormalA !== null && minNormalB !== null) ? (minNormalA - minNormalB) : null;
 
-    // 集号基准：两侧正片的最小集号相同，说明双方采用同一套编号。基准不同（一方本季从 1 起、另一方承接
-    // 上一季顺延编号）时，同一号码落在双方各自不同的集上，此时号码相等不构成集号对齐的证据。
-    const sharesEpisodeBase = (seasonShift === 0);
+    // 缺首集也会改变最小集号。多个同号集覆盖较短目录的多数时，保留同号对齐的优先级；
+    // 跨季顺延编号仅在边界偶然重合一集时，不给予零偏移奖励。
+    const normalNumbers = infos => new Set(infos
+        .filter(({ info }) => info.num !== null && !info.isSpecial && Number.isInteger(info.num))
+        .map(({ info }) => info.num));
+    const numbersA = normalNumbers(pInfos), numbersB = normalNumbers(sInfos);
+    const sharedCount = [...numbersA].filter(num => numbersB.has(num)).length;
+    const sharesEpisodeBase = seasonShift === 0 ||
+        (sharedCount > 1 && sharedCount > Math.min(numbersA.size, numbersB.size) / 2);
 
     // 动态计算搜索范围，以估算的季度偏移为中心向外延伸
     const baseRange  = 15;

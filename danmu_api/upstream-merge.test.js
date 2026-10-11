@@ -637,3 +637,25 @@ test('merge applyMergeLogic 映射表集路由下的配音版本链接选择', a
     Globals.init({ LOG_LEVEL: 'error' });
   }
 });
+
+test('merge applyMergeLogic 首集缺失仍按同号集对齐（主副源双向）', async () => {
+  const full = Array.from({ length: 13 }, (_, i) => i + 1);
+  const build = (id, source, nums) => ({
+    animeId: id, bangumiId: String(id), animeTitle: '缺首集番剧(2026)【TV动画】from ' + source,
+    aliases: [], source, type: 'TV动画', typeDescription: 'TV动画', startDate: '2026-04-05', episodeCount: nums.length,
+    links: nums.map(num => ({ title: '【' + source + '】 第' + num + '集', url: source + ':' + num }))
+  });
+  for (const missingPrimary of [true, false]) {
+    Globals.init({ LOG_LEVEL: 'error', MERGE_SOURCE_PAIRS: 'tencent&youku', LOCAL_CACHE_ENABLED: 'false', LOCAL_REDIS_URL: '' });
+    const primary = build(1, 'tencent', missingPrimary ? full.slice(1) : full);
+    const secondary = build(2, 'youku', missingPrimary ? full : full.slice(1));
+    Globals.animes = [primary, secondary];
+    await applyMergeLogic([primary, secondary]);
+    const merged = Globals.animes.find(a => a.animeTitle.includes('from tencent&youku'));
+    assert.ok(merged);
+    const pairs = merged.links.map(l => String(l.url)).filter(url => url.includes('$$$'));
+    assert.equal(pairs.length, 12);
+    assert.deepEqual(pairs, full.slice(1).map(num => 'tencent:' + num + '$$$youku:' + num));
+    assert.equal(merged.links.length, 13);
+  }
+});
