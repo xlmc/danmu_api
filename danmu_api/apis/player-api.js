@@ -2002,7 +2002,8 @@ export function selectCollectionEpisode(animes, context, getEpisodes) {
   for (const anime of candidates) {
     const candidateYear = extractYear(anime.animeTitle) || Number(String(anime.startDate || '').slice(0, 4));
     let reason = null;
-    if (context.yearRange && candidateYear &&
+    // 重编合集的目录年份不代表其中短片的年份；有单集名时按内容身份确认。
+    if (!names.length && context.yearRange && candidateYear &&
         (candidateYear < context.yearRange[0] || candidateYear > context.yearRange[1])) reason = 'year-outside-collection';
     const sameCollection = [anime.animeTitle, ...(anime.aliases || [])]
       .some(title => normalize(String(title).replace(/\s*from\s+.+$/i, '').replace(/【[^】]*】/g, '')) === normalize(context.collectionTitle));
@@ -2329,7 +2330,8 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       const logger = createUgcLogger(context);
       if (context.collectionTitle) logger('match.keyword', '从合集名称提取检索词：' + context.title,
         { collectionTitle: context.collectionTitle, keyword: context.title, yearRange: context.yearRange, episodeTitle: context.episodeTitle });
-      logger('match.start', '官方源未命中，尝试 B站投稿兜底', { season: originalSeason, episode: originalEpisode });
+      logger('match.start', collectionRace ? '与正式源并行准备 B站投稿' : '官方源未命中，尝试 B站投稿兜底',
+        { season: originalSeason, episode: originalEpisode, mode: collectionRace ? 'parallel' : 'fallback' });
       let found = null;
       try {
         const prepared = await ugcSupplement.prepare(context, { budgetMs: UGC_MATCH_BUDGET_MS, logger });
@@ -2404,8 +2406,21 @@ async function matchAnimeWithTrace(url, req, clientIp) {
           !preferredPlatform && !preferAnimeId && !offsets) {
         // 已有具体短片身份时，两边仍各自校验；返回最先确认的内容，不等所有平台失败。
         collectionRace = { ugcMatched: false };
-        ugcAttemptPromise = traceMatchStep(log, '合集单集投稿并行匹配', tryUgcFallback);
-        const ordinary = tryTitlePath(options);
+        const raceStarted = performance.now();
+        let selectedKind = null;
+        const completed = {};
+        const recordCompletion = (kind, value) => {
+          completed[kind] = { durationMs: Math.round(performance.now() - raceStarted),
+            matched: Boolean(succeeded(value)), episodeId: value?.resEpisode?.episodeId ?? null };
+          logEvent('info', 'match.parallel.complete', `[system] [match-parallel] ${kind} 完成，${selectedKind ? `已选择 ${selectedKind}` : '尚未选择'}`,
+            { kind, ...completed[kind], selectedKind, completedAfterSelection: selectedKind !== null });
+          return value;
+        };
+        logEvent('info', 'match.parallel.start', '[system] [match-parallel] 正式源与UGC同时启动',
+          { episodeTitle: fileEpisodeTitle, ugcBudgetMs: UGC_MATCH_BUDGET_MS });
+        ugcAttemptPromise = traceMatchStep(log, '合集单集投稿并行匹配', tryUgcFallback)
+          .then(value => recordCompletion('ugc', value));
+        const ordinary = tryTitlePath(options).then(value => recordCompletion('official', value));
         let winner = await Promise.race([
           ordinary.then(value => ({ kind: 'official', value })),
           ugcAttemptPromise.then(value => ({ kind: 'ugc', value }))
@@ -2414,6 +2429,11 @@ async function matchAnimeWithTrace(url, req, clientIp) {
           ? { kind: 'ugc', value: await ugcAttemptPromise }
           : { kind: 'official', value: await ordinary };
         attempt = winner.value || attempt;
+        selectedKind = succeeded(winner.value) ? winner.kind : 'none';
+        logEvent('info', 'match.parallel.choice', `[system] [match-parallel] 最终选择 ${selectedKind}，按先成功返回，未比较弹幕数量`,
+          { selectedKind, durationMs: Math.round(performance.now() - raceStarted),
+            official: completed.official || { pending: true }, ugc: completed.ugc || { pending: true },
+            reason: 'first-success', episodeId: winner.value?.resEpisode?.episodeId ?? null });
         if (succeeded(attempt) && winner.kind === 'ugc') {
           collectionRace.ugcMatched = true;
           matchStage = '合集单集投稿快速匹配';
@@ -2961,7 +2981,21 @@ async function fetchMergedComments(url, animeTitle, commentId) {
 
 // Extracted function for GET /api/v2/comment/:commentId
 export function getComment(path, queryFormat, segmentFlag, clientIp, includeDuration = false) {
-  return runWithCommentTransform(() => getCommentResponse(path, queryFormat, segmentFlag, clientIp, includeDuration));
+  return runWithMatchTrace(async () => {
+    const started = performance.now();
+    const commentId = parseInt(path.split('/').pop());
+    logEvent('info', 'comment.start', '[system] [comment-timing] 开始获取弹幕', { commentId, segment: Boolean(segmentFlag) });
+    try {
+      const response = await runWithCommentTransform(() => getCommentResponse(path, queryFormat, segmentFlag, clientIp, includeDuration));
+      logEvent('info', 'comment.return', '[system] [comment-timing] 弹幕请求返回',
+        { commentId, status: response.status, durationMs: Math.round(performance.now() - started) });
+      return response;
+    } catch (error) {
+      logEvent('warn', 'comment.failure', '[system] [comment-timing] 弹幕请求失败',
+        { commentId, reason: error.message, durationMs: Math.round(performance.now() - started) });
+      throw error;
+    }
+  });
 }
 
 async function supplementUgcForEpisode(commentId, url, comments, segmentFlag, suppliedLogger = null) {
@@ -3055,6 +3089,8 @@ async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, incl
   const cacheKey = resolveCommentCacheKey(url);
   const cachedComments = segmentFlag ? null : getCommentCache(cacheKey);
   if (cachedComments !== null) {
+    logEvent('info', 'comment.base', '[system] [comment-timing] 已有弹幕命中缓存，接下来判断是否补充UGC',
+      { commentId, cacheHit: true, count: cachedComments.length, durationMs: 0 });
     const filteredCachedComments = await supplementAndFilterForEpisode(commentId, url, cachedComments, animeTitle, pendingMetadata);
     const responseData = buildDanmuResponse(
       { count: filteredCachedComments.length, comments: filteredCachedComments },
@@ -3065,6 +3101,7 @@ async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, incl
 
   log("info", "[system] [LogVar-API] 开始从本地请求弹幕...", url);
   let danmus = [];
+  const upstreamStarted = performance.now();
   const durationPromise = shouldAttachDuration ? resolveMergedDuration(url) : null;
 
   // 提取单链接偏移值（@秒数 / @%百分比）
@@ -3125,6 +3162,9 @@ async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, incl
 
   }
 
+  logEvent('info', 'comment.base', '[system] [comment-timing] 来源弹幕获取完成',
+    { commentId, cacheHit: false, segment: Boolean(segmentFlag), count: Array.isArray(danmus) ? danmus.length : null,
+      durationMs: Math.round(performance.now() - upstreamStarted) });
   if (segmentFlag) danmus = attachFilterContext(danmus, animeTitle, url);
 
   // 单链接偏移值应用（合并链接已在 fetchMergedComments 中按来源分别应用，此处仅处理单链接）

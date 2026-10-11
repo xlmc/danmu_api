@@ -6,6 +6,27 @@ import { addAnime } from './utils/cache-util.js';
 import { getComment, isMovieFeatureFilmEpisode } from './apis/player-api.js';
 import { getSourceByKey } from './sources/registry.js';
 import { handleConfig, handleClearCache } from './apis/system-api.js';
+import BilibiliSource from './sources/bilibili.js';
+
+test('UGC XML pool decodes comments and falls back on an invalid response', async () => {
+  const originalFetch = globalThis.fetch;
+  const source = new BilibiliSource(), url = 'https://www.bilibili.com/combine?cid55=0-40';
+  const signal = new AbortController().signal;
+  let fallback = 0;
+  source.getEpisodeSegmentDanmu = async () => { fallback++; return [{ p: '2,1,25,0,0,0,user,2', m: '分段弹幕' }]; };
+  try {
+    globalThis.fetch = async (url, options) => {
+      assert.equal(url, 'https://comment.bilibili.com/55.xml');
+      assert(options.signal);
+      return new Response('<i><d p="1,1,25,0,0,0,user,1">A &amp; B &lt; C</d></i>');
+    };
+    assert.deepEqual(await source.getEpisodeDanmu(url, { signal, xmlCid: 55 }), [{ p: '1,1,25,0,0,0,user,1', m: 'A & B < C' }]);
+    assert.equal(fallback, 0);
+    globalThis.fetch = async () => new Response('<html>verification</html>');
+    assert.equal((await source.getEpisodeDanmu(url, { signal, xmlCid: 55 }))[0].m, '分段弹幕');
+    assert.equal(fallback, 1);
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 // UGC 的适用范围：番剧/国外剧、以及弹幕本来就少的国外平台；
 // 国内官方平台命中的国产剧/综艺不参与，画像未知时保守不参与。
@@ -203,6 +224,68 @@ test('network errors and bounded timeout return original comments', async () => 
     assert.strictEqual(await createUgcSupplement(d).supplement(context, base, { budgetMs: 10 }), base);
   }
 });
+test('one failed search preserves other successful keywords', async () => {
+  const deps = dependencies();
+  let searches = 0;
+  const service = createUgcSupplement({ ...deps, json: async url => {
+    if (url.includes('/search/type') && ++searches === 1) throw new Error('search disconnected');
+    return deps.json(url);
+  } });
+  const { result } = await service.prepare(context, { logger: () => {} });
+  assert.equal(result.accepted.length, 1);
+  assert(result.failures.some(failure => failure.reason === 'search disconnected'));
+});
+
+test('failed and verification-only searches are not cached as empty matches', async () => {
+  for (const reason of ['network unavailable', 'ugc-search-verification-required']) {
+    const deps = dependencies();
+    let failing = true, searches = 0;
+    const service = createUgcSupplement({ ...deps, json: async url => {
+      if (url.includes('/search/type')) {
+        searches++;
+        if (failing) {
+          if (reason === 'network unavailable') throw new Error(reason);
+          return { code: 0, data: { v_voucher: 'verification-required' } };
+        }
+      }
+      return deps.json(url);
+    } });
+    const first = await service.prepare(context, { logger: () => {} });
+    assert.equal(first.result.accepted.length, 0);
+    assert(first.result.failures.some(failure => failure.reason === reason));
+    if (reason === 'ugc-search-verification-required') assert(searches <= 3, '验证受限后停止剩余搜索');
+    failing = false;
+    const retry = await service.prepare(context, { logger: () => {} });
+    assert.equal(retry.cacheState, 'miss', reason);
+    assert.equal(retry.result.accepted.length, 1, reason);
+  }
+});
+
+test('empty precise candidates continue to later aliases and reuse the confirmed CID', async () => {
+  const searched = [], downloaded = [];
+  const deps = dependencies();
+  const service = createUgcSupplement({ source: { ...deps.source, getEpisodeDanmu: async url => {
+    downloaded.push(url);
+    return url.includes('cid56=') ? [{ p: '5,1,25,0', m: '有效弹幕' }] : [];
+  } }, json: async url => {
+    const parsed = new URL(url), keyword = parsed.searchParams.get('keyword');
+    if (keyword) {
+      searched.push(keyword);
+      const bvid = keyword === '测试作品 相逢' ? 'BVempty' : keyword.startsWith('Test Series') ? 'BVusable' : null;
+      return { code: 0, data: { result: bvid ? [{ bvid, title: '测试作品 第2季 第5集 相逢' }] : [] } };
+    }
+    const bvid = parsed.searchParams.get('bvid');
+    return { code: 0, data: { ...video('测试作品 第2季 第5集 相逢', [
+      { cid: bvid === 'BVempty' ? 55 : 56, page: 1, part: '相逢', duration: 40 }
+    ]), bvid } };
+  } });
+  const result = await service.resolve(context, { logger: () => {} });
+  assert.equal(searched[0], '测试作品 相逢');
+  assert(searched.some(keyword => keyword.startsWith('Test Series')));
+  assert.deepEqual(result.accepted.map(candidate => candidate.cid), [56]);
+  assert.deepEqual(downloaded, ['https://www.bilibili.com/combine?cid55=0-40', 'https://www.bilibili.com/combine?cid56=0-40']);
+});
+
 test('episode context inherits existing metadata and does not invent a season', () => {
   const resolved = { anime: { animeId: 3, source: 'tencent', bangumiId: 'cover', animeTitle: '测试作品', aliases: ['Alias'], startDate: '2020-01-01' }, link: { title: '测试作品_05', url: 'https://v.qq.com/x/a' }, index: 4 };
   assert.equal(buildUgcContext(resolved).episode, 5); assert.equal(buildUgcContext(resolved).season, null); assert.equal(buildUgcContext(null), null);

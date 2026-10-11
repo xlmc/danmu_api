@@ -9,6 +9,20 @@ import vm from 'node:vm';
 import { logviewJsContent } from './ui/js/logview.js';
 import { createUgcLogger } from './utils/bilibili-ugc-util.js';
 
+test('数字令牌脱敏不会破坏投稿 ID，嵌套字符串仍脱敏且不修改原数据', () => {
+  Globals.init({ TOKEN: '5432', LOG_LEVEL: 'info' }); Globals.logBuffer = [];
+  const data = { cid: 987654321, nested: [{ url: 'http://example.test/5432/api', count: 5432 }] };
+  const before = structuredClone(data);
+  try {
+    const logger = createUgcLogger({ title: '测试作品', episode: 1 });
+    assert.doesNotThrow(() => logger('candidate.select', '投稿身份已匹配', data));
+    const entry = Globals.logBuffer.at(-1);
+    assert.equal(entry.data.cid, 987654321);
+    assert.deepEqual(entry.data.nested, [{ url: 'http://example.test/****/api', count: 5432 }]);
+    assert.deepEqual(data, before);
+  } finally { Globals.init({}); }
+});
+
 test('投稿筛选细节不会挤掉默认级别的播放器请求，debug仍可查看细节', () => {
   Globals.init({ LOG_LEVEL: 'info' }); Globals.logBuffer = [];
   try {

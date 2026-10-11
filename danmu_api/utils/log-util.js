@@ -47,7 +47,9 @@ export function log(level, ...args) {
   const timestamp = shanghaiTime.toISOString().replace('Z', '+08:00');
 
   const metadata = getLogMetadata(message);
-  const data = event ? JSON.parse(hideSensitiveInfo(JSON.stringify(metadataArg.data))) : undefined;
+  // 仅脱敏字符串值；替换序列化后的数字会破坏 JSON，使日志异常中断业务请求。
+  const data = event ? JSON.parse(JSON.stringify(metadataArg.data,
+    (_, value) => typeof value === 'string' ? hideSensitiveInfo(value) : value)) : undefined;
   if (data?.source) data.source = normalizeLogSource(data.source);
   const source = data?.source || metadata.source;
   if (source && !metadata.categories.includes('source')) metadata.categories.push('source');

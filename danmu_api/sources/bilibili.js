@@ -76,7 +76,7 @@ export default class BilibiliSource extends BaseSource {
   /**
    * 获取 WBI mixin key（带缓存）
    */
-  async _getWbiMixinKey() {
+  async _getWbiMixinKey(signal) {
     const now = Math.floor(Date.now() / 1000);
     const cache = BilibiliSource.WBI_MIXIN_KEY_CACHE;
 
@@ -88,6 +88,7 @@ export default class BilibiliSource extends BaseSource {
 
     try {
       const navResp = await httpGet("https://api.bilibili.com/x/web-interface/nav", {
+        signal,
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
           "Referer": "https://www.bilibili.com/",
@@ -965,8 +966,30 @@ export default class BilibiliSource extends BaseSource {
     return { cid, aid, duration, title };
   }
 
-  async getEpisodeDanmu(id) {
+  async getEpisodeDanmu(id, { signal, xmlCid } = {}) {
     log("info", "[bilibili] 开始从本地请求B站弹幕...", id);
+
+    // UGC 已确认分P身份；XML 池可能比分段接口返回更多弹幕，失败再走原分段路径。
+    if (xmlCid) {
+      try {
+        const response = await httpGet(`https://comment.bilibili.com/${xmlCid}.xml`, {
+          headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://www.bilibili.com/', Cookie: globals.bilibliCookie || '' },
+          signal, retries: 0, quiet: true
+        });
+        const xml = response.data;
+        if (typeof xml !== 'string' || !/<i(?:\s|>)/.test(xml) || !xml.includes('</i>')) throw new Error('invalid-danmaku-xml');
+        const comments = [...xml.matchAll(/<d\b[^>]*\bp="([^"]+)"[^>]*>([\s\S]*?)<\/d>/g)].map(match => {
+          const p = decodeHtmlEntities(match[1]);
+          if (p.split(',').length < 8 || !Number.isFinite(Number(p.split(',')[0]))) throw new Error('invalid-danmaku-xml-row');
+          return { p, m: decodeHtmlEntities(match[2]) };
+        });
+        log('info', `[bilibili] XML弹幕池取得 ${comments.length} 条，CID=${xmlCid}`);
+        if (comments.length) return comments;
+      } catch (error) {
+        signal?.throwIfAborted();
+        log('warn', `[bilibili] XML弹幕获取失败，回退分段接口：${error.message}`);
+      }
+    }
 
     // 获取弹幕分段数据
     const segmentResult = await this.getEpisodeDanmuSegments(id);
@@ -982,10 +1005,12 @@ export default class BilibiliSource extends BaseSource {
     let contents = [];
 
     for (let i = 0; i < segmentList.length; i += BATCH_SIZE) {
+        signal?.throwIfAborted();
         const batch = segmentList.slice(i, i + BATCH_SIZE);
-        const promises = batch.map(segment => this.getEpisodeSegmentDanmu(segment).then(d => ({status: 'ok', value: d})).catch(e => ({status: 'err', error: e})));
+        const promises = batch.map(segment => this.getEpisodeSegmentDanmu(segment, { signal }).then(d => ({status: 'ok', value: d})).catch(e => ({status: 'err', error: e})));
 
         const results = await Promise.all(promises);
+        signal?.throwIfAborted();
         let stop = false;
 
         for (const res of results) {
@@ -1101,13 +1126,14 @@ export default class BilibiliSource extends BaseSource {
    * 获取单段弹幕数据
    * 包含就地拦截元数据并进行时间轴平移与截取的能力
    */
-  async getEpisodeSegmentDanmu(segment) {
+  async getEpisodeSegmentDanmu(segment, { signal } = {}) {
     try {
       // 提取被附加到 URL hash 中的元数据
       const urlObj = new URL(segment.url);
       const rawUrl = segment.url.split('#')[0];
 
       const response = await httpGet(rawUrl, {
+        signal,
         headers: {
           "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
           "Cookie": globals.bilibliCookie

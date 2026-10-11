@@ -193,13 +193,36 @@ test('合集文件名保留版本与单集身份，拒绝西部牛仔；UGC不�
     assert.equal(result.matches[0].type, 'B站投稿');
     assert.equal(officialFinished, false);
     assert.ok(Globals.logBuffer.some(line => line.data?.fileName === fileName && line.data?.userAgent === 'SenPlayer/test'));
-    assert.ok(Globals.logBuffer.some(line => line.message.includes('year-outside-collection')));
+    assert.ok(Globals.logBuffer.some(line => line.message.includes('episode-title-mismatch')));
   } finally {
     release();
     await new Promise(resolve => setImmediate(resolve));
     restore(); restoreLater(); ugcSupplement.prepare = savedPrepare; Globals.logBuffer = [];
   }
   assert.equal(laterSearches, 0);
+});
+
+test('合集短片按单集名跨目录年份和集号匹配，缺少名称或同名重复时拒绝', async () => {
+  reset({ SOURCE_ORDER: 'youku', PLATFORM_ORDER: 'youku', TITLE_MAPPING_TABLE: '',
+    TMDB_API_KEY: '', BILIBILI_UGC_ENABLED: 'false', LOG_LEVEL: 'error' });
+  const data = { animeId: 7102, bangumiId: 'tom-jerry-reordered', source: 'youku', type: '动漫',
+    animeTitle: '猫和老鼠(1965)【动漫】from youku', episodeCount: 3,
+    links: [[1, '西部牛仔'], [31, '幽灵又出现'], [34, '甜蜜的家']].map(([n, title]) => ({
+      url: `https://v.youku.com/v_show/id_${n}.html`, title: `【youku】 第${n}集 ${title}` })) };
+  const restore = installSource('youku', data);
+  try {
+    for (const [episode, name, target] of [[1, '甜蜜的家 Puss Gets the Boot', 34], [4, '幽灵又出现 Fraidy Cat', 31]]) {
+      const result = await match(`猫和老鼠：黄金时代合集（1940-1958） S01E${episode} ${name}`);
+      assert.equal(result.isMatched, true);
+      assert.ok(result.matches[0].episodeTitle.includes(`第${target}集`));
+    }
+    const context = buildUgcRequestContext({ title: '猫和老鼠：黄金时代合集（1940-1958）',
+      season: 1, episode: 1, episodeTitle: '甜蜜的家 Puss Gets the Boot' });
+    const episodes = anime => anime.links.map(link => ({ episodeTitle: link.title }));
+    assert.equal(selectCollectionEpisode([data], { ...context, episodeTitle: '' }, episodes), null);
+    assert.equal(selectCollectionEpisode([{ ...data, links: [...data.links, data.links[2]] }], context, episodes), null);
+    assert.equal(selectCollectionEpisode([{ ...data, animeTitle: '其他动画(1965)【动漫】from youku' }], context, episodes), null);
+  } finally { restore(); }
 });
 
 test('真实命名：紧凑标题映射命中后，腾讯分集季号证据选中第四季第9集', async () => {
