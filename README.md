@@ -6,6 +6,18 @@
 
 保留官方视频平台、韩剧 TV（hanjutv）、人人视频（renren）、规则匹配和缓存，以及配置、日志和缓存管理。已移除其余第三方弹幕源、360、本地弹幕、收藏、推送、接口调试、AI、Upstash 和云部署管理。具体配置以文档为准。
 
+### 主要功能
+
+- **搜索与自动匹配**：按文件名识别作品、年份、季号和集号，支持标题映射、季集修正及手动选择记忆；需要时通过 TMDB 辅助确认作品和分集。
+- **多源弹幕**：默认启用腾讯、爱奇艺、优酷、芒果、B站，可配置来源顺序、多源合并与时间偏移。还支持咪咕、搜狐、乐视、红果、韩剧 TV、人人视频和巴哈姆特，需在 `SOURCE_ORDER` 中启用。
+- **B站投稿补充**：UGC 指用户投稿视频。可通过 `BILIBILI_UGC_ENABLED` 开启投稿检索、匹配兜底和弹幕补充，默认关闭；不同剪辑版本的时间轴仍需核对。
+- **过滤与显示**：支持屏蔽词、正则、当前作品演员/角色名过滤、去重、简繁转换和渐变扩展。人物过滤默认关闭；文字渐变需要播放器支持。
+- **管理与缓存**：提供配置、匹配追踪、日志与缓存管理；查询快照可保存到本地文件或可选本地 Redis，普通搜索和弹幕缓存保存在内存。
+
+### 快速导航
+
+[首次部署](#nas-首次部署) · [播放器接入](#播放器接入) · [常用配置](#常用配置) · [已有部署迁移](#从已有部署迁移) · [日常更新](#日常更新) · [常见问题](#常见问题)
+
 | 内容 | 文档 |
 | --- | --- |
 | 每个版本的功能、修复、风险 | [自用版本说明](SELF_USE_CHANGELOG.md) |
@@ -13,6 +25,7 @@
 | 播放器渐变字段、绘制接入与降级 | [播放器渐变接入指南](docs/player-gradient-integration.md) |
 | iOS / Android / PC 的通用模型、缓存与绘制接入 | [客户端通用渐变接入](docs/client-gradient-integration.md) |
 | API、环境变量、弹幕来源 | [配置参考](docs/configuration.md) |
+| 人物过滤的百度百科补充规则 | [百度百科人物补充](docs/person-filter-baidu.md) |
 | 旧部署迁移、测试与回滚 | [部署说明](docs/deployment.md) |
 | 上游同步、分支与发布流程 | [维护说明](docs/maintenance.md) |
 | 历史变更 | [旧更新日志](CHANGELOG.md) |
@@ -63,6 +76,51 @@ docker compose -f compose.nas.yml logs --tail=100
 
 保持鉴权开启，不要直接将 API 端口暴露到公网。配置、缓存数据和备份应仅保存在自己的设备上。
 
+## 播放器接入
+
+将下列占位内容替换为自己的 NAS 地址、宿主端口和令牌。播放器使用 `TOKEN`；配置修改、缓存清理和 Cookie 保存使用独立的 `ADMIN_TOKEN`。
+
+| 用途 | 地址 |
+| --- | --- |
+| 查看管理界面 | `http://<NAS_IP>:<NAS_HTTP_PORT>/<TOKEN>` |
+| 管理操作入口 | `http://<NAS_IP>:<NAS_HTTP_PORT>/<ADMIN_TOKEN>` |
+| 弹幕服务基础地址 | `http://<NAS_IP>:<NAS_HTTP_PORT>/<TOKEN>` |
+| 完整 API 前缀 | `http://<NAS_IP>:<NAS_HTTP_PORT>/<TOKEN>/api/v2` |
+| FongMi 兼容接口 | `http://<NAS_IP>:<NAS_HTTP_PORT>/<TOKEN>/api/v2/fongmi/danmaku` |
+
+播放器若自动追加 `/api/v2`，填写基础地址；若要求完整 API 地址，填写完整前缀。具体字段以播放器的设置说明为准。
+
+可用下面的请求检查搜索与文件名匹配。示例中的作品名和文件名可替换为实际内容：
+
+```bash
+curl --get 'http://<NAS_IP>:<NAS_HTTP_PORT>/<TOKEN>/api/v2/search/anime' \
+  --data-urlencode 'keyword=作品名'
+
+curl 'http://<NAS_IP>:<NAS_HTTP_PORT>/<TOKEN>/api/v2/match' \
+  -H 'Content-Type: application/json' \
+  --data '{"fileName":"作品名 S01E01"}'
+```
+
+搜索结果用于继续查询分集，匹配结果用于获取对应弹幕；完整接口及可选年份、类型、TMDB ID 参数见 [配置参考](docs/configuration.md)。
+
+## 常用配置
+
+首次启动以 [config/.env.example](config/.env.example) 为模板，后续可通过管理员入口调整配置。下面只列常用入口，完整格式见 [配置参考](docs/configuration.md)。
+
+| 需求 | 配置项与说明 |
+| --- | --- |
+| 开启或调整来源 | `SOURCE_ORDER`：启用来源及排列顺序 |
+| 优先匹配某些平台 | `PLATFORM_ORDER`：例如 `tencent&youku,bilibili`，先并发搜索腾讯和优酷，未匹配再查B站；平台须已启用 |
+| 合并多个来源 | `MERGE_SOURCE_PAIRS` / `CUSTOM_MERGE_RULES`：`PLATFORM_ORDER` 中的 `&` 只控制并发，不会开启合并 |
+| 修正作品名、季号和集号 | `TITLE_MAPPING_TABLE` / `AUTO_MATCH_MAPPING_TABLE`：本机规则优先；远程映射默认关闭，填写对应 `_URL` 后启用 |
+| 补充B站投稿弹幕 | `BILIBILI_UGC_ENABLED=true`：启用后检索并校验投稿，主源弹幕充足时跳过补充 |
+| 过滤弹幕内容 | `BLOCKED_WORDS`；人物过滤另设 `BLOCK_DOMESTIC_CELEBRITIES`，可用 `PERSON_FILTER_EXCLUDED_TITLES` 排除指定作品 |
+| 修正弹幕时间 | `DANMU_OFFSET`：正数延后、负数提前，可按作品、季、集和来源设置 |
+| 开启渐变扩展 | `GRADIENT_ENABLED` 与 `GRADIENT_CHANCE`：需同时启用并设置概率，播放器绘制方式见接入指南 |
+| 查看详细匹配过程 | `LOG_LEVEL=debug`：排查后可恢复 `info`，减少逐请求日志 |
+
+`data/config/.env` 是服务配置；Compose 项目目录下的 `.env` 用于 `NAS_HTTP_PORT` 等模板变量，两者用途不同。
+
 ## 从已有部署迁移
 
 **迁移的最小改动是：原 Compose 只替换 `image`，其余设置保持不变。** 不需要等待上游合并 PR，也不需要迁移至 Docker Hub。
@@ -86,6 +144,20 @@ docker compose -f compose.nas.yml logs --tail=100 danmu-api
 ```
 
 只有拉取成功后才继续重建。`pull` 只下载镜像，`up -d` 才应用更新；仅 `restart` 不会换用新镜像。**使用 latest 不等于自动更新容器**，本仓库不额外安装定时更新服务。若旧 Compose 文件名或服务名不同，使用原来的名称和项目参数。
+
+## 常见问题
+
+**页面打不开或接口提示鉴权失败？** 先检查容器日志、端口映射和网络连通性，再确认 URL 第一段使用自己的 `TOKEN`。查看页面与执行管理操作使用的令牌不同；提示需要管理员权限时，从 `ADMIN_TOKEN` 入口访问。
+
+**搜索有结果，自动匹配却失败？** 核对播放器实际提交的文件名、年份、季号和集号，以及来源是否启用。自动匹配会校验作品和分集身份，不能确认时会保持未匹配；可先手动选择，再按需添加标题或季集映射。匹配追踪与 `debug` 日志可帮助定位。
+
+**设置了平台并发，为什么没有合并弹幕？** `PLATFORM_ORDER` 控制搜索顺序，合并需另设 `MERGE_SOURCE_PAIRS` 或 `CUSTOM_MERGE_RULES`。自动匹配只合并当前组已搜索的来源，需要合并的来源应放在同一组。
+
+**重启后弹幕缓存消失？** 普通搜索和弹幕缓存仅保存在内存。挂载 `./data/.cache` 保存的是查询快照等数据，不是完整弹幕内容；文件缓存还需 `LOCAL_CACHE_ENABLED=true`。
+
+**开启渐变后仍显示单色？** 服务输出渐变扩展字段，但文字绘制由播放器实现。未支持扩展的播放器使用兼容颜色；XML 仍输出单色，详见 [播放器渐变接入指南](docs/player-gradient-integration.md)。
+
+**拉取 latest 后版本没有变化？** 确认拉取成功并执行 `up -d` 重建容器，`restart` 不会应用新镜像。再检查 [发布记录](https://github.com/xlmc/danmu_api/releases) 和 [构建状态](https://github.com/xlmc/danmu_api/actions/workflows/docker-image.yml)，构建失败不会更新 latest。
 
 ## 开发与维护
 
