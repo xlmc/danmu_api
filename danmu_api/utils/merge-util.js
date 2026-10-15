@@ -2919,7 +2919,12 @@ async function processMergeTask(params) {
                     }
 
                     if (pIndex >= 0 && pIndex < filteredPLinksWithIndex.length) {
-                        const targetPIndex = resolveDubVersionLinkIndex(filteredPLinksWithIndex, pIndex, match.animeTitle, (link) => getTempTitle(link.title, redundantP), currentPrimarySource);
+                        const sourceDub = getDubVersionLabel(sourceLink.title || sourceLink.name || '') || getDubVersionLabel(match.animeTitle);
+                        const dubTargets = sourceDub ? filteredPLinksWithIndex.map((item, index) => ({ item, index }))
+                            .filter(({ item }) => getDubVersionLabel(item.link.title || item.link.name || '') === sourceDub) : [];
+                        const targetPIndex = derivedAnime.type === '电影' && dubTargets.length === 1
+                            ? dubTargets[0].index
+                            : resolveDubVersionLinkIndex(filteredPLinksWithIndex, pIndex, match.animeTitle, (link) => getTempTitle(link.title, redundantP), currentPrimarySource);
                         kToPIndexMap.set(k, targetPIndex);
                         const originalPIndex = filteredPLinksWithIndex[targetPIndex].originalIndex;
                         const targetLink     = derivedAnime.links[originalPIndex];
@@ -2928,6 +2933,13 @@ async function processMergeTask(params) {
                         const specialP       = getSpecialEpisodeType(cleanTitleP);
                         const specialS       = getSpecialEpisodeType(cleanTitleS);
                         const infoP          = extractEpisodeInfo(cleanTitleP, currentPrimarySource);
+
+                        const targetDub = getDubVersionLabel(targetLink.title || targetLink.name || '') || getDubVersionLabel(pAnime.animeTitle);
+                        if (sourceDub && targetDub && sourceDub !== targetDub) {
+                            mappingEntries.push({ idx: orphanItem.relativeIndex, text: `   [略过] ${pTitleShort} =/= ${sTitleShort} (配音版本不匹配)` });
+                            orphanedEpisodes.push(orphanItem);
+                            continue;
+                        }
 
                         // PV 不匹配正片
                         if (infoS.isPV && !specialP) {

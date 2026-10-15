@@ -69,6 +69,39 @@ async function waitForCompleteCache() {
   assert.fail('完整搜索未完成缓存');
 }
 
+test('电影同名年份歧义不能由后续单一来源绕过，确认年份后命中优先组', async () => {
+  reset({ SOURCE_ORDER: 'tencent,youku', PLATFORM_ORDER: 'tencent,youku', TITLE_MAPPING_TABLE: '',
+    TMDB_API_KEY: '', PROXY_URL: '', BILIBILI_UGC_ENABLED: 'false', LOG_LEVEL: 'error' });
+  const build = (source, year) => ({ animeId: year, bangumiId: `${source}-${year}`, source,
+    animeTitle: `功夫(${year})【电影】from ${source}`, type: '电影', startDate: `${year}-01-01`,
+    episodeCount: 1, links: [{ title: `【${source}】 正片`, url: `https://v.qq.com/x/cover/kungfu/${year}.html` }] });
+  const first = getSourceByKey('tencent'), saved = { search: first.search, handle: first.handleAnimes };
+  let laterCalls = 0;
+  let documentary = false;
+  first.search = async () => [];
+  first.handleAnimes = async (_raw, _title, results, details) => {
+    for (const year of [2004, 2016]) { const item = build('tencent', year);
+      if (documentary && year === 2016) { item.type = '纪录片'; item.animeTitle = '功夫(2016)【纪录片】from tencent'; }
+      addAnime(item, details);
+      const { links, ...dto } = item; results.push(dto); }
+  };
+  const restore = installSource('youku', build('youku', 2004), async () => { laterCalls++; return []; });
+  try {
+    assert.equal((await match('功夫')).isMatched, false);
+    assert.equal(laterCalls, 0);
+    documentary = true;
+    Globals.searchCache = new Map();
+    const movie = await match('功夫');
+    assert.equal(movie.isMatched, true);
+    assert.match(movie.matches[0].animeTitle, /2004.*tencent/);
+    const response = await handleRequest(new Request('http://localhost/87654321/api/v2/match', { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fileName: '功夫', year: 2004, mediaType: 'movie' }) }), Globals.env);
+    const result = await response.json();
+    assert.equal(result.isMatched, true);
+    assert.match(result.matches[0].animeTitle, /2004.*tencent/);
+  } finally { first.search = saved.search; first.handleAnimes = saved.handle; restore(); }
+});
+
 test('文件名不同季集分隔形式沿同一匹配入口选择真实集号，技术后缀不进入UGC单集名', async () => {
   reset({ SOURCE_ORDER: 'youku', PLATFORM_ORDER: 'youku', TITLE_MAPPING_TABLE: '',
     TMDB_API_KEY: '', BILIBILI_UGC_ENABLED: 'false', LOG_LEVEL: 'error' });

@@ -11,6 +11,22 @@ import { Globals } from './configs/globals.js';
 import { Season } from './models/player-model.js';
 import { findSecondaryMatches, applyMergeLogic, resolveDubVersionLinkIndex, mergeLinkEntry } from './utils/merge-util.js';
 
+test('电影链接以配音身份对齐，不把粤语与普通话混合', async () => {
+  Globals.init({ LOG_LEVEL: 'error', MERGE_SOURCE_PAIRS: 'bilibili&tencent', CUSTOM_MERGE_RULES: '' });
+  const build = (source, id, names) => ({ animeId: id, bangumiId: String(id), source,
+    animeTitle: `功夫(2004)【电影】from ${source}`, type: '电影', typeDescription: '电影', aliases: [],
+    startDate: '2004-01-01', episodeCount: names.length,
+    links: names.map((name, index) => ({ title: `【${source}】 ${name}`, url: `https://${source}.test/${id}/${index}` })) });
+  const primary = build('bilibili', 901, ['粤语版', '普通话']);
+  const secondary = build('tencent', 902, ['功夫(普通话版)', '功夫(粤语版)']);
+  Globals.animes = [primary, secondary];
+  await applyMergeLogic([primary, secondary]);
+  const merged = Globals.animes.find(item => item.animeTitle.includes('from bilibili&tencent'));
+  assert.ok(merged);
+  assert.ok(merged.links.find(link => link.title.includes('粤语')).url.includes('tencent:https://tencent.test/902/1'));
+  assert.ok(merged.links.find(link => link.title.includes('普通话')).url.includes('tencent:https://tencent.test/902/0'));
+});
+
 test('merge findSecondaryMatches 忽略规则与剧集标题的季度与类型噪声', () => {
   Globals.init({ LOG_LEVEL: 'error' });
   const savedRules = Globals.envs.customMergeRules;

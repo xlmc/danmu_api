@@ -1715,7 +1715,7 @@ async function selectReadyMatch({ animes, details, title, season, episode, year,
   return { ...selected, spilloverMatched: false, title, season, episode };
 }
 
-function confidentCandidates(animes, { title, season, episode, year, mapping, tmdbIdentity, details, mediaType }) {
+function confidentCandidates(animes, { title, season, episode, year, mapping, tmdbIdentity, details, mediaType, decision }) {
   const guard = mapping || { targetTitle: title };
   let candidates = tmdbIdentity
     ? filterTmdbMatchCandidates(animes, tmdbIdentity, mapping, globals.animes)
@@ -1732,11 +1732,12 @@ function confidentCandidates(animes, { title, season, episode, year, mapping, tm
       return [anime.animeTitle, ...(anime.aliases || [])].some(candidate =>
         matchSeason({ ...anime, animeTitle: candidate }, title, season)) || matchEpisodeSeason(anime, title, season, details);
     }
-    return !/tvseries|tv_series|电视剧|综艺/i.test(String(anime.type || '') + String(anime.typeDescription || ''));
+    return !/tvseries|tv_series|电视剧|综艺|纪录片|紀錄片|documentary/i.test(String(anime.type || '') + String(anime.typeDescription || ''));
   });
   if (!year) {
     const years = new Set(candidates.map(anime => extractYear(anime.animeTitle) || Number(String(anime.startDate || '').slice(0, 4))).filter(Boolean));
     if (years.size > 1) {
+      if (decision) decision.ambiguousWork = true;
       log('info', '[system] [match-reject] 同名同季候选年份不同，需进一步确认作品');
       return [];
     }
@@ -1770,6 +1771,8 @@ async function executeMatchAttempt(options) {
     log('info', `[system] [match-search] 开始平台组 ${label}，搜索来源: ${scope}`);
     const selected = await executeMatchAttemptBody({ ...options, sourceSearches, searchSources, stagePlatform: platform });
     attempt = { ...selected, cacheWarning: selected.cacheWarning || attempt.cacheWarning };
+    // 同名作品有歧义时先回到作品识别，不能让后续只有一个候选的平台绕过校验。
+    if (selected.ambiguousWork) return attempt;
     if (selected.resAnime && selected.resEpisode) {
       log('info', `[system] [match-search] 平台组 ${label} 匹配成功，跳过后续平台组`);
       return attempt;
@@ -1920,7 +1923,10 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, medi
 
   const titleGuard = mapping || (strictTargetTitle ? { targetTitle: title } : null);
   const guardedCandidates = titleGuard ? filterMappingTargetCandidates(searchData.animes, titleGuard) : searchData.animes;
-  const targetCandidates = confidentCandidates(guardedCandidates, { title, season, episode, year, mapping, tmdbIdentity, mediaType, details: detailStore });
+  const decision = {};
+  const targetCandidates = confidentCandidates(guardedCandidates, { title, season, episode, year, mapping, tmdbIdentity, mediaType, details: detailStore, decision });
+  if (decision.ambiguousWork) return { resAnime: null, resEpisode: null, spilloverMatched: false,
+    ambiguousWork: true, title, season, episode, cacheWarning };
   if (titleGuard && targetCandidates.length === 0) {
     log('info', '[system] [match-reject] 映射目标标题过滤后无候选');
     return { resAnime: null, resEpisode: null, spilloverMatched: false, title, season, episode, cacheWarning };
