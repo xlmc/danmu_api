@@ -188,6 +188,7 @@ export function buildUgcQueries(context) {
   const names = [...new Set([context.title, ...aliases].filter(Boolean).flatMap(name => [name, simplized(name), traditionalized(name)]))];
   const broadNames = new Set([context.title, ...aliases.slice(0, 2)].filter(Boolean).flatMap(name => [name, simplized(name), traditionalized(name)]));
   if (context.year) { names.unshift(`${context.title} ${context.year}`); broadNames.add(names[0]); }
+  if (context.mediaType === 'movie') return [...new Set(names)];
   const season = context.season ? ` 第${context.season}季` : '';
   // 综艺用「第N期」，剧集用「第N集」；两种编号都检索，避免用错单位而漏掉真实投稿。
   const units = /第\s*[\d一二三四五六七八九十百零两]+\s*期/.test(String(context.episodeTitle || '')) ? ['期', '集'] : ['集'];
@@ -201,15 +202,19 @@ export function buildUgcQueries(context) {
 // 匹配阶段还没有官方分集，只能用请求本身给出的身份构造 UGC context；
 // 集号来自请求的 SxxExx，集标题有则更有利于分P身份校验。
 export function buildUgcRequestContext({ title, aliases = [], year = null, season = null, episode = null, episodeTitle = '', type = '', tmdbIdentity = null } = {}) {
-  const baseTitle = String(title || '').trim();
+  const movie = (tmdbIdentity?.mediaType || matchMediaType(type)) === 'movie';
+  const originalTitle = String(title || '').trim();
+  const baseTitle = movie ? originalTitle.normalize('NFKC') : originalTitle;
+  if (movie && episode == null) episode = 1;
   if (!baseTitle || !Number.isInteger(episode) || episode < 1) return null;
   const titleInfo = ugcTitleInfo(baseTitle);
   return {
     identity: 'request:' + baseTitle,
     ...titleInfo,
-    aliases: [...new Set([...(titleInfo.collectionTitle ? [baseTitle] : []), ...aliases, ...(tmdbIdentity?.aliases || [])].filter(Boolean))],
+    aliases: [...new Set([...(titleInfo.collectionTitle ? [baseTitle] : []),
+      ...(originalTitle !== baseTitle ? [originalTitle] : []), ...aliases, ...(tmdbIdentity?.aliases || [])].filter(Boolean))],
     year: Number.isInteger(year) ? year : null,
-    season: Number.isInteger(season) ? season : null,
+    season: movie ? null : Number.isInteger(season) ? season : null,
     episode, episodeSource: 'request',
     episodeTitle: String(episodeTitle || ''),
     referenceUrl: null, type: String(type || ''), mediaType: tmdbIdentity?.mediaType || matchMediaType(type), tmdbIdentity: tmdbIdentity || null
@@ -262,6 +267,16 @@ function episodeNumber(text) {
   return m ? number(m[1] || m[2] || m[3]) : null;
 }
 
+function ugcEpisodeNumber(title, context) {
+  let text = String(title).normalize('NFKC').toLowerCase();
+  if (context.mediaType === 'movie') {
+    for (const name of [context.title, ...(context.aliases || [])].sort((a, b) => b.length - a.length)) {
+      text = text.replaceAll(name.normalize('NFKC').toLowerCase(), '');
+    }
+  }
+  return episodeNumber(text);
+}
+
 export function selectUgcPages(context, video, onReject = () => {}) {
   const reject = (reason, page) => { onReject(reason, page); return []; };
   const title = clean(video.title), aliases = [context.title, ...(context.aliases || [])];
@@ -277,8 +292,9 @@ export function selectUgcPages(context, video, onReject = () => {}) {
   if (context.yearRange && candidateYear && (candidateYear < context.yearRange[0] || candidateYear > context.yearRange[1])) return reject('year-mismatch');
   const contextText = [context.title, ...context.aliases || [], context.episodeTitle].join(' ');
   if ([...title.matchAll(versions)].some(m => !contextText.includes(m[0]))) return reject('version-mismatch');
-  const titleEpisode = episodeNumber(title), pages = video.pages || [];
+  const titleEpisode = ugcEpisodeNumber(title, context), pages = video.pages || [];
   if (!pages.length) return reject('no-pages');
+  if (mediaType === 'movie' && pages.length !== 1) return reject('movie-multipart-unconfirmed');
   return pages.flatMap(p => {
     if (excluded.test(`${title} ${p.part}`)) return reject('non-content', p);
     const pageSeason = String(p.part).normalize('NFKC').match(/第\s*([\d一二三四五六七八九十百]+)\s*季|(?<![a-z0-9])S(\d{1,3})(?=\s*E\d|\b)/i);
@@ -288,7 +304,7 @@ export function selectUgcPages(context, video, onReject = () => {}) {
     const contextPart = partMarker(context.episodeTitle);
     const pagePart = partMarker(p.part) || (pages.length === 1 ? partMarker(title) : '');
     if (contextPart && pagePart && contextPart !== pagePart) return reject('part-mismatch', p);
-    const pageEpisode = episodeNumber(p.part);
+    const pageEpisode = ugcEpisodeNumber(p.part, context);
     const episodeTitles = ugcEpisodeTitles(context).map(title => {
       let name = normalize(title);
       for (const alias of aliases) name = name.replace(normalize(alias), '');
@@ -302,7 +318,8 @@ export function selectUgcPages(context, video, onReject = () => {}) {
     if (context.collectionTitle && context.episodeTitle && !named) return reject('episode-title-mismatch', p);
     // A page's position is not an episode number. Trailer/OP pages often precede E01.
     const episode = pageEpisode ?? (pages.length === 1 ? titleEpisode : null);
-    const movie = (mediaType === 'movie' || (!mediaType && context.season === null && context.episode === 1)) && pages.length === 1 && episode === null;
+    const movie = pages.length === 1 && (mediaType === 'movie' ||
+      (!mediaType && context.season === null && context.episode === 1 && episode === null));
     if (episode !== context.episode && !named && !movie) return reject('episode-unconfirmed-or-mismatch', p);
     if (pageEpisode !== null && pageEpisode !== context.episode) return reject('episode-mismatch', p);
     if (pages.length === 1 && titleEpisode !== null && titleEpisode !== context.episode) return reject('episode-mismatch', p);
@@ -404,7 +421,7 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
       }
     });
     const ordered = [...videos.values()].filter(v => {
-      const title = clean(v.title), ep = episodeNumber(title);
+      const title = clean(v.title), ep = ugcEpisodeNumber(title, context);
       // stat 缺失时不限制；给出弹幕数但过少的投稿通常是花絮/搬运/广告素材。
       const reported = v.stat ? Number(v.stat.danmaku) : null;
       const precision = calculateUgcTitlePrecision(title, context);

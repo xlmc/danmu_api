@@ -280,6 +280,10 @@ export function isMovieFeatureFilmEpisode(ep, anime) {
   const nonFeatureRegex = /预告|特辑|花絮|片段|幕后|采访|专访|首映|发布会|MV|推广曲|主题曲|预售|定档|开机|杀青|票房|战报|登顶|路透|高光|速看|看点|回顾|解说|点评|彩蛋/i;
   if (nonFeatureRegex.test(cleanEpTitle)) return false;
 
+  // 平台常用配音版本代替片名；只接受完整版本标签，不接受带宣传描述的标题。
+  const versionLabel = /^(?:普通话|普通話|国语|國語|粤语|粵語|中文|英语|英語|原声|原聲|原)(?:版)?$/;
+  if (versionLabel.test(cleanEpTitle)) return true;
+
   // 3. 分集标题等于电影标题或别名
   const animeTitle = extractAnimeTitle(anime?.animeTitle || '');
   const normAnime = normalizeTitleForMatch(animeTitle);
@@ -287,6 +291,9 @@ export function isMovieFeatureFilmEpisode(ep, anime) {
 
   if (normAnime && normEp === normAnime) return true;
   if (Array.isArray(anime?.aliases) && anime.aliases.some(a => normalizeTitleForMatch(a) === normEp)) return true;
+
+  const withoutVersion = cleanEpTitle.replace(/\s*[（(]?(?:普通话|普通話|国语|國語|粤语|粵語|中文|英语|英語|原声|原聲|原)(?:版)?[）)]?\s*$/, '').trim();
+  if (normAnime && normalizeTitleForMatch(withoutVersion) === normAnime) return true;
 
   // 4. 标题为电影名加上正片/版本修饰后缀（如 "流浪地球2 正片"、"流浪地球2 4K"）
   const strippedEp = cleanEpTitle.replace(/(?:正片|完整版|公映版|原片|国语版|粤语版|原声版|中字|双语|1080p|4k|超清|高清).*$/i, '').trim();
@@ -2313,8 +2320,13 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     // 官方平台在适用画像下都没命中时，用 B站投稿兜底出一个可分集，让播放器仍有弹幕可取。
     // 只面向番剧/国外剧/国外平台（见 isUgcApplicable）；预算用完就放弃，返回未匹配。
     const tryUgcFallback = async () => {
-      if (!globals.bilibiliUgcEnabled || !Number.isInteger(originalEpisode) || originalEpisode < 1) return null;
-      const isMovie = originalSeason === null || (originalEpisode === 1 && originalSeason === 1 && !parsed.season && !parsed.episode);
+      if (!globals.bilibiliUgcEnabled) return null;
+      const isMovie = (tmdbIdentity?.mediaType || requestMediaType) === 'movie' ||
+        (originalSeason === null && originalEpisode === null);
+      if (!isMovie && (!Number.isInteger(originalEpisode) || originalEpisode < 1)) {
+        logEvent('info', 'ugc.skip', '[system] [ugc] 缺少有效剧集编号，跳过投稿兜底', { reason: 'missing-episode', title: originalTitle });
+        return null;
+      }
       const context = buildUgcRequestContext({
         title: collectionContext ? originalTitle : tmdbIdentity?.title || originalTitle, aliases: tmdbIdentity?.aliases || [],
         year: originalYear, season: originalSeason, episode: originalEpisode, tmdbIdentity,
@@ -2326,7 +2338,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       const wanted = normalizeTitleForMatch(String(context.title));
       const related = wanted ? globals.animes.filter(anime => anime.type !== 'B站投稿' &&
         !workIdentityConflict(anime, { year: originalYear, mediaType: tmdbIdentity?.mediaType || requestMediaType, tmdbIdentity }) &&
-        normalizeTitleForMatch(String(anime.animeTitle).replace(/\s*from\s+.+$/i, '')).includes(wanted)) : [];
+        normalizeTitleForMatch(String(anime.animeTitle).normalize('NFKC').replace(/\s*from\s+.+$/i, '')).includes(wanted)) : [];
       const types = [...new Set(related.map(anime => anime.type || anime.typeDescription).filter(Boolean))];
       const sources = [...new Set(related.map(anime => anime.source).filter(Boolean))];
       if (!isUgcApplicable({ identity: tmdbIdentity, sources, types }) && !(context.collectionTitle && !tmdbIdentity)) {
@@ -2358,7 +2370,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       const episodeUrl = urls.length > 1 ? urls.map(url => 'bilibili:' + url).join(MERGE_DELIMITER) : candidate.url;
       const ugcAnimeId = 900000000 + [...String(candidate.bvid)].reduce((acc, ch) => (acc * 31 + ch.codePointAt(0)) % 99999999, 7);
       const prior = globals.animes.find(anime => anime.animeId === ugcAnimeId && anime.type === 'B站投稿');
-      const episodeTitle = `第${String(originalEpisode).padStart(2, '0')}集`;
+      const episodeTitle = isMovie ? '正片' : `第${String(originalEpisode).padStart(2, '0')}集`;
       const links = [...(prior?.links || []).filter(link => link.title !== episodeTitle), { url: episodeUrl, title: episodeTitle }];
       const resAnime = { animeId: ugcAnimeId, source: 'bilibili', bangumiId: 'ugc:' + candidate.bvid, type: 'B站投稿', typeDescription: 'B站投稿',
         animeTitle: `${context.title}${originalYear ? `(${originalYear})` : ''}${originalSeason > 1 ? ` 第${originalSeason}季` : ''}【B站投稿】`,

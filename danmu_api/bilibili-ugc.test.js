@@ -8,6 +8,34 @@ import { getSourceByKey } from './sources/registry.js';
 import { handleConfig, handleClearCache } from './apis/system-api.js';
 import BilibiliSource from './sources/bilibili.js';
 
+test('冰雪奇缘真实目录的配音版本属于正片，宣传标题仍拒绝', () => {
+  const anime = { animeTitle: '冰雪奇缘(2013)【电影】from bilibili&tencent&youku&iqiyi' };
+  for (const title of ['【tencent】 冰雪奇缘(普通话版)', '【bilibili&tencent&youku&iqiyi】 原版',
+    '【bilibili】 中文', '冰雪奇缘（英语版）']) {
+    assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: title }, anime), true, title);
+  }
+  for (const title of ['冰雪奇缘(普通话版)预告', '原版主题曲', '中文配音幕后花絮', '中文宣传', '原版片段']) {
+    assert.equal(isMovieFeatureFilmEpisode({ episodeTitle: title }, anime), false, title);
+  }
+});
+
+test('无集号电影按片名检索，续集数字不作集号，仍拒绝第一部和短片', () => {
+  const context = buildUgcRequestContext({ title: '坠落２：死点', type: '电影', year: 2026, aliases: ['Fall 2: Deadpoint'] });
+  assert.equal(context.episode, 1);
+  assert.equal(context.season, null);
+  assert.equal(context.title, '坠落2:死点');
+  const queries = buildUgcQueries(context);
+  assert(queries.includes('Fall 2: Deadpoint'));
+  assert(queries.every(query => !/第1集|第1季| 01|合集/.test(query)));
+  const video = { bvid: 'BVmovie', title: 'Fall 2: Deadpoint 2026', pages: [{ cid: 55, page: 1, part: 'Fall 2: Deadpoint', duration: 6000 }] };
+  assert.equal(selectUgcPages(context, video)[0]?.evidence.episodeBasis, 'movie-feature');
+  assert.equal(selectUgcPages(context, { ...video, title: 'Fall 2022' }).length, 0);
+  assert.equal(selectUgcPages(context, { ...video, pages: [{ ...video.pages[0], duration: 120 }] }).length, 0);
+  assert.equal(selectUgcPages(context, { ...video, pages: [{ ...video.pages[0], part: '001', duration: 541 }, { cid: 56, page: 2, part: '002', duration: 600 }] }).length, 0);
+  assert.equal(selectUgcPages(context, { ...video, pages: [{ ...video.pages[0], part: '001', duration: 541 }] }).length, 0);
+  assert.equal(buildUgcRequestContext({ title: '剧集', type: '电视剧' }), null);
+});
+
 test('UGC XML pool decodes comments and falls back on an invalid response', async () => {
   const originalFetch = globalThis.fetch;
   const source = new BilibiliSource(), url = 'https://www.bilibili.com/combine?cid55=0-40';

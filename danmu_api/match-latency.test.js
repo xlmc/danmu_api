@@ -69,6 +69,27 @@ async function waitForCompleteCache() {
   assert.fail('完整搜索未完成缓存');
 }
 
+test('无集号电影请求能进入UGC兜底并返回正片', async () => {
+  reset({ SOURCE_ORDER: 'bahamut', PLATFORM_ORDER: 'bahamut', TITLE_MAPPING_TABLE: '',
+    TMDB_API_KEY: '', PROXY_URL: '', BILIBILI_UGC_ENABLED: 'true', LOG_LEVEL: 'error' });
+  const restore = installSource('bahamut', { animeId: 811, bangumiId: 'fall-preview', source: 'bahamut',
+    animeTitle: '坠落２：死点(2026)【电影】from bahamut', type: '电影', episodeCount: 1,
+    links: [{ title: '【bahamut】 预告片', url: 'https://ani.gamer.com.tw/animeVideo.php?sn=811' }] });
+  const saved = ugcSupplement.prepare;
+  let called = false;
+  ugcSupplement.prepare = async context => {
+    called = true;
+    assert.equal(context.mediaType, 'movie'); assert.equal(context.episode, 1); assert.equal(context.season, null);
+    return { result: { candidates: [{ bvid: 'BVfall', cid: 55, page: 1, title: context.title, url: 'https://www.bilibili.com/video/BVfall/?p=1', evidence: { titlePrecision: 1 } }],
+      accepted: [{ cid: 55, comments: [{ p: '1,1,25,0', m: '电影弹幕' }], timeline: { status: 'metadata-matched', validRange: [0, 6000], offsetSeconds: 0 } }], failures: [] } };
+  };
+  try {
+    const result = await match('坠落２：死点');
+    assert.equal(called, true); assert.equal(result.isMatched, true);
+    assert.equal(result.matches[0].episodeTitle, '正片');
+  } finally { restore(); ugcSupplement.prepare = saved; }
+});
+
 test('电影同名年份歧义不能由后续单一来源绕过，确认年份后命中优先组', async () => {
   reset({ SOURCE_ORDER: 'tencent,youku', PLATFORM_ORDER: 'tencent,youku', TITLE_MAPPING_TABLE: '',
     TMDB_API_KEY: '', PROXY_URL: '', BILIBILI_UGC_ENABLED: 'false', LOG_LEVEL: 'error' });
