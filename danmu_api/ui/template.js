@@ -92,23 +92,23 @@ export const HTML_TEMPLATE = /* html */ `
                     <div class="dash-card">
                         <div class="dash-card-header">
                             <span class="dash-card-title">系统运行状态</span>
-                            <span class="dash-status-dot normal" id="dash-service-dot" title="服务正常运行"></span>
+                            <span class="dash-status-dot" id="dash-service-dot" title="等待统计接口"></span>
                         </div>
                         <div class="dash-card-body">
-                            <div class="dash-big-text" id="dash-service-text">服务正常</div>
+                            <div class="dash-big-text" id="dash-service-text">正在连接</div>
                             <div class="dash-sub-line" style="color: #10b981; font-weight: 600;">
                                 Node.js · 端口 <span id="dash-port-val">9321</span>
                             </div>
                             <div class="dash-sub-line" style="margin-top: 10px;">
                                 <div class="dash-latency-trigger">
-                                    <span class="dash-big-num" style="font-size: 26px; color: #10b981;">16.4</span>
+                                    <span class="dash-big-num" id="dash-latency" style="font-size: 26px; color: #10b981;">—</span>
                                     <span class="dash-big-unit">ms</span>
-                                    <div class="dash-latency-tooltip">平均解析延迟 · P95: 22ms · P99: 35ms</div>
+                                    <div class="dash-latency-tooltip" id="dash-latency-detail">播放器请求耗时 · 暂无样本</div>
                                 </div>
                             </div>
                         </div>
                         <div class="dash-card-footer">
-                            <span>在线时长: 3天 14小时</span>
+                            <span id="dash-uptime">在线时长: —</span>
                             <button class="dash-card-btn" onclick="copyDashboardEndpoint()">复制端点</button>
                         </div>
                     </div>
@@ -117,53 +117,53 @@ export const HTML_TEMPLATE = /* html */ `
                     <div class="dash-card">
                         <div class="dash-card-header">
                             <span class="dash-card-title">今日请求总量</span>
-                            <span class="dash-card-pill">24H 统计</span>
+                            <span class="dash-card-pill">今日 · 服务时区</span>
                         </div>
                         <div class="dash-card-body">
-                            <div class="dash-big-num">24,850</div>
+                            <div class="dash-big-num" id="dash-requests">—</div>
                             <div class="dash-sub-line">
-                                <span class="dash-trend-up">↑ 14.2%</span> 较昨日同时段
+                                <span id="dash-since">等待统计数据</span>
                             </div>
                         </div>
                         <div class="dash-card-footer">
-                            <span>峰值吞吐: 38 req/s</span>
+                            <span id="dash-peak">峰值吞吐: —</span>
                         </div>
                     </div>
 
-                    <!-- 卡片 3: 今日弹幕获取 -->
+                    <!-- 卡片 3: 今日弹幕返回量 -->
                     <div class="dash-card">
                         <div class="dash-card-header">
-                            <span class="dash-card-title">今日弹幕获取</span>
-                            <span class="dash-card-pill">已捕获</span>
+                            <span class="dash-card-title">今日弹幕返回量</span>
+                            <span class="dash-card-pill">含缓存响应</span>
                         </div>
                         <div class="dash-card-body">
-                            <div class="dash-big-num" style="color: var(--theme-accent);">210.3 <span class="dash-big-unit">万条</span></div>
+                            <div class="dash-big-num" style="color: var(--theme-accent);" id="dash-comments">—</div>
                             <div class="dash-sub-line">
-                                <span class="dash-trend-up">↑ 12.8%</span> 较昨日
+                                <span>实际返回条数，重复请求重复计数</span>
                             </div>
                             <div class="dash-sub-line" style="margin-top: 4px; font-weight: 500;">
-                                今日已成功获取 1,698 集弹幕
+                                <span id="dash-responses">成功非空弹幕响应: —</span>
                             </div>
                         </div>
                         <div class="dash-card-footer">
-                            <span>多源聚合去重 · 高并发响应</span>
+                            <span>包含整集与分段响应</span>
                         </div>
                     </div>
 
                     <!-- 卡片 4: 缓存命中率 -->
                     <div class="dash-card">
                         <div class="dash-card-header">
-                            <span class="dash-card-title">缓存命中率</span>
-                            <span class="dash-card-pill">已启用</span>
+                            <span class="dash-card-title">弹幕缓存命中率</span>
+                            <span class="dash-card-pill">今日查询统计</span>
                         </div>
                         <div class="dash-card-body">
-                            <div class="dash-big-num" style="color: var(--theme-accent);">99.4 <span class="dash-big-unit">%</span></div>
+                            <div class="dash-big-num" style="color: var(--theme-accent);" id="dash-hit-rate">—</div>
                             <div class="dash-sub-line">
-                                已累计节省 24.7k 次请求
+                                <span id="dash-cache-counts">命中 / 未命中: —</span>
                             </div>
                         </div>
                         <div class="dash-card-footer">
-                            <span>内存 + Redis 缓存</span>
+                            <span>同一请求内同键只计首次查询</span>
                             <button class="dash-card-btn" onclick="showClearCacheModal()">清理缓存</button>
                         </div>
                     </div>
@@ -173,7 +173,7 @@ export const HTML_TEMPLATE = /* html */ `
                 <div class="dash-trend-section">
                     <div class="dash-trend-header">
                         <div class="dash-trend-title-box">
-                            <h2 class="dash-trend-title">请求趋势</h2>
+                            <h2 class="dash-trend-title">播放器请求趋势</h2>
                         </div>
                         <div class="dash-trend-controls">
                             <button class="dash-trend-tab-btn active" data-mode="hourly" onclick="renderDashboardTrend('hourly')">今日分时</button>
@@ -181,10 +181,11 @@ export const HTML_TEMPLATE = /* html */ `
                         </div>
                     </div>
                     <div class="dash-chart-tooltip-bar" id="dash-chart-info">
-                        <strong>10:00</strong> · <span>1,140 次请求</span> · <span>74 集弹幕</span> · <span>8.9 万条弹幕</span> · <span>回源 12</span> · <span style="color:#10b981;font-weight:700;">命中率 98.9%</span>
+                        等待统计数据
                     </div>
                     <div class="dash-chart-container" id="dash-trend-bars"></div>
                     <div class="dash-chart-axis-x" id="dash-trend-axis"></div>
+                    <p class="dash-sub-line" id="dash-coverage">统计从本次服务启动开始，重启清零；最多保留近 7 天，未采集时段不补造数据。</p>
                 </div>
             </div>
 

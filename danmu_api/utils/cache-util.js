@@ -1,3 +1,4 @@
+import { measureCommentCache } from './dashboard-metrics.js';
 import { isSupportedSource, isSupportedLocation, pruneSourcePreferences } from '../sources/policy.js';
 import { globals } from '../configs/globals.js';
 import { log } from './log-util.js'
@@ -374,7 +375,9 @@ export function isCommentCacheValid(videoUrl) {
 
 // 获取弹幕缓存
 export function getCommentCache(videoUrl) {
-    if (isCommentCacheValid(videoUrl)) {
+    const valid = isCommentCacheValid(videoUrl);
+    measureCommentCache(videoUrl, valid);
+    if (valid) {
         log("info", `[cache] Using comment cache for "${videoUrl}"`);
         return globals.commentCache.get(videoUrl).comments;
     }
