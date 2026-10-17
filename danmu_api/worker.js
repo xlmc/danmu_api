@@ -256,7 +256,24 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   // GET /api/v2/comment/:commentId or /api/v2/comment?url=xxx or /api/v2/extcomment?url=xxx
   if ((path.startsWith("/api/v2/comment") || path.startsWith("/api/v2/extcomment")) && method === "GET") {
-    const queryFormat = url.searchParams.get('format');
+    const requestedFormat = url.searchParams.get('format');
+    const infuseJson = /^Infuse(?:\/|\s|$)/i.test(req.headers.get('user-agent') || '') &&
+      (!requestedFormat || requestedFormat.toLowerCase() === 'json');
+    const queryFormat = infuseJson ? 'json' : requestedFormat;
+    const commentResponse = async pending => {
+      const response = await pending;
+      if (!infuseJson || !response.ok) return response;
+      const data = await response.clone().json();
+      if (!Array.isArray(data.comments)) return response;
+
+      // Infuse 使用标准弹弹play字段；只裁剪响应，不修改共享弹幕缓存。
+      const comments = data.comments.map(({ cid, p, m }) => ({ cid, p, m }))
+        .sort((a, b) => parseFloat(a.p) - parseFloat(b.p));
+      log('info', `[system] [Infuse] 标准 JSON 响应: ${comments.length} 条弹幕，仅保留 cid/p/m`);
+      const result = jsonResponse({ ...data, count: comments.length, comments }, response.status);
+      result.headers.set('Content-Type', 'application/json; charset=utf-8');
+      return result;
+    };
     const videoUrl = url.searchParams.get('url');
     const segmentFlagParam = url.searchParams.get('segmentflag');
     const durationParam = url.searchParams.get('duration');
@@ -277,7 +294,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       const cachedComments = getCommentCache(videoUrl);
       if (cachedComments !== null) {
         log("info", `[system] [Rate Limit] Cache hit for URL: ${videoUrl}, skipping rate limit check`);
-        return getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration, url.searchParams.get('animeTitle') || '');
+        return commentResponse(getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration, url.searchParams.get('animeTitle') || ''));
       }
 
       // 缓存未命中，执行限流检查（如果 rateLimitMaxRequests > 0 则启用限流）
@@ -312,7 +329,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       }
 
       // 通过URL获取弹幕
-      return getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration, url.searchParams.get('animeTitle') || '');
+      return commentResponse(getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration, url.searchParams.get('animeTitle') || ''));
     }
 
     // 否则通过commentId获取弹幕
@@ -332,7 +349,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       const cachedComments = getCommentCache(urlForComment);
       if (cachedComments !== null) {
         log("info", `[system] [Rate Limit] Cache hit for URL: ${urlForComment}, skipping rate limit check`);
-        return getComment(path, queryFormat, segmentFlag, clientIp, includeDuration);
+        return commentResponse(getComment(path, queryFormat, segmentFlag, clientIp, includeDuration));
       }
     }
 
@@ -371,7 +388,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       log("info", `[system] [Rate Limit] IP ${clientIp} request count: ${recentRequests.length}/${globals.rateLimitMaxRequests}`);
     }
 
-    return getComment(path, queryFormat, segmentFlag, clientIp, includeDuration);
+    return commentResponse(getComment(path, queryFormat, segmentFlag, clientIp, includeDuration));
   }
 
   // POST /api/v2/segmentcomment - 接收segment类的JSON请求体
