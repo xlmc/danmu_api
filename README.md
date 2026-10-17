@@ -98,6 +98,8 @@ Infuse 可只传 TMDB ID 查询分集，例如：`/<TOKEN>/api/v2/search/episode
 
 Infuse 请求弹幕时默认返回标准 JSON，每条只保留 `cid`、`p`、`m`，按出现时间排序；不发送渐变等扩展字段。显式指定其他 `format` 时按指定格式输出。升级后需在 Infuse 中重新加载弹幕，避免继续使用旧响应。
 
+Infuse 分集搜索使用弹弹play标准类型（如 `tvseries`、`movie`），集名保留在 `episodeTitle`；响应包含 `hasMore`。弹幕 `p` 第4项仅输出无特殊字符的用户 ID，内部来源标签使用 `0` 代替；原始来源信息仍保留在服务内部。
+
 ## 常用配置
 
 首次启动以 [config/.env.example](config/.env.example) 为模板，后续可通过管理员入口调整配置。下面只列常用入口，完整格式见 [配置参考](docs/configuration.md)。

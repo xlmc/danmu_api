@@ -22,6 +22,7 @@ test('Infuse TMDB-only episode searches resolve titles and return usable comment
   source.handleAnimes=async(raw,_title,results,details)=>{
     const anime=fixtureAnime(raw[0].title,2026,991,raw[0].title==='电影原名'?'movie':'tvseries');
     anime.typeDescription=anime.type==='movie'?'电影':'电视剧';
+    anime.type=anime.typeDescription;
     addAnime(anime,details);const {links,...dto}=anime;results.push(dto);
   };
   source.getComments=async()=>[{p:'1,1,16777215,test',m:'Infuse弹幕'}];
@@ -32,18 +33,23 @@ test('Infuse TMDB-only episode searches resolve titles and return usable comment
     if(url.pathname==='/3/movie/900001')return Response.json({id:900001,original_title:'电影原名'});
     return new Response('{}',{status:404});
   };
-  const request=path=>handleRequest(new Request('http://localhost/87654321/api/v2/'+path),Globals.env,'node','127.0.0.1');
+  const request=(path,userAgent='Infuse/8.5.5793')=>handleRequest(new Request('http://localhost/87654321/api/v2/'+path,
+    {headers:{'User-Agent':userAgent}}),Globals.env,'node','127.0.0.1');
   try{
     const response=await request('search/episodes?tmdbId=300146&tmdbIdType=0&episode=2');
     assert.equal(response.status,200);
     const data=await response.json();
     assert.equal(data.success,true);assert.equal(data.animes.length,1);
+    assert.equal(data.hasMore,false);assert.equal(data.animes[0].type,'tvseries');
+    assert.equal(data.animes[0].typeDescription,'电视剧');
+    assert.deepEqual(Object.keys(data.animes[0].episodes[0]),['episodeId','episodeTitle']);
     assert.equal(data.animes[0].episodes.length,1);assert.match(data.animes[0].episodes[0].episodeTitle,/第2集/);
     assert.deepEqual(keywords,['嫁金钗']);assert.deepEqual(tmdbRequests,['/3/tv/300146']);
     const comments=await(await request('comment/'+data.animes[0].episodes[0].episodeId+'?format=json')).json();
     assert.equal(comments.comments[0].m,'Infuse弹幕');
     const movie=await(await request('search/episodes?tmdbId=900001&tmdbIdType=1&episode=movie')).json();
     assert.equal(movie.animes.length,1);assert.equal(keywords.at(-1),'电影原名');
+    assert.equal(movie.animes[0].type,'movie');
     assert.equal(tmdbRequests.at(-1),'/3/movie/900001');
     const unresolved=await request('search/episodes?tmdbId=900002');
     assert.equal(unresolved.status,200);assert.deepEqual((await unresolved.json()).animes,[]);
@@ -51,6 +57,9 @@ test('Infuse TMDB-only episode searches resolve titles and return usable comment
     const calls=tmdbRequests.length;
     assert.equal((await request('search/episodes?anime='+encodeURIComponent('嫁金钗')+'&tmdbId=900002&episode=2')).status,200);
     assert.equal(tmdbRequests.length,calls,'an explicit title keeps the original search path');
+    const legacy=await(await request('search/episodes?anime='+encodeURIComponent('嫁金钗')+'&episode=2','SenPlayer/test')).json();
+    assert.equal(legacy.animes[0].type,'电视剧');
+    assert.ok(legacy.animes[0].episodes[0].url);
     assert.equal((await request('search/episodes?tmdbId=invalid')).status,400);
   }finally{source.search=saved.search;source.handleAnimes=saved.handle;source.getComments=saved.comments;globalThis.fetch=saved.fetch;}
 });

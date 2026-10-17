@@ -259,6 +259,7 @@ test('Infuse receives standard comments on cold and warm ID/URL routes without c
     const data = await first.json();
     assert.equal(data.count, 3);
     for (const comment of data.comments) assert.deepEqual(Object.keys(comment), ['cid', 'p', 'm']);
+    assert.ok(data.comments.every(comment => comment.p.split(',')[3] === '0'));
     const cached = getCommentCache(videoUrl);
     cached.reverse(); // Reproduce unordered cached comments without changing their timestamps.
     assert.deepEqual(await (await request(path)).json(), data);

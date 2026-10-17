@@ -225,7 +225,19 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     log('info', '[system] [player-request] ' + JSON.stringify({ method, endpoint: path,
       anime: url.searchParams.get('anime'), episode: url.searchParams.get('episode'),
       userAgent: req.headers.get('user-agent'), clientIp }));
-    return searchEpisodes(url, clientIp);
+    const response = await searchEpisodes(url, clientIp);
+    if (!/^Infuse(?:\/|\s|$)/i.test(req.headers.get('user-agent') || '') || !response.ok) return response;
+    const data = await response.json();
+    const typeAliases = { '电视剧': 'tvseries', '动漫': 'tvseries', '动画': 'tvseries',
+      '综艺': 'tvseries', '短剧': 'tvseries', '电影': 'movie', '剧场版': 'movie' };
+    const types = ['tvseries', 'tvspecial', 'ova', 'movie', 'musicvideo', 'web', 'other',
+      'jpmovie', 'jpdrama', 'unknown', 'tmdbtv', 'tmdbmovie'];
+    const animes = data.animes.map(anime => ({
+      ...anime,
+      type: types.includes(anime.type) ? anime.type : (typeAliases[anime.type] || 'unknown'),
+      episodes: anime.episodes.map(({ episodeId, episodeTitle }) => ({ episodeId, episodeTitle })),
+    }));
+    return jsonResponse({ ...data, hasMore: data.hasMore ?? false, animes }, response.status);
   }
 
   // GET|POST /api/v2/fongmi/danmaku
@@ -267,7 +279,11 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       if (!Array.isArray(data.comments)) return response;
 
       // Infuse 使用标准弹弹play字段；只裁剪响应，不修改共享弹幕缓存。
-      const comments = data.comments.map(({ cid, p, m }) => ({ cid, p, m }))
+      const comments = data.comments.map(({ cid, p, m }) => {
+        const [time, mode, color, userId] = p.split(',');
+        // 官方 p 的第4项是无特殊字符的用户ID，内部来源标签不能直接对外充当ID。
+        return { cid, p: [time, mode, color, /^[a-z0-9]+$/i.test(userId || '') ? userId : '0'].join(','), m };
+      })
         .sort((a, b) => parseFloat(a.p) - parseFloat(b.p));
       log('info', `[system] [Infuse] 标准 JSON 响应: ${comments.length} 条弹幕，仅保留 cid/p/m`);
       const result = jsonResponse({ ...data, count: comments.length, comments }, response.status);
