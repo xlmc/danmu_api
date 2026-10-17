@@ -1,3 +1,4 @@
+import { measureCommentResponse } from './dashboard-metrics.js';
 import { splitBlockedWords } from "./blocked-word-parser.js";
 export { splitBlockedWords };
 import { canonicalPlatformGroup, canonicalPlatformName } from './platform-util.js';
@@ -858,6 +859,7 @@ function escapeXmlText(str) {
 
 // 根据格式参数返回弹幕数据
 export function formatDanmuResponse(danmuData, queryFormat) {
+  measureCommentResponse(Array.isArray(danmuData.comments) ? danmuData.comments.length : 0);
   // 确定最终使用的格式：查询参数 > 环境变量 > 默认值
   let format = queryFormat || globals.danmuOutputFormat;
   format = format.toLowerCase();

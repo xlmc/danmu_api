@@ -1,3 +1,4 @@
+import { activateDashboardMeasurement, getDashboardMetrics, withDashboardMeasurement } from './utils/dashboard-metrics.js';
 import { handleMappingShare } from './utils/mapping-share-util.js';
 import { initializePersistentCaches } from './utils/persistent-cache-util.js';
 import { Globals } from './configs/globals.js';
@@ -142,6 +143,12 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     path = "/danmaku";
   }
 
+  if (path === '/api/dashboard' && method === 'GET') {
+    const response = jsonResponse(getDashboardMetrics());
+    response.headers.set('Cache-Control', 'no-store');
+    return response;
+  }
+
   // GET /api/config - 获取配置信息 (需要 token)
   if (path === "/api/config" && method === "GET") {
     return handleConfig(true); // 有权限
@@ -210,6 +217,8 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   if (path === "/" && method === "GET") {
     return handleUI();
   }
+
+  activateDashboardMeasurement(path, method);
 
   // GET /api/v2/search/anime
   if (path === "/api/v2/search/anime" && method === "GET") {
@@ -525,4 +534,8 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
   return jsonResponse({ message: "Not found" }, 404);
 }
 
-export { handleRequest };
+function handleMeasuredRequest(...args) {
+  return withDashboardMeasurement(() => handleRequest(...args));
+}
+
+export { handleMeasuredRequest as handleRequest };
