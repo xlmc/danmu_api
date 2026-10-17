@@ -1,5 +1,11 @@
 # 自用版本说明
 
+## Infuse TMDB ID 分集搜索兼容
+
+- 吸收 ranzhigg/danmu_api 的 a7efd7f 修复，允许 `/api/v2/search/episodes` 只传 `tmdbId`，解析 TMDB 标题后复用现有弹幕源搜索和集数过滤；支持电视剧与电影类型，显式 `anime` 标题仍优先。
+- 沿用自用分支的 TMDB API Key 或代理/网关认证；无法解析时返回空搜索结果。剧集 ID 继续使用 NAS 文件或 Redis 缓存，不引入 Cloudflare 专用缓存。
+- 离线回归覆盖 TMDB ID 搜索、分集筛选及后续弹幕获取；Infuse 真机与 NAS 线上效果尚未验证。
+
 ## 电影正片版本识别与 UGC 兜底修复
 
 - 修复电影目录中“原版”“中文”以及片名加普通话等版本后缀被误判为非正片的问题；保留预告、主题曲、花絮等排除规则。

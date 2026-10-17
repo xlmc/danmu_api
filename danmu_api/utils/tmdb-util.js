@@ -549,6 +549,25 @@ export async function getTmdbMatchDetails(mediaType, tmdbId) {
   })}`));
 }
 
+// Infuse 的剧集搜索可只提供 TMDB ID；沿用代理/网关认证和标题回退。
+export async function getTmdbMediaTitleById(tmdbId, preferredMediaType = 'tv') {
+  const id = String(tmdbId ?? '').trim();
+  if (!/^\d+$/.test(id)) return null;
+
+  const firstType = preferredMediaType === 'movie' ? 'movie' : 'tv';
+  for (const mediaType of [firstType, firstType === 'tv' ? 'movie' : 'tv']) {
+    const detail = readTmdbData(await tmdbApiGet(`${mediaType}/${id}?${tmdbQuery({ language: 'zh-CN' })}`));
+    if (!detail) continue;
+    const title = mediaType === 'tv'
+      ? (detail.name || detail.original_name || '')
+      : (detail.title || detail.original_title || '');
+    if (!title) continue;
+    log('info', `[system] [tmdb] 通过 ID 解析标题成功: ${id} (${mediaType}) -> ${title}`);
+    return { id: Number(detail.id) || Number(id), mediaType, title };
+  }
+  return null;
+}
+
 export async function getTmdbMatchEpisode(tmdbId, season, episode) {
   if (!/^[1-9]\d*$/.test(String(tmdbId)) || !Number.isInteger(season) || season < 0 ||
       !Number.isInteger(episode) || episode < 1) return null;

@@ -26,7 +26,7 @@ import {
   extractEpisodeTitle, convertChineseNumber, parseFileName, extractReleaseGroups, createDynamicPlatformOrder, normalizeSpaces, normalizeTitleForMatch,
   extractYear, matchMediaType, workIdentityConflict, titleMatches, extractAnimeInfo, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle
 } from "../utils/common-util.js";
-import { getDomesticPersonMetadataForTitle, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
+import { getDomesticPersonMetadataForTitle, getTmdbMediaTitleById, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
 import { shouldBlockDomesticCelebrities } from '../utils/person-filter-exclusion-util.js';
 import { applyMergeLogic, mergeDanmakuList, MERGE_DELIMITER, sanitizeUrl } from "../utils/merge-util.js";
 
@@ -2606,8 +2606,19 @@ async function matchAnimeWithTrace(url, req, clientIp) {
 
 // Extracted function for GET /api/v2/search/episodes
 export async function searchEpisodes(url, clientIp = null) {
-  let anime = url.searchParams.get("anime");
+  let anime = url.searchParams.get("anime") || "";
+  const rawTmdbId = (url.searchParams.get('tmdbId') || '').trim();
+  const tmdbId = /^\d+$/.test(rawTmdbId) ? rawTmdbId : '';
   const episode = url.searchParams.get("episode") || "";
+
+  // Infuse 可能只传 TMDB ID；解析标题后复用现有搜索和集数过滤。
+  if (!anime && tmdbId) {
+    const tmdbIdType = url.searchParams.get('tmdbIdType');
+    const mediaType = tmdbIdType === '1' || (tmdbIdType !== '0' && episode.toLowerCase() === 'movie')
+      ? 'movie' : 'tv';
+    const tmdbMedia = await getTmdbMediaTitleById(tmdbId, mediaType);
+    anime = tmdbMedia?.title || '';
+  }
 
   // 如果启用了搜索关键字繁转简，则进行转换
   if (globals.animeTitleSimplified) {
@@ -2619,10 +2630,13 @@ export async function searchEpisodes(url, clientIp = null) {
   log("info", `[system] [episodes] Search episodes with anime: ${anime}, episode: ${episode}`);
 
   if (!anime) {
-    log("error", "[system] [episodes] Missing anime parameter");
+    const errorMessage = tmdbId ? "Unable to resolve anime title from tmdbId" : "Missing anime or tmdbId parameter";
+    log("error", `[system] [episodes] ${errorMessage}`);
     return jsonResponse(
-      { errorCode: 400, success: false, errorMessage: "Missing anime parameter" },
-      400
+      tmdbId
+        ? { errorCode: 0, success: true, errorMessage: "", hasMore: false, animes: [] }
+        : { errorCode: 400, success: false, errorMessage },
+      tmdbId ? 200 : 400
     );
   }
 
