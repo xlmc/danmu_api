@@ -234,6 +234,44 @@ test('in-flight requests retain their rules and cannot overwrite or evict newer 
   assert.equal((await formatDanmuResponse({ comments: current }, 'json').json()).comments[0].danmux, undefined);
 });
 
+test('Infuse receives standard comments on cold and warm ID/URL routes without changing other clients', async t => {
+  reset({ COMMENT_CACHE_MINUTES: '30', COMMENT_CACHE_MIN_COUNT: '0', LOCAL_CACHE_ENABLED: 'false',
+    LOCAL_REDIS_URL: '', USE_BANGUMI_DATA: 'false', RATE_LIMIT_MAX_REQUESTS: '0', REMEMBER_LAST_SELECT: 'false',
+    BILIBILI_UGC_ENABLED: 'false', DANMU_OUTPUT_FORMAT: 'danmux' });
+  const videoUrl = 'https://v.qq.com/x/cover/infuse/episode.html';
+  Globals.animes = [{ animeId: 12, animeTitle: 'Infuse兼容测试', source: 'tencent',
+    links: [{ id: 990004, title: '【tencent】第1集', url: videoUrl }] }];
+  Globals.episodeIds = [{ id: 990004, animeId: 12, ...Globals.animes[0].links[0] }];
+  const source = getSourceByKey('tencent');
+  const originals = { getEpisodeDanmu: source.getEpisodeDanmu, formatComments: source.formatComments };
+  t.after(() => Object.assign(source, originals));
+  let downloads = 0;
+  source.getEpisodeDanmu = async () => { downloads++; return input(); };
+  source.formatComments = data => data;
+  const request = (path, userAgent = 'Infuse/8.5.5793') => handleRequest(new Request('http://localhost' + path,
+    { headers: { 'User-Agent': userAgent } }), Globals.env, 'node', '127.0.0.1');
+  for (const path of ['/api/v2/comment/990004', '/api/v2/comment?url=' + encodeURIComponent(videoUrl)]) {
+    Globals.commentCache = new Map();
+    const before = downloads;
+    const first = await request(path);
+    assert.equal(first.status, 200);
+    assert.match(first.headers.get('content-type'), /application\/json; charset=utf-8/);
+    const data = await first.json();
+    assert.equal(data.count, 3);
+    for (const comment of data.comments) assert.deepEqual(Object.keys(comment), ['cid', 'p', 'm']);
+    const cached = getCommentCache(videoUrl);
+    cached.reverse(); // Reproduce unordered cached comments without changing their timestamps.
+    assert.deepEqual(await (await request(path)).json(), data);
+    assert.equal(downloads, before + 1);
+    assert.ok(getCommentCache(videoUrl)[0].t > getCommentCache(videoUrl).at(-1).t, 'response sorting does not mutate the cache');
+    const other = await (await request(path + (path.includes('?') ? '&' : '?') + 'format=json', 'SenPlayer/test')).json();
+    assert.ok(other.comments.some(comment => comment.danmux), 'other players retain gradient extensions');
+    assert.ok(other.comments.every(comment => 't' in comment));
+    const xml = await request(path + (path.includes('?') ? '&' : '?') + 'format=xml');
+    assert.match(await xml.text(), /<d p="/);
+  }
+});
+
 test('existing URL, episode and segment routes return gradients on cold and warm caches', async t => {
   reset({ COMMENT_CACHE_MINUTES: '30', COMMENT_CACHE_MIN_COUNT: '0', LOCAL_CACHE_ENABLED: 'false',
     LOCAL_REDIS_URL: '', USE_BANGUMI_DATA: 'false', RATE_LIMIT_MAX_REQUESTS: '0', REMEMBER_LAST_SELECT: 'false' });
