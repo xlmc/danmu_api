@@ -12,6 +12,49 @@ import { refreshRemoteAutoMatchMappingNow } from './utils/auto-match-mapping-url
 import { Anime } from './models/player-model.js';
 import { httpGet } from './utils/http-util.js';
 
+test('Infuse TMDB-only episode searches resolve titles and return usable comment IDs', async () => {
+  Globals.init({RATE_LIMIT_MAX_REQUESTS:'0',TOKEN:'87654321',SOURCE_ORDER:'tencent',PLATFORM_ORDER:'tencent',MERGE_SOURCE_PAIRS:'',LOCAL_CACHE_ENABLED:'false',LOCAL_REDIS_URL:'',USE_BANGUMI_DATA:'false',TITLE_MAPPING_TABLE:'',TITLE_MAPPING_TABLE_URL:'',AUTO_MATCH_MAPPING_TABLE:'',AUTO_MATCH_MAPPING_TABLE_URL:'',TMDB_API_KEY:'',BILIBILI_UGC_ENABLED:'false',LOG_LEVEL:'error'});
+  Globals.animes=[];Globals.episodeIds=[];Globals.episodeNum=10001;Globals.searchCache=new Map();Globals.lastSelectMap=new Map();Globals.queryCacheInitialized=false;
+  const source=getSourceByKey('tencent');
+  const saved={search:source.search,handle:source.handleAnimes,comments:source.getComments,fetch:globalThis.fetch};
+  const tmdbRequests=[],keywords=[];
+  source.search=async title=>{keywords.push(title);return [{title}];};
+  source.handleAnimes=async(raw,_title,results,details)=>{
+    const anime=fixtureAnime(raw[0].title,2026,991,raw[0].title==='电影原名'?'movie':'tvseries');
+    anime.typeDescription=anime.type==='movie'?'电影':'电视剧';
+    addAnime(anime,details);const {links,...dto}=anime;results.push(dto);
+  };
+  source.getComments=async()=>[{p:'1,1,16777215,test',m:'Infuse弹幕'}];
+  globalThis.fetch=async input=>{
+    const url=new URL(input);tmdbRequests.push(url.pathname);
+    assert.equal(url.searchParams.get('language'),'zh-CN');
+    if(url.pathname==='/3/tv/300146')return Response.json({id:300146,name:'嫁金钗'});
+    if(url.pathname==='/3/movie/900001')return Response.json({id:900001,original_title:'电影原名'});
+    return new Response('{}',{status:404});
+  };
+  const request=path=>handleRequest(new Request('http://localhost/87654321/api/v2/'+path),Globals.env,'node','127.0.0.1');
+  try{
+    const response=await request('search/episodes?tmdbId=300146&tmdbIdType=0&episode=2');
+    assert.equal(response.status,200);
+    const data=await response.json();
+    assert.equal(data.success,true);assert.equal(data.animes.length,1);
+    assert.equal(data.animes[0].episodes.length,1);assert.match(data.animes[0].episodes[0].episodeTitle,/第2集/);
+    assert.deepEqual(keywords,['嫁金钗']);assert.deepEqual(tmdbRequests,['/3/tv/300146']);
+    const comments=await(await request('comment/'+data.animes[0].episodes[0].episodeId+'?format=json')).json();
+    assert.equal(comments.comments[0].m,'Infuse弹幕');
+    const movie=await(await request('search/episodes?tmdbId=900001&tmdbIdType=1&episode=movie')).json();
+    assert.equal(movie.animes.length,1);assert.equal(keywords.at(-1),'电影原名');
+    assert.equal(tmdbRequests.at(-1),'/3/movie/900001');
+    const unresolved=await request('search/episodes?tmdbId=900002');
+    assert.equal(unresolved.status,200);assert.deepEqual((await unresolved.json()).animes,[]);
+    assert.deepEqual(tmdbRequests.slice(-2),['/3/tv/900002','/3/movie/900002']);
+    const calls=tmdbRequests.length;
+    assert.equal((await request('search/episodes?anime='+encodeURIComponent('嫁金钗')+'&tmdbId=900002&episode=2')).status,200);
+    assert.equal(tmdbRequests.length,calls,'an explicit title keeps the original search path');
+    assert.equal((await request('search/episodes?tmdbId=invalid')).status,400);
+  }finally{source.search=saved.search;source.handleAnimes=saved.handle;source.getComments=saved.comments;globalThis.fetch=saved.fetch;}
+});
+
 test('TMDB query carries its typed ID and aliases forward without intermediary providers', async () => {
   const calls = [];
   const identity = await resolveTmdbMatchIdentity({title:'Example',season:2,episode:1,year:2025}, {
