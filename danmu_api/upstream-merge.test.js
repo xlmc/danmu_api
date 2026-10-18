@@ -675,3 +675,89 @@ test('merge applyMergeLogic 首集缺失仍按同号集对齐（主副源双向�
     assert.equal(merged.links.length, 13);
   }
 });
+
+test('merge applyMergeLogic 映射表按拉丁分部标记区分规则', async () => {
+  Globals.init({
+    LOG_LEVEL: 'error',
+    MERGE_SOURCE_PAIRS: 'tencent&youku',
+    CUSTOM_MERGE_RULES: [
+      'JOJO的奇妙冒险 石之海 Part.2(2022)【网络放送】@youku -> JOJO的奇妙冒险 石之海 Part.1(2022)【网络放送】@tencent | E1>E1',
+      'JOJO的奇妙冒险 石之海 Part.1(2022)【网络放送】@youku -> JOJO的奇妙冒险 石之海 Part.1(2022)【网络放送】@tencent | E1~E12>E1~E12',
+    ].join(';'),
+  });
+  const buildAnime = (animeId, animeTitle, source, titles) => ({
+    animeId,
+    bangumiId: String(animeId),
+    animeTitle,
+    aliases: [],
+    source,
+    type: 'web',
+    typeDescription: '网络放送',
+    startDate: '2022-12-01T00:00:00.000Z',
+    links: titles.map((title, i) => ({ title: `【${source}】 ${title}`, url: `${source}:${animeId}:${i}:${title}` })),
+    episodeCount: titles.length,
+  });
+  const numbersOf = (anime, source) => anime.links
+    .map((link) => new RegExp(`(?:^|\\$\\$\\$)${source}:\\d+:\\d+:第(\\d+)集`).exec(String(link.url)))
+    .filter(Boolean)
+    .map((m) => Number(m[1]));
+  const titles = Array.from({ length: 12 }, (_, i) => `第${i + 1}集`);
+
+  // 两条规则的标题剥离分部写法后相同，Part.1 条目应命中分部一致的规则（E1~E12），不受书写顺序影响
+  const primary   = buildAnime(1, 'JOJO的奇妙冒险 石之海 Part.1(2022)【网络放送】from tencent', 'tencent', titles);
+  const secondary = buildAnime(2, 'JOJO的奇妙冒险 石之海 Part.1(2022)【网络放送】from youku', 'youku', titles);
+
+  Globals.animes = [primary, secondary];
+  await applyMergeLogic([primary, secondary]);
+
+  const merged = Globals.animes.find((anime) => String(anime.animeTitle).includes('from tencent&youku'));
+  assert.notStrictEqual(merged, undefined, '产生合并条目');
+  assert.deepStrictEqual(numbersOf(merged, 'youku'), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 'Part.1 条目命中分部一致的规则，12 集全部并入');
+});
+
+test('merge applyMergeLogic 多条映射表路由按分部标记各自生效', async () => {
+  Globals.init({
+    LOG_LEVEL: 'error',
+    MERGE_SOURCE_PAIRS: 'tencent&youku',
+    CUSTOM_MERGE_RULES: [
+      '飙马野郎 JOJO的奇妙冒险 第二&第三赛段(2026)【WEB动画】@youku -> 飙马野郎 JOJO的奇妙冒险 第一赛段(2026)【网络放送】@tencent | E2~E12>E2~E12',
+      '飙马野郎 JOJO的奇妙冒险 第一赛段(2026)【WEB动画】@youku -> 飙马野郎 JOJO的奇妙冒险 第一赛段(2026)【网络放送】@tencent | E1>E1',
+    ].join(';'),
+  });
+  const buildAnime = (animeId, animeTitle, source, typeDescription, titles) => ({
+    animeId,
+    bangumiId: String(animeId),
+    animeTitle,
+    aliases: [],
+    source,
+    type: 'web',
+    typeDescription,
+    startDate: '2026-03-18T16:00:00.000Z',
+    links: titles.map((title, i) => ({ title: `【${source}】 ${title}`, url: `${source}:${animeId}:${i}:${title}` })),
+    episodeCount: titles.length,
+  });
+  const numbersOf = (anime, source) => anime.links
+    .map((link) => new RegExp(`(?:^|\\$\\$\\$)${source}:\\d+:\\d+:第(\\d+)`).exec(String(link.url)))
+    .filter(Boolean)
+    .map((m) => Number(m[1]));
+
+  // 两条规则的标题剥离分部噪声后相同，按分部标记分别命中各自的副源条目
+  const primary = buildAnime(19287, '飙马野郎 JOJO的奇妙冒险 第一赛段(2026)【网络放送】from tencent', 'tencent', '网络放送', [
+    '第1话 飙马野郎', '第2话 マウンテン・ティムへの依頼', '第3话 砂漠で生まれたならず者', '第4话 悪魔の手のひら',
+    '第5话', '第6话', '第7话', '第8话',
+  ]);
+  const stage1  = buildAnime(551918, '飙马野郎 JOJO的奇妙冒险 第一赛段(2026)【WEB动画】from youku', 'youku', 'WEB动画', ['第1话 飙马野郎']);
+  const stage23 = buildAnime(639938, '飙马野郎 JOJO的奇妙冒险 第二&第三赛段(2026)【WEB动画】from youku', 'youku', 'WEB动画', [
+    '第2话 警长对曼登·提姆的要求', '第3话 沙漠中诞生的法外之徒', '第4话 恶魔之掌', '第5话', '第6话', '第7话',
+    '第8话', '第9话', '第10话', '第11话', '第12话',
+  ]);
+
+  Globals.animes = [primary, stage1, stage23];
+  await applyMergeLogic([primary, stage1, stage23]);
+
+  const merged = Globals.animes.find((anime) => anime.animeTitle.includes('from tencent&youku&youku'));
+  assert.notStrictEqual(merged, undefined, '产生合并条目');
+  assert.strictEqual(merged.links.length, 12, '第一赛段并入第 1 话，第二&第三赛段并入第 2~8 话，落单集补在末尾');
+  assert.deepStrictEqual(numbersOf(merged, 'tencent'), [1, 2, 3, 4, 5, 6, 7, 8], '主源集号保持原有顺序');
+  assert.deepStrictEqual(numbersOf(merged, 'youku'), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], '两条路由各自生效，副源集号连续');
+});

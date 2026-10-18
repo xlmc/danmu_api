@@ -34,6 +34,81 @@ function generateLocalCna() {
   return cna;
 }
 
+function parseEmbeddedJson(value) {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function extractYoukuComments(response) {
+  let body = parseEmbeddedJson(response?.data);
+  if (!body) return [];
+
+  let payload = body?.data?.result ?? body?.result ?? body;
+  payload = parseEmbeddedJson(payload);
+  if (!payload) return [];
+
+  const candidates = [
+    payload,
+    payload?.data?.result,
+    payload?.data?.items,
+    payload?.data?.comments,
+    payload?.result,
+    payload?.items,
+    payload?.comments,
+  ];
+
+  return candidates.find(Array.isArray) || [];
+}
+
+function readYoukuText(value) {
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'bigint') return String(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const text = readYoukuText(item);
+      if (text) return text;
+    }
+    return '';
+  }
+  if (!value || typeof value !== 'object') return '';
+
+  // 只读取正文字段，避免将 name、nick、userName 等用户昵称当作弹幕。
+  for (const key of ['text', 'content', 'message', 'msg', 'value', 'body']) {
+    const text = readYoukuText(value[key]);
+    if (text) return text;
+  }
+  return '';
+}
+
+function extractYoukuCommentText(item) {
+  if (!item || typeof item !== 'object') return '';
+  for (const key of ['content', 'text', 'message', 'msg', 'comment', 'danmu', 'dm', 'contentText']) {
+    const text = readYoukuText(item[key]);
+    if (text) return text;
+  }
+  return readYoukuText(item.extFields?.content ?? item.extFields?.text);
+}
+
+function parseYoukuProperties(item) {
+  const raw = item?.propertis ?? item?.properties ?? item?.property;
+  if (!raw || typeof raw === 'object') return raw || null;
+  return parseEmbeddedJson(raw);
+}
+
+function parseYoukuColor(rawColor) {
+  if (typeof rawColor === 'number' && Number.isFinite(rawColor)) return rawColor;
+  if (typeof rawColor !== 'string') return 16777215;
+  const value = rawColor.trim().replace(/^#/, '');
+  if (!value) return 16777215;
+  const radix = rawColor.trim().startsWith('#') || /[a-f]/i.test(value) || /^0x/i.test(value) ? 16 : 10;
+  const color = parseInt(value.replace(/^0x/i, ''), radix);
+  return Number.isFinite(color) ? color : 16777215;
+}
+
 export default class YoukuSource extends BaseSource {
   constructor() {
     super();
@@ -464,14 +539,7 @@ export default class YoukuSource extends BaseSource {
           retries: 1,
         });
 
-        const results = [];
-        if (response.data?.data && response.data.data.result) {
-          const result = JSON.parse(response.data.data.result);
-          if (result.code !== "-1") {
-            results.push(...result.data.result);
-          }
-        }
-        return results;
+        return extractYoukuComments(response);
       });
 
       try {
@@ -747,48 +815,43 @@ export default class YoukuSource extends BaseSource {
       retries: 1,
     });
 
-    const results = [];
-    if (response.data?.data && response.data.data.result) {
-      const result = JSON.parse(response.data.data.result);
-      if (result.code !== "-1") {
-        results.push(...result.data.result);
-      }
-    }
-
-    return results;
+    return extractYoukuComments(response);
   }
 
   formatComments(comments) {
-    return comments.map(item => {
+    return (Array.isArray(comments) ? comments : []).map(item => {
+      const text = extractYoukuCommentText(item);
+      // 丢弃没有正文的无效弹幕。
+      if (!text) return null;
+
+      const rawPlayat = item?.playat ?? item?.timepoint ?? item?.time ?? item?.progress;
+      const numericPlayat = Number(rawPlayat);
+      const milliseconds = item.playat != null || (item.timepoint == null && item.time == null && item.progress != null);
+      const timepoint = Number.isFinite(numericPlayat)
+        ? numericPlayat / (milliseconds ? 1000 : 1)
+        : 0;
       const content = {
-        timepoint: 0,
+        timepoint,
         ct: 1,
         size: 25,
         color: 16777215,
         unixtime: Math.floor(Date.now() / 1000),
-        uid: 0,
-        content: "",
+        uid: item?.uid ?? item?.ouid ?? 0,
+        content: text,
+        // 兼容直接消费 formatComments() 的聚合路径；BaseSource 会再统一输出为 m。
+        m: text,
       };
-      content.timepoint = Number(item.playat) / 1000 || 0;
-      let prop = null;
-      try {
-        prop = item.propertis ? JSON.parse(item.propertis) : null;
-      } catch (error) {
-        log("info", `[youku] 弹幕属性解析失败，已忽略颜色/位置: ${error.message}`);
+      const prop = parseYoukuProperties(item);
+      if (prop?.color !== undefined || item?.color !== undefined) {
+        content.color = parseYoukuColor(prop?.color ?? item.color);
       }
-      if (prop?.color) {
-        content.color = typeof prop.color === 'string' 
-          ? parseInt(prop.color, 10) 
-          : prop.color;
-      }
-      if (prop?.pos) {
-        const pos = prop.pos;
+      if (prop?.pos !== undefined || item?.pos !== undefined) {
+        const pos = Number(prop?.pos ?? item.pos);
         if (pos === 1) content.ct = 5;
         else if (pos === 2) content.ct = 4;
       }
-      content.content = item.content;
       content.like = item.extFields?.voteUp ?? 0;
       return content;
-    });
+    }).filter(Boolean);
   }
 }
