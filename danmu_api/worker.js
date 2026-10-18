@@ -1,3 +1,4 @@
+import { getInfuseEpisodeMapping, isInfuseEpisodeId } from './utils/infuse-util.js';
 import { handleMappingShare } from './utils/mapping-share-util.js';
 import { initializePersistentCaches } from './utils/persistent-cache-util.js';
 import { Globals } from './configs/globals.js';
@@ -235,7 +236,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     const animes = data.animes.map(anime => ({
       ...anime,
       type: types.includes(anime.type) ? anime.type : (typeAliases[anime.type] || 'unknown'),
-      episodes: anime.episodes.map(({ episodeId, episodeTitle }) => ({ episodeId, episodeTitle })),
+      episodes: anime.episodes.map(({ episodeId, episodeTitle, url }) => ({ episodeId, episodeTitle, url })),
     }));
     return jsonResponse({ ...data, hasMore: data.hasMore ?? false, animes }, response.status);
   }
@@ -358,7 +359,8 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     }
 
     const commentId = parseInt(path.split("/").pop());
-    let urlForComment = findUrlById(commentId);
+    const mapping = await getInfuseEpisodeMapping(commentId);
+    let urlForComment = mapping?.url || (isInfuseEpisodeId(commentId) ? null : findUrlById(commentId));
 
     if (urlForComment) {
       // 检查弹幕缓存 - 缓存命中时直接返回，不计入限流

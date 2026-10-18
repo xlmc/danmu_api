@@ -6,6 +6,9 @@ import { Anime } from './models/player-model.js';
 import { addAnime } from './utils/cache-util.js';
 import { getSourceByKey } from './sources/registry.js';
 import { SUPPORTED_SOURCES } from './sources/policy.js';
+import { handleRequest } from './worker.js';
+import { assignInfuseEpisodeIds, clearInfuseEpisodeMappingsForTest, decodeInfuseEpisodeId, getInfuseEpisodeMapping, isInfuseEpisodeId, rememberInfuseEpisodeMapping } from './utils/infuse-util.js';
+import { recoverInfuseEpisodeMapping } from './apis/player-api.js';
 
 function reset(sourceOrder = 'tencent') {
   Globals.init({ SOURCE_ORDER: sourceOrder, MERGE_SOURCE_PAIRS: '', CUSTOM_MERGE_RULES: '',
@@ -116,4 +119,116 @@ test('episode lookup returns completed sources without caching partial results o
     const full = await (await ordinary).json();
     assert.deepEqual(full.animes.map(anime => anime.source), ['tencent', 'youku']);
   } finally { finishSlow([]); }
+});
+
+test('Infuse episode IDs are safe, reversible and independent of candidate order', () => {
+  const candidates = [
+    { source: 'youku', title: '【youku】 第5集', url: 'https://v.youku.com/v_show/id_a.html' },
+    { source: 'tencent', title: '【qq】 第5集', url: 'https://v.qq.com/x/cover/a/b.html' },
+  ];
+  const context = { tmdbId: 300146, mediaType: 'tv', episode: 5 };
+  const ids = assignInfuseEpisodeIds(candidates, context);
+  const reversedIds = assignInfuseEpisodeIds([...candidates].reverse(), context).reverse();
+
+  assert.deepEqual(ids, reversedIds);
+  assert.equal(new Set(ids).size, 2);
+  for (const id of ids) {
+    assert.equal(Number.isSafeInteger(id), true);
+    assert.equal(isInfuseEpisodeId(id), true);
+  }
+  assert.deepEqual(decodeInfuseEpisodeId(ids[0]), {
+    id: ids[0],
+    tmdbId: 300146,
+    mediaType: 'tv',
+    episode: 5,
+    source: 'youku',
+    hash: decodeInfuseEpisodeId(ids[0]).hash,
+  });
+});
+
+test('Infuse episode mappings survive an isolate-local memory reset through Cache API', async () => {
+  const previousCaches = globalThis.caches;
+  const entries = new Map();
+  globalThis.caches = {
+    default: {
+      async put(request, response) { entries.set(request.url, response.clone()); },
+      async match(request) { return entries.get(request.url)?.clone(); },
+    },
+  };
+
+  try {
+    clearInfuseEpisodeMappingsForTest();
+    const [id] = assignInfuseEpisodeIds([
+      { source: 'iqiyi', title: '【qiyi】 第1集', url: 'https://www.iqiyi.com/v_test.html' },
+    ], { tmdbId: 123456, mediaType: 'movie', episode: 1 });
+    const expected = {
+      id,
+      url: 'https://www.iqiyi.com/v_test.html',
+      title: '【qiyi】 第1集',
+      animeTitle: '测试电影(2026)【电影】',
+      source: 'iqiyi',
+    };
+
+    await rememberInfuseEpisodeMapping(expected);
+    clearInfuseEpisodeMappingsForTest();
+    assert.deepEqual(await getInfuseEpisodeMapping(id), expected);
+  } finally {
+    clearInfuseEpisodeMappingsForTest();
+    if (previousCaches === undefined) delete globalThis.caches;
+    else globalThis.caches = previousCaches;
+  }
+});
+
+test('Infuse encoded IDs match upstream while preserving old IDs and rebuilding NAS context after restart', async t => {
+  reset('youku');
+  Globals.init({ ...Globals.env, TOKEN_AUTH_DISABLED: 'true', TMDB_API_KEY: 'offline-test-key',
+    BLOCK_DOMESTIC_CELEBRITIES: 'false', RATE_LIMIT_MAX_REQUESTS: '0', PROXY_URL: '' });
+  clearInfuseEpisodeMappingsForTest();
+  t.after(clearInfuseEpisodeMappingsForTest);
+  const videoUrl = 'https://v.youku.com/v_show/id_infuse.html';
+  const source = getSourceByKey('youku');
+  t.mock.method(source, 'search', async () => []);
+  t.mock.method(source, 'handleAnimes', async (_raw, _title, animes, details) => {
+    animes.push(record(details, 'youku', [{ title: '第25集', url: videoUrl }], '九门(2026)【电视剧】'));
+  });
+  t.mock.method(source, 'getComments', async () => [{ cid: 1, p: '1,1,16777215,0', m: '映射恢复后弹幕' }]);
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ id: 300146, name: '九门', original_name: '九门' }));
+  const request = path => handleRequest(new Request('http://localhost/api/v2/' + path,
+    { headers: { 'User-Agent': 'Infuse/8.5.5793' } }), Globals.env, 'node', '127.0.0.1');
+  const data = await (await request('search/episodes?tmdbId=300146&episode=25')).json();
+  const episode = data.animes[0].episodes[0];
+  const [expectedId] = assignInfuseEpisodeIds([{ source: 'youku', url: videoUrl, title: '第25集' }],
+    { tmdbId: 300146, mediaType: 'tv', episode: 25 });
+  assert.equal(episode.episodeId, expectedId);
+  assert.equal(episode.url, videoUrl);
+  const mapping = await getInfuseEpisodeMapping(episode.episodeId);
+  assert.equal(mapping.legacyEpisodeId, Globals.episodeIds[0].id);
+  assert.equal(isInfuseEpisodeId(mapping.legacyEpisodeId), false);
+  assert.ok(Globals.episodeNum < 20000, 'encoded IDs never enter the legacy allocation sequence');
+  for (const id of [episode.episodeId, mapping.legacyEpisodeId]) {
+    const response = await request('comment/' + id);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).comments[0].m, '映射恢复后弹幕');
+  }
+
+  clearInfuseEpisodeMappingsForTest();
+  Globals.animes = []; Globals.episodeIds = []; Globals.episodeNum = 20000;
+  Globals.searchCache = new Map(); Globals.commentCache = new Map();
+  Globals.init({ ...Globals.env, SOURCE_ORDER: 'tencent' });
+  t.mock.method(getSourceByKey('tencent'), 'search', async () => { throw new Error('recovery must only search the encoded source'); });
+  const recovered = await request('comment/' + episode.episodeId);
+  assert.equal(recovered.status, 200);
+  assert.equal((await recovered.json()).comments[0].m, '映射恢复后弹幕');
+  const rebuilt = await getInfuseEpisodeMapping(episode.episodeId);
+  assert.equal(rebuilt.legacyEpisodeId, 20001);
+  assert.equal(Globals.animes[0].links[0].id, rebuilt.legacyEpisodeId, 'UGC and filters retain the restored NAS context');
+});
+
+test('encoded IDs for retired providers cannot bypass the NAS source policy', async () => {
+  clearInfuseEpisodeMappingsForTest();
+  const [id] = assignInfuseEpisodeIds([{ source: 'dandan', url: 'dandan:123' }],
+    { tmdbId: 123, mediaType: 'tv', episode: 1 });
+  let called = false;
+  assert.equal(await recoverInfuseEpisodeMapping(id, async () => { called = true; }), null);
+  assert.equal(called, false);
 });

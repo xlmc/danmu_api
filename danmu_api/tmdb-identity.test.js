@@ -42,7 +42,7 @@ test('Infuse TMDB-only episode searches resolve titles and return usable comment
     assert.equal(data.success,true);assert.equal(data.animes.length,1);
     assert.equal(data.hasMore,false);assert.equal(data.animes[0].type,'tvseries');
     assert.equal(data.animes[0].typeDescription,'电视剧');
-    assert.deepEqual(Object.keys(data.animes[0].episodes[0]),['episodeId','episodeTitle']);
+    assert.deepEqual(Object.keys(data.animes[0].episodes[0]),['episodeId','episodeTitle','url']);
     assert.equal(data.animes[0].episodes.length,1);assert.match(data.animes[0].episodes[0].episodeTitle,/第2集/);
     assert.deepEqual(keywords,['嫁金钗']);assert.deepEqual(tmdbRequests,['/3/tv/300146']);
     const comments=await(await request('comment/'+data.animes[0].episodes[0].episodeId+'?format=json')).json();
