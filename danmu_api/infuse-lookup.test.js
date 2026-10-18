@@ -121,6 +121,35 @@ test('episode lookup returns completed sources without caching partial results o
   } finally { finishSlow([]); }
 });
 
+test('completed bounded episode lookups reuse search results on reentry', async t => {
+  reset('tencent,youku');
+  const calls = { tencent: 0, youku: 0 };
+  for (const source of Object.keys(calls)) {
+    t.mock.method(getSourceByKey(source), 'search', async () => { calls[source]++; return []; });
+    t.mock.method(getSourceByKey(source), 'handleAnimes', async (_raw, _title, animes, details) => {
+      animes.push(record(details, source, [{ title: '第19集' }], '重进测试(2026)【电视剧】', source === 'tencent' ? 5011 : 5012));
+    });
+  }
+  const url = request('anime=重进测试&episode=19');
+  const first = await (await searchEpisodes(url)).json();
+  assert.ok(first.animes.length > 0);
+  assert.ok(Globals.searchCache.size > 0, 'all sources completed before the deadline');
+  assert.deepEqual(await (await searchEpisodes(url)).json(), first);
+  assert.deepEqual(calls, { tencent: 1, youku: 1 }, 'reentry must not repeat source searches');
+});
+
+test('a failed source keeps a bounded lookup out of the complete search cache', async t => {
+  reset('tencent,youku');
+  t.mock.method(getSourceByKey('tencent'), 'search', async () => []);
+  t.mock.method(getSourceByKey('tencent'), 'handleAnimes', async (_raw, _title, animes, details) => {
+    animes.push(record(details, 'tencent', [{ title: '第19集' }]));
+  });
+  t.mock.method(getSourceByKey('youku'), 'search', async () => { throw new Error('source unavailable'); });
+  const data = await (await searchEpisodes(request('anime=失败源测试&episode=19'))).json();
+  assert.ok(data.animes.length > 0);
+  assert.equal(Globals.searchCache.size, 0, 'partial results must not masquerade as a full catalog');
+});
+
 test('Infuse episode IDs are safe, reversible and independent of candidate order', () => {
   const candidates = [
     { source: 'youku', title: '【youku】 第5集', url: 'https://v.youku.com/v_show/id_a.html' },

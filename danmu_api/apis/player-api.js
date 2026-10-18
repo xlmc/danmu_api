@@ -875,6 +875,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
     });
   }
 
+  let canCacheLookup = episodeLookupDeadline === null;
   try {
     // 根据 sourceOrderArr 动态构建逐源管道：每个源形成独立的 search → handleAnimes 流水线
     log("info", `[system] [LogVar-API] Search sourceOrderArr: ${sourceOrder}`);
@@ -934,6 +935,8 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
 
     // 并发执行所有逐源管道，每个管道内部 search 完成后立即衔接 handleAnimes
     const pipelineResults = await Promise.allSettled(pipelineTasks.map(task => task.promise));
+    // 有等待预算不等于结果不完整；全部来源完成时仍应缓存，避免重进重复等待全量搜索。
+    canCacheLookup ||= pipelineResults.every(result => result.status === 'fulfilled');
 
     // 按SOURCE_ORDER顺序合并各管道的独立结果到目标容器
     // 先处理的源数据优先保留（animeId去重、detailStore键去重）
@@ -969,7 +972,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
     }
 
     // 缓存首季/默认请求结果，剥离附加链接
-    if (curAnimes.length > 0 && !searchSources && episodeLookupDeadline === null) {
+    if (curAnimes.length > 0 && !searchSources && canCacheLookup) {
       setSearchCache(scopedKey(cacheKey), curAnimes.map(({ links, ...pureAnime }) => pureAnime), requestAnimeDetailsMap);
     }
 
@@ -1028,7 +1031,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
             for (let s = expansionStart; s <= expansionEnd; s++) {
               const seasonAnimes = [];
               await executeSourceHandlers({ [source]: resultData[source] }, queryTitle, seasonAnimes, requestAnimeDetailsMap, s, preferAnimeId, preferSource, sourceOrder);
-              if (seasonAnimes.length > 0 && !searchSources && episodeLookupDeadline === null) {
+              if (seasonAnimes.length > 0 && !searchSources && canCacheLookup) {
                 setSearchCache(scopedKey(`${queryTitle}_S${s}`), seasonAnimes.map(({ links, ...pureAnime }) => pureAnime), requestAnimeDetailsMap);
               }
               sourceResults.push(seasonAnimes);
@@ -1110,7 +1113,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
     const responseAnimes = curAnimes.map(({ links, ...pureAnime }) => pureAnime);
 
     // 缓存搜索结果
-    if (responseAnimes.length > 0 && episodeLookupDeadline === null) {
+    if (responseAnimes.length > 0 && canCacheLookup) {
       const cacheKey = querySeason !== null ? `${queryTitle}_S${querySeason}` : queryTitle;
       setSearchCache(scopedKey(cacheKey), responseAnimes, requestAnimeDetailsMap);
     }
