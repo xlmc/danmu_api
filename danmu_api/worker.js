@@ -5,7 +5,7 @@ import { Globals } from './configs/globals.js';
 import { jsonResponse } from './utils/http-util.js';
 import { log, formatLogMessage } from './utils/log-util.js'
 
-import { cleanupExpiredIPs, findUrlById, getCommentCache, judgeLocalCacheValid } from "./utils/cache-util.js";
+import { cleanupExpiredIPs, findUrlById, findTitleById, getCommentCache, judgeLocalCacheValid } from "./utils/cache-util.js";
 import { formatDanmuResponse } from "./utils/danmu-util.js";
 
 import { getBangumi, getComment, getCommentByUrl, getSegmentComment, matchAnime, searchAnime, searchEpisodes } from "./apis/player-api.js";
@@ -289,6 +289,21 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       log('info', `[system] [Infuse] 标准 JSON 响应: ${comments.length} 条弹幕，仅保留 cid/p/m`);
       const result = jsonResponse({ ...data, count: comments.length, comments }, response.status);
       result.headers.set('Content-Type', 'application/json; charset=utf-8');
+      // 重进播放时，下载缓存可能按 URL 尾段命名；显式给出分集文件名，避免显示数字 ID。
+      const videoUrl = url.searchParams.get('url');
+      const commentId = Number(path.split('/').pop());
+      const mapping = videoUrl ? null : await getInfuseEpisodeMapping(commentId);
+      const title = videoUrl
+        ? (Globals.episodeIds.find(episode => episode.url === videoUrl)?.title || url.searchParams.get('animeTitle'))
+        : (mapping?.title || findTitleById(commentId));
+      if (title) {
+        const name = Array.from(String(title).toWellFormed().replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, ' ').trim()).slice(0, 160).join('');
+        if (name) {
+          const filename = encodeURIComponent(name + '.json').replace(/['()*]/g, char => '%' + char.charCodeAt(0).toString(16).toUpperCase());
+          result.headers.set('Content-Disposition', `inline; filename="danmaku.json"; filename*=UTF-8''${filename}`);
+          log('info', `[system] [Infuse] 下载名称: ${name}`);
+        }
+      }
       return result;
     };
     const videoUrl = url.searchParams.get('url');

@@ -208,6 +208,9 @@ test('Infuse encoded IDs match upstream while preserving old IDs and rebuilding 
   for (const id of [episode.episodeId, mapping.legacyEpisodeId]) {
     const response = await request('comment/' + id);
     assert.equal(response.status, 200);
+    const disposition = response.headers.get('content-disposition');
+    assert.ok(disposition.startsWith('inline; filename="danmaku.json";'));
+    assert.equal(decodeURIComponent(disposition.split("filename*=UTF-8''")[1]), mapping.title + '.json');
     assert.equal((await response.json()).comments[0].m, '映射恢复后弹幕');
   }
 
@@ -218,6 +221,7 @@ test('Infuse encoded IDs match upstream while preserving old IDs and rebuilding 
   t.mock.method(getSourceByKey('tencent'), 'search', async () => { throw new Error('recovery must only search the encoded source'); });
   const recovered = await request('comment/' + episode.episodeId);
   assert.equal(recovered.status, 200);
+  assert.equal(decodeURIComponent(recovered.headers.get('content-disposition').split("filename*=UTF-8''")[1]), mapping.title + '.json');
   assert.equal((await recovered.json()).comments[0].m, '映射恢复后弹幕');
   const rebuilt = await getInfuseEpisodeMapping(episode.episodeId);
   assert.equal(rebuilt.legacyEpisodeId, 20001);
