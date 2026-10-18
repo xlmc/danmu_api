@@ -2817,7 +2817,9 @@ export async function searchEpisodes(url, clientIp = null, options = {}) {
     }),
   }));
   await Promise.allSettled(mappingWrites);
-  return jsonResponse({ errorCode: 0, success: true, errorMessage: animes.length ? '' : getAddAnimeError(details), hasMore: false, animes });
+  const data = { errorCode: 0, success: true, errorMessage: animes.length ? '' : getAddAnimeError(details), animes };
+  if (!animes.length) data.hasMore = false;
+  return jsonResponse(data);
 }
 
 // 编码 ID 未命中内存时，按 ID 中的作品、集号和来源重建映射；兼容 NAS 重启。

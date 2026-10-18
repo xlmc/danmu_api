@@ -5,7 +5,7 @@ import { Globals } from './configs/globals.js';
 import { jsonResponse } from './utils/http-util.js';
 import { log, formatLogMessage } from './utils/log-util.js'
 
-import { cleanupExpiredIPs, findUrlById, findTitleById, getCommentCache, judgeLocalCacheValid } from "./utils/cache-util.js";
+import { cleanupExpiredIPs, findUrlById, getCommentCache, judgeLocalCacheValid } from "./utils/cache-util.js";
 import { formatDanmuResponse } from "./utils/danmu-util.js";
 
 import { getBangumi, getComment, getCommentByUrl, getSegmentComment, matchAnime, searchAnime, searchEpisodes } from "./apis/player-api.js";
@@ -226,19 +226,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     log('info', '[system] [player-request] ' + JSON.stringify({ method, endpoint: path,
       anime: url.searchParams.get('anime'), episode: url.searchParams.get('episode'),
       userAgent: req.headers.get('user-agent'), clientIp }));
-    const response = await searchEpisodes(url, clientIp);
-    if (!/^Infuse(?:\/|\s|$)/i.test(req.headers.get('user-agent') || '') || !response.ok) return response;
-    const data = await response.json();
-    const typeAliases = { '电视剧': 'tvseries', '动漫': 'tvseries', '动画': 'tvseries',
-      '综艺': 'tvseries', '短剧': 'tvseries', '电影': 'movie', '剧场版': 'movie' };
-    const types = ['tvseries', 'tvspecial', 'ova', 'movie', 'musicvideo', 'web', 'other',
-      'jpmovie', 'jpdrama', 'unknown', 'tmdbtv', 'tmdbmovie'];
-    const animes = data.animes.map(anime => ({
-      ...anime,
-      type: types.includes(anime.type) ? anime.type : (typeAliases[anime.type] || 'unknown'),
-      episodes: anime.episodes.map(({ episodeId, episodeTitle, url }) => ({ episodeId, episodeTitle, url })),
-    }));
-    return jsonResponse({ ...data, hasMore: data.hasMore ?? false, animes }, response.status);
+    return searchEpisodes(url, clientIp);
   }
 
   // GET|POST /api/v2/fongmi/danmaku
@@ -269,43 +257,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
 
   // GET /api/v2/comment/:commentId or /api/v2/comment?url=xxx or /api/v2/extcomment?url=xxx
   if ((path.startsWith("/api/v2/comment") || path.startsWith("/api/v2/extcomment")) && method === "GET") {
-    const requestedFormat = url.searchParams.get('format');
-    const infuseJson = /^Infuse(?:\/|\s|$)/i.test(req.headers.get('user-agent') || '') &&
-      (!requestedFormat || requestedFormat.toLowerCase() === 'json');
-    const queryFormat = infuseJson ? 'json' : requestedFormat;
-    const commentResponse = async pending => {
-      const response = await pending;
-      if (!infuseJson || !response.ok) return response;
-      const data = await response.clone().json();
-      if (!Array.isArray(data.comments)) return response;
-
-      // Infuse 使用标准弹弹play字段；只裁剪响应，不修改共享弹幕缓存。
-      const comments = data.comments.map(({ cid, p, m }) => {
-        const [time, mode, color, userId] = p.split(',');
-        // 官方 p 的第4项是无特殊字符的用户ID，内部来源标签不能直接对外充当ID。
-        return { cid, p: [time, mode, color, /^[a-z0-9]+$/i.test(userId || '') ? userId : '0'].join(','), m };
-      })
-        .sort((a, b) => parseFloat(a.p) - parseFloat(b.p));
-      log('info', `[system] [Infuse] 标准 JSON 响应: ${comments.length} 条弹幕，仅保留 cid/p/m`);
-      const result = jsonResponse({ ...data, count: comments.length, comments }, response.status);
-      result.headers.set('Content-Type', 'application/json; charset=utf-8');
-      // 重进播放时，下载缓存可能按 URL 尾段命名；显式给出分集文件名，避免显示数字 ID。
-      const videoUrl = url.searchParams.get('url');
-      const commentId = Number(path.split('/').pop());
-      const mapping = videoUrl ? null : await getInfuseEpisodeMapping(commentId);
-      const title = videoUrl
-        ? (Globals.episodeIds.find(episode => episode.url === videoUrl)?.title || url.searchParams.get('animeTitle'))
-        : (mapping?.title || findTitleById(commentId));
-      if (title) {
-        const name = Array.from(String(title).toWellFormed().replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, ' ').trim()).slice(0, 160).join('');
-        if (name) {
-          const filename = encodeURIComponent(name + '.json').replace(/['()*]/g, char => '%' + char.charCodeAt(0).toString(16).toUpperCase());
-          result.headers.set('Content-Disposition', `inline; filename="danmaku.json"; filename*=UTF-8''${filename}`);
-          log('info', `[system] [Infuse] 下载名称: ${name}`);
-        }
-      }
-      return result;
-    };
+    const queryFormat = url.searchParams.get('format');
     const videoUrl = url.searchParams.get('url');
     const segmentFlagParam = url.searchParams.get('segmentflag');
     const durationParam = url.searchParams.get('duration');
@@ -326,7 +278,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       const cachedComments = getCommentCache(videoUrl);
       if (cachedComments !== null) {
         log("info", `[system] [Rate Limit] Cache hit for URL: ${videoUrl}, skipping rate limit check`);
-        return commentResponse(getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration, url.searchParams.get('animeTitle') || ''));
+        return getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration, url.searchParams.get('animeTitle') || '');
       }
 
       // 缓存未命中，执行限流检查（如果 rateLimitMaxRequests > 0 则启用限流）
@@ -361,7 +313,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       }
 
       // 通过URL获取弹幕
-      return commentResponse(getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration, url.searchParams.get('animeTitle') || ''));
+      return getCommentByUrl(videoUrl, queryFormat, segmentFlag, includeDuration, url.searchParams.get('animeTitle') || '');
     }
 
     // 否则通过commentId获取弹幕
@@ -382,7 +334,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       const cachedComments = getCommentCache(urlForComment);
       if (cachedComments !== null) {
         log("info", `[system] [Rate Limit] Cache hit for URL: ${urlForComment}, skipping rate limit check`);
-        return commentResponse(getComment(path, queryFormat, segmentFlag, clientIp, includeDuration));
+        return getComment(path, queryFormat, segmentFlag, clientIp, includeDuration);
       }
     }
 
@@ -421,7 +373,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
       log("info", `[system] [Rate Limit] IP ${clientIp} request count: ${recentRequests.length}/${globals.rateLimitMaxRequests}`);
     }
 
-    return commentResponse(getComment(path, queryFormat, segmentFlag, clientIp, includeDuration));
+    return getComment(path, queryFormat, segmentFlag, clientIp, includeDuration);
   }
 
   // POST /api/v2/segmentcomment - 接收segment类的JSON请求体
