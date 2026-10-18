@@ -586,7 +586,9 @@ export function addAnime(anime, detailStore = null) {
             if (link.url) {
                 const episode = allocateEpisode(link.url, link.title);
                 if (episode) {
-                    newLinks.push(episode); // 仅添加成功添加的 episode
+                    newLinks.push({ ...episode,
+                      ...(link.episodeNumber != null ? { episodeNumber: link.episodeNumber } : {}),
+                      ...(link.sort != null ? { sort: link.sort } : {}) });
                 }
             } else {
                 log("error", `[cache] Invalid link in anime, missing url: ${JSON.stringify(link)}`);
@@ -601,7 +603,7 @@ export function addAnime(anime, detailStore = null) {
         storeAnimeDetail(detailStore, animeCopy);
 
         // 检查是否已存在相同 animeId 的 anime
-        const existingAnimeIndex = globals.animes.findIndex(a => a.animeId === anime.animeId);
+        const existingAnimeIndex = globals.animes.findIndex(a => a.animeId === anime.animeId && a.source === anime.source);
 
         if (existingAnimeIndex !== -1) {
             // 如果存在，先删除旧的

@@ -563,7 +563,10 @@ export async function getTmdbMediaTitleById(tmdbId, preferredMediaType = 'tv') {
       : (detail.title || detail.original_title || '');
     if (!title) continue;
     log('info', `[system] [tmdb] 通过 ID 解析标题成功: ${id} (${mediaType}) -> ${title}`);
-    return { id: Number(detail.id) || Number(id), mediaType, title };
+    const originalTitle = mediaType === 'tv' ? detail.original_name : detail.original_title;
+    const releaseDate = mediaType === 'tv' ? detail.first_air_date : detail.release_date;
+    const year = Number(String(releaseDate || '').match(/^(\d{4})/)?.[1]) || null;
+    return { id: Number(detail.id) || Number(id), mediaType, title, originalTitle: originalTitle || title, year };
   }
   return null;
 }
