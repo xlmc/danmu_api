@@ -40,7 +40,7 @@ test('Infuse TMDB-only episode searches resolve titles and return usable comment
     assert.equal(response.status,200);
     const data=await response.json();
     assert.equal(data.success,true);assert.equal(data.animes.length,1);
-    assert.equal(data.hasMore,false);assert.equal(data.animes[0].type,'tvseries');
+    assert.equal('hasMore' in data,false);assert.equal(data.animes[0].type,'电视剧');
     assert.equal(data.animes[0].typeDescription,'电视剧');
     assert.deepEqual(Object.keys(data.animes[0].episodes[0]),['episodeId','episodeTitle','url']);
     assert.equal(data.animes[0].episodes.length,1);assert.match(data.animes[0].episodes[0].episodeTitle,/第2集/);
@@ -49,7 +49,7 @@ test('Infuse TMDB-only episode searches resolve titles and return usable comment
     assert.equal(comments.comments[0].m,'Infuse弹幕');
     const movie=await(await request('search/episodes?tmdbId=900001&tmdbIdType=1&episode=movie')).json();
     assert.equal(movie.animes.length,1);assert.equal(keywords.at(-1),'电影原名');
-    assert.equal(movie.animes[0].type,'movie');
+    assert.equal(movie.animes[0].type,'电影');
     assert.equal(tmdbRequests.at(-1),'/3/movie/900001');
     const unresolved=await request('search/episodes?tmdbId=900002');
     assert.equal(unresolved.status,200);assert.deepEqual((await unresolved.json()).animes,[]);

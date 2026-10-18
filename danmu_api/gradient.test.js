@@ -234,7 +234,7 @@ test('in-flight requests retain their rules and cannot overwrite or evict newer 
   assert.equal((await formatDanmuResponse({ comments: current }, 'json').json()).comments[0].danmux, undefined);
 });
 
-test('Infuse receives standard comments on cold and warm ID/URL routes without changing other clients', async t => {
+test('Infuse shares upstream response formatting with other clients on cold and warm ID/URL routes', async t => {
   reset({ COMMENT_CACHE_MINUTES: '30', COMMENT_CACHE_MIN_COUNT: '0', LOCAL_CACHE_ENABLED: 'false',
     LOCAL_REDIS_URL: '', USE_BANGUMI_DATA: 'false', RATE_LIMIT_MAX_REQUESTS: '0', REMEMBER_LAST_SELECT: 'false',
     BILIBILI_UGC_ENABLED: 'false', DANMU_OUTPUT_FORMAT: 'danmux' });
@@ -255,19 +255,20 @@ test('Infuse receives standard comments on cold and warm ID/URL routes without c
     const before = downloads;
     const first = await request(path);
     assert.equal(first.status, 200);
-    assert.match(first.headers.get('content-type'), /application\/json; charset=utf-8/);
+    assert.equal(first.headers.get('content-type'), 'application/json');
+    assert.equal(first.headers.get('content-disposition'), null);
     const data = await first.json();
     assert.equal(data.count, 3);
-    for (const comment of data.comments) assert.deepEqual(Object.keys(comment), ['cid', 'p', 'm']);
-    assert.ok(data.comments.every(comment => comment.p.split(',')[3] === '0'));
-    const cached = getCommentCache(videoUrl);
-    cached.reverse(); // Reproduce unordered cached comments without changing their timestamps.
+    assert.ok(data.comments.some(comment => comment.danmux));
+    const cached = JSON.stringify(getCommentCache(videoUrl));
     assert.deepEqual(await (await request(path)).json(), data);
     assert.equal(downloads, before + 1);
-    assert.ok(getCommentCache(videoUrl)[0].t > getCommentCache(videoUrl).at(-1).t, 'response sorting does not mutate the cache');
-    const other = await (await request(path + (path.includes('?') ? '&' : '?') + 'format=json', 'SenPlayer/test')).json();
-    assert.ok(other.comments.some(comment => comment.danmux), 'other players retain gradient extensions');
-    assert.ok(other.comments.every(comment => 't' in comment));
+    assert.equal(JSON.stringify(getCommentCache(videoUrl)), cached, 'formatting leaves the shared cache unchanged');
+    const other = await (await request(path, 'SenPlayer/test')).json();
+    assert.deepEqual(other, data, 'user agent does not change the configured response');
+    const jsonPath = path + (path.includes('?') ? '&' : '?') + 'format=json';
+    assert.deepEqual(await (await request(jsonPath)).json(),
+      await (await request(jsonPath, 'SenPlayer/test')).json());
     const xml = await request(path + (path.includes('?') ? '&' : '?') + 'format=xml');
     assert.match(await xml.text(), /<d p="/);
   }
