@@ -1,5 +1,5 @@
 import { resolveTmdbMatchIdentity, filterTmdbMatchCandidates, findSavedTmdbIdentity, resolveTmdbEpisodeMetadata, selectTmdbEpisode, selectVarietyEpisodeByKey, varietyKey } from '../utils/tmdb-match-util.js';
-import { isSupportedSource, isSupportedLocation, sourceForUrl } from '../sources/policy.js';
+import { SUPPORTED_SOURCES, isSupportedSource, isSupportedLocation, sourceForUrl } from '../sources/policy.js';
 import { canonicalPlatformName } from '../utils/platform-util.js';
 import { runWithMatchTrace, traceMatchStep, getMatchTracePrefix } from '../utils/match-trace-util.js';
 import { globals } from '../configs/globals.js';
@@ -496,9 +496,9 @@ function checkEpisodeSatisfied(animesList, querySeason, queryEpisode, requestAni
  * @param {string|null} preferAnimeId 优选ID
  * @param {string|null} preferSource 优选源
  */
-async function executeSourceHandlers(resultData, queryTitle, targetAnimesList, requestAnimeDetailsMap, targetSeason, preferAnimeId = null, preferSource = null) {
+async function executeSourceHandlers(resultData, queryTitle, targetAnimesList, requestAnimeDetailsMap, targetSeason, preferAnimeId = null, preferSource = null, sourceOrder = globals.sourceOrderArr) {
   // 仅处理resultData中存在数据的源，避免将undefined传入handleAnimes
-  const activeSourceKeys = globals.sourceOrderArr.filter(key => resultData[key] !== undefined);
+  const activeSourceKeys = sourceOrder.filter(key => resultData[key] !== undefined);
   const sourceTasks = [];
 
   for (const key of activeSourceKeys) {
@@ -550,15 +550,27 @@ async function executeSourceHandlers(resultData, queryTitle, targetAnimesList, r
   }
 }
 
+function withEpisodeLookupTimeout(promise, source, deadline) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(`单集查找等待超时，跳过慢源 ${source}`);
+      error.code = 'EPISODE_LOOKUP_TIMEOUT';
+      reject(error);
+    }, Math.max(0, deadline - performance.now()));
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 function searchScopeCacheKey(key, searchSources) {
   return searchSources
     ? JSON.stringify(['match-sources', searchSources, globals.mergeSourcePairs, globals.customMergeRules, key]) : key;
 }
 
 // Extracted function for GET /api/v2/search/anime
-export async function searchAnime(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null, sourceSearches = null, searchSources = null, clientIp = null) {
+export async function searchAnime(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null, sourceSearches = null, searchSources = null, clientIp = null, episodeLookupDeadline = null) {
   // 单次搜索请求内启用 HTTP 响应复用缓存: 作为各源通用的请求级复用安全网, 借助 AsyncLocalStorage 做请求级隔离
-  const run = () => searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress, sourceSearches, searchSources);
+  const run = () => searchAnimeBody(url, preferAnimeId, preferSource, detailStore, targetPlatform, forceRefresh, onProgress, sourceSearches, searchSources, episodeLookupDeadline);
   const response = await (httpCacheContext.getStore() ? run() : runWithHttpCache(run));
   const previous = clientIp ? getLastSearch(clientIp) : null;
   const target = previous?.matchIdentity || previous?.failedMatch;
@@ -585,7 +597,7 @@ export async function searchAnime(url, preferAnimeId = null, preferSource = null
   return jsonResponse(data, response.status);
 }
 
-async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null, sourceSearches = null, searchSources = null) {
+async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, detailStore = null, targetPlatform = null, forceRefresh = false, onProgress = null, sourceSearches = null, searchSources = null, episodeLookupDeadline = null) {
   const sourceOrder = searchSources ?? globals.sourceOrderArr;
   // Scoped searches never masquerade as complete manual-search caches.
   const scopedKey = key => searchScopeCacheKey(key, searchSources);
@@ -895,11 +907,11 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
     const pipelineTasks = sourceOrder.filter(source => sourceSearchMap[source]).map(source => {
       const isolatedAnimes = [];
       const isolatedDetailStore = new Map();
-      const pipelinePromise = sourceSearchMap[source].then(async searchResult => {
+      const rawPipelinePromise = sourceSearchMap[source].then(async searchResult => {
         if (sourceSearches) searchResult = structuredClone(searchResult);
         resultData[source] = searchResult;
         await traceMatchStep(log, `来源 ${source} 分集目录处理`, () =>
-          executeSourceHandlers({ [source]: searchResult }, queryTitle, isolatedAnimes, isolatedDetailStore, querySeason, preferAnimeId, preferSource));
+          executeSourceHandlers({ [source]: searchResult }, queryTitle, isolatedAnimes, isolatedDetailStore, querySeason, preferAnimeId, preferSource, sourceOrder));
         if (getMatchTracePrefix()) log('info', `[system] [match-source] ${source} 管道完成，候选 ${isolatedAnimes.length} 个（空结果不代表故障）`);
         completedSources.set(source, { animes: isolatedAnimes, details: isolatedDetailStore });
         if (onProgress) {
@@ -914,6 +926,8 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
           onProgress({ animes: readyAnimes, details: readyDetails });
         }
       });
+      const pipelinePromise = episodeLookupDeadline === null ? rawPipelinePromise
+        : withEpisodeLookupTimeout(rawPipelinePromise, source, episodeLookupDeadline);
       return { key: source, animes: isolatedAnimes, detailStore: isolatedDetailStore, promise: pipelinePromise };
     });
 
@@ -926,7 +940,9 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
 
     for (let i = 0; i < pipelineTasks.length; i++) {
       if (pipelineResults[i].status === 'rejected') {
-        log("error", `[system] [searchAnime] 源 ${pipelineTasks[i].key} 管道处理失败: ${pipelineResults[i].reason}`);
+        const reason = pipelineResults[i].reason;
+        log(reason?.code === 'EPISODE_LOOKUP_TIMEOUT' ? 'warn' : 'error',
+          `[system] [searchAnime] 源 ${pipelineTasks[i].key} 管道处理失败: ${reason}`);
         continue;
       }
 
@@ -952,7 +968,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
     }
 
     // 缓存首季/默认请求结果，剥离附加链接
-    if (curAnimes.length > 0 && !searchSources) {
+    if (curAnimes.length > 0 && !searchSources && episodeLookupDeadline === null) {
       setSearchCache(scopedKey(cacheKey), curAnimes.map(({ links, ...pureAnime }) => pureAnime), requestAnimeDetailsMap);
     }
 
@@ -1010,8 +1026,8 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
             const sourceResults = [];
             for (let s = expansionStart; s <= expansionEnd; s++) {
               const seasonAnimes = [];
-              await executeSourceHandlers({ [source]: resultData[source] }, queryTitle, seasonAnimes, requestAnimeDetailsMap, s, preferAnimeId, preferSource);
-              if (seasonAnimes.length > 0 && !searchSources) {
+              await executeSourceHandlers({ [source]: resultData[source] }, queryTitle, seasonAnimes, requestAnimeDetailsMap, s, preferAnimeId, preferSource, sourceOrder);
+              if (seasonAnimes.length > 0 && !searchSources && episodeLookupDeadline === null) {
                 setSearchCache(scopedKey(`${queryTitle}_S${s}`), seasonAnimes.map(({ links, ...pureAnime }) => pureAnime), requestAnimeDetailsMap);
               }
               sourceResults.push(seasonAnimes);
@@ -1093,7 +1109,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
     const responseAnimes = curAnimes.map(({ links, ...pureAnime }) => pureAnime);
 
     // 缓存搜索结果
-    if (responseAnimes.length > 0) {
+    if (responseAnimes.length > 0 && episodeLookupDeadline === null) {
       const cacheKey = querySeason !== null ? `${queryTitle}_S${querySeason}` : queryTitle;
       setSearchCache(scopedKey(cacheKey), responseAnimes, requestAnimeDetailsMap);
     }
@@ -2604,127 +2620,183 @@ async function matchAnimeWithTrace(url, req, clientIp) {
   }
 }
 
+function resolveMissingDirectFallbackSources() {
+  const configured = new Set(globals.sourceOrderArr);
+  return SUPPORTED_SOURCES.filter(source => !configured.has(source));
+}
+
+function resolveTmdbMediaType(url, episode) {
+  const type = url.searchParams.get('tmdbIdType');
+  return type === '1' || (type !== '0' && String(episode).toLowerCase() === 'movie') ? 'movie' : 'tv';
+}
+
+const FEATURE_EDITORIAL_MARKERS = Object.freeze([
+  '预告',
+  '预览',
+  '先导',
+  '花絮',
+  '彩蛋',
+  '幕后',
+  '专访',
+  '采访',
+  '解说',
+  '深度解读',
+  '影评',
+  '解析',
+  '盘点',
+  '混剪',
+  '回顾',
+  '速看',
+  'reaction',
+  'trailer',
+  'making of',
+  'behind the scenes',
+]);
+
+function isFeatureRequest(url, episode) {
+  return resolveTmdbMediaType(url, episode) === 'movie'
+    || String(episode || '').toLowerCase() === 'movie';
+}
+
+function isEditorialTitle(value) {
+  const text = String(value || '').toLowerCase();
+  return FEATURE_EDITORIAL_MARKERS.some(marker => text.includes(marker));
+}
+
+function selectRequestedEpisodes(episodes, targetEpisode, links = []) {
+  const usableEpisodes = (episodes || []).filter(ep => !isEditorialTitle(ep?.episodeTitle));
+  const target = Number(targetEpisode);
+  if (!Number.isInteger(target) || target < 1) return [];
+
+  // 先相信标题中的明确集数。这样即使源站把预告/花絮插在正片前面，或返回顺序不是
+  // 第 1 集开始，也不会把数组下标误当成集数。
+  const titleNumberedEpisodes = usableEpisodes.filter(ep =>
+    extractEpisodeNumberFromTitle(ep?.episodeTitle) !== null
+  );
+  const titleMatches = titleNumberedEpisodes.filter(ep =>
+    extractEpisodeNumberFromTitle(ep?.episodeTitle) === target
+  );
+  if (titleNumberedEpisodes.length > 0) return titleMatches;
+
+  // 只相信来源元数据，不能把 buildBangumiData 生成的数组编号误当成来源集号。
+  const metadata = new Map(links.map(link => [link.id,
+    [link.episodeNumber, link.sort].map(Number).find(number => Number.isFinite(number) && number > 0)]));
+  const numberedEpisodes = usableEpisodes.filter(ep => metadata.get(ep.episodeId) !== undefined);
+  if (numberedEpisodes.length) return numberedEpisodes.filter(ep => metadata.get(ep.episodeId) === target);
+
+  // 整组正片都没有集号时，才允许按过滤后的位置选择。
+  return usableEpisodes[target - 1] ? [usableEpisodes[target - 1]] : [];
+}
+
+function isFeatureCandidate(animeItem, requestedYear = null) {
+  const typeText = `${animeItem?.type || ''} ${animeItem?.typeDescription || ''} ${animeItem?.animeTitle || ''}`;
+  // TMDB 的 movie 可能被视频源标记为纪录片、综艺、动漫或演唱会，不能只认“电影”。
+  if (!/电影|纪录片|综艺|动漫|动画|演唱会|短片|音乐|movie|documentary|variety|anime|animation|concert|short/i.test(typeText)) return false;
+  if (/电视剧|剧集|tvseries|series/i.test(typeText) && !/电影|movie/i.test(typeText)) return false;
+  if (isEditorialTitle(animeItem?.animeTitle)) return false;
+
+  const candidateYear = extractYear(String(animeItem?.animeTitle || ''));
+  return !requestedYear || !candidateYear || candidateYear === requestedYear;
+}
+
+function mergeEpisodeSearchResults(...responses) {
+  const animes = [];
+  const seen = new Set();
+
+  for (const response of responses) {
+    for (const anime of response?.animes || []) {
+      const key = [anime?.source || '', anime?.bangumiId || anime?.animeId || '', anime?.animeTitle || ''].join('|');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      animes.push(anime);
+    }
+  }
+
+  return {
+    ...(responses.find(response => response && typeof response === 'object') || {}),
+    success: responses.some(response => response?.success === true),
+    errorMessage: '',
+    animes,
+  };
+}
+
 // Extracted function for GET /api/v2/search/episodes
-export async function searchEpisodes(url, clientIp = null) {
-  let anime = url.searchParams.get("anime") || "";
+export async function searchEpisodes(url, clientIp = null, options = {}) {
+  const searchAnimeFn = options.searchAnimeFn || searchAnime;
+  const tmdbTitleResolver = options.tmdbTitleResolver || getTmdbMediaTitleById;
+  let anime = url.searchParams.get('anime') || '';
   const rawTmdbId = (url.searchParams.get('tmdbId') || '').trim();
   const tmdbId = /^\d+$/.test(rawTmdbId) ? rawTmdbId : '';
-  const episode = url.searchParams.get("episode") || "";
-
-  // Infuse 可能只传 TMDB ID；解析标题后复用现有搜索和集数过滤。
+  const episode = url.searchParams.get('episode') || '';
+  const featureRequest = isFeatureRequest(url, episode);
+  let requestedYear = null;
+  let originalTitle = '';
   if (!anime && tmdbId) {
-    const tmdbIdType = url.searchParams.get('tmdbIdType');
-    const mediaType = tmdbIdType === '1' || (tmdbIdType !== '0' && episode.toLowerCase() === 'movie')
-      ? 'movie' : 'tv';
-    const tmdbMedia = await getTmdbMediaTitleById(tmdbId, mediaType);
-    anime = tmdbMedia?.title || '';
+    const media = await tmdbTitleResolver(tmdbId, resolveTmdbMediaType(url, episode));
+    anime = media?.title || '';
+    originalTitle = media?.originalTitle || '';
+    requestedYear = media?.year || null;
   }
-
-  // 如果启用了搜索关键字繁转简，则进行转换
   if (globals.animeTitleSimplified) {
-    const simplifiedTitle = simplized(anime);
-    log("info", `[system] [episodes] searchEpisodes converted traditional to simplified: ${anime} -> ${simplifiedTitle}`);
-    anime = simplifiedTitle;
+    anime = simplized(anime);
+    originalTitle = simplized(originalTitle);
   }
-
-  log("info", `[system] [episodes] Search episodes with anime: ${anime}, episode: ${episode}`);
-
   if (!anime) {
-    const errorMessage = tmdbId ? "Unable to resolve anime title from tmdbId" : "Missing anime or tmdbId parameter";
-    log("error", `[system] [episodes] ${errorMessage}`);
-    return jsonResponse(
-      tmdbId
-        ? { errorCode: 0, success: true, errorMessage: "", hasMore: false, animes: [] }
-        : { errorCode: 400, success: false, errorMessage },
-      tmdbId ? 200 : 400
-    );
+    return jsonResponse(tmdbId
+      ? { errorCode: 0, success: true, errorMessage: '', hasMore: false, animes: [] }
+      : { errorCode: 400, success: false, errorMessage: 'Missing anime or tmdbId parameter' }, tmdbId ? 200 : 400);
   }
 
-  // 先搜索动漫
-  let searchUrl = buildSearchAnimeUrl(url, anime);
-  const requestAnimeDetailsMap = new Map();
-
-  const searchRes = await searchAnime(searchUrl, null, null, requestAnimeDetailsMap, null, false, null, null, null, clientIp);
-  const searchData = await searchRes.json();
-
-  if (!searchData.success || !searchData.animes || searchData.animes.length === 0) {
-    log("info", "[system] [episodes] No anime found for the given title");
-    // 没有结果时，缓存写入失败才是调用方唯一能 actionable 的线索
-    return jsonResponse({
-      errorCode: 0,
-      success: true,
-      errorMessage: getAddAnimeError(requestAnimeDetailsMap),
-      hasMore: false,
-      animes: []
-    });
-  }
-
-  let resultAnimes = [];
-
-  // 遍历所有找到的动漫，获取它们的集数信息
-  for (const animeItem of searchData.animes) {
-    const detailAnime =
-      resolveAnimeById(animeItem.bangumiId, requestAnimeDetailsMap, animeItem.source) ||
-      resolveAnimeById(animeItem.animeId, requestAnimeDetailsMap, animeItem.source);
-
-    let bangumiData = null;
-    if (detailAnime) {
-      bangumiData = buildBangumiData(detailAnime, animeItem.bangumiId);
-    } else {
-      const bangumiUrl = new URL(`/bangumi/${animeItem.bangumiId}`, url.origin);
-      const bangumiRes = await getBangumi(bangumiUrl.pathname);
-      bangumiData = await bangumiRes.json();
+  // 所有来源与补搜共用等待预算，避免一轮慢源后又串行等待多个完整超时。
+  const deadline = performance.now() + 6500;
+  const details = new Map();
+  const lookup = async (title, sources = null) => {
+    if (performance.now() >= deadline) return { success: true, animes: [] };
+    const searchUrl = buildSearchAnimeUrl(url, title);
+    const response = await searchAnimeFn(searchUrl, null, null, details, null, false, null, null, sources, clientIp, deadline);
+    return response.json();
+  };
+  const collect = async data => {
+    const results = [];
+    for (const item of data?.animes || []) {
+      const detail = resolveAnimeByIdFromDetailStore(item.bangumiId, details, item.source)
+        || resolveAnimeByIdFromDetailStore(item.animeId, details, item.source)
+        || resolveAnimeById(item.bangumiId, details, item.source) || resolveAnimeById(item.animeId, details, item.source);
+      const catalog = detail ? buildBangumiData(detail, item.bangumiId)
+        : await (await getBangumi(`/bangumi/${item.bangumiId}`, details, item.source)).json();
+      if (!catalog.success || !catalog.bangumi?.episodes) continue;
+      let episodes = catalog.bangumi.episodes;
+      if (featureRequest) {
+        if (!isFeatureCandidate(item, requestedYear)) continue;
+        episodes = episodes.filter(ep => !isEditorialTitle(ep.episodeTitle));
+      } else if (/^\d+$/.test(episode)) {
+        episodes = selectRequestedEpisodes(episodes, episode, detail?.links);
+      }
+      if (episodes.length) results.push(Episodes.fromJson({
+        animeId: item.animeId, animeTitle: item.animeTitle, type: item.type, typeDescription: item.typeDescription,
+        episodes: episodes.map(ep => ({ episodeId: ep.episodeId, episodeTitle: ep.episodeTitle, url: ep.url || '' })),
+      }));
     }
+    return results;
+  };
 
-    if (bangumiData.success && bangumiData.bangumi && bangumiData.bangumi.episodes) {
-      let filteredEpisodes = bangumiData.bangumi.episodes;
-
-      // 根据 episode 参数过滤集数
-      if (episode) {
-        if (episode === "movie") {
-          // 仅保留剧场版结果
-          filteredEpisodes = bangumiData.bangumi.episodes.filter(ep =>
-            animeItem.typeDescription && (
-              animeItem.typeDescription.includes("电影") ||
-              animeItem.typeDescription.includes("剧场版") ||
-              ep.episodeTitle.toLowerCase().includes("movie") ||
-              ep.episodeTitle.includes("剧场版")
-            )
-          );
-        } else if (/^\d+$/.test(episode)) {
-          // 纯数字，仅保留指定集数
-          const targetEpisode = parseInt(episode);
-          filteredEpisodes = bangumiData.bangumi.episodes.filter(ep =>
-            (extractEpisodeNumberFromTitle(ep.episodeTitle) ?? parseInt(ep.episodeNumber)) === targetEpisode
-          );
-        }
-      }
-
-      // 只有当过滤后还有集数时才添加到结果中
-      if (filteredEpisodes.length > 0) {
-        resultAnimes.push(Episodes.fromJson({
-          animeId: animeItem.animeId,
-          animeTitle: animeItem.animeTitle,
-          type: animeItem.type,
-          typeDescription: animeItem.typeDescription,
-          episodes: filteredEpisodes.map(ep => ({
-            episodeId: ep.episodeId,
-            episodeTitle: ep.episodeTitle,
-            url: ep.url || ""
-          }))
-        }));
-      }
+  let searchData = await lookup(anime);
+  let results = await collect(searchData);
+  if (!results.length && originalTitle && originalTitle !== anime) {
+    log('info', `[system] [episodes] 补搜 TMDB 原名: ${originalTitle}`);
+    searchData = mergeEpisodeSearchResults(searchData, await lookup(originalTitle));
+    results = await collect(searchData);
+  }
+  if (!results.length) {
+    const fallbackSources = resolveMissingDirectFallbackSources();
+    if (fallbackSources.length) {
+      log('info', `[system] [episodes] 缺少目标集，补查来源: ${fallbackSources.join(',')}`);
+      searchData = mergeEpisodeSearchResults(searchData, await lookup(anime, fallbackSources));
+      results = await collect(searchData);
     }
   }
-
-  log("info", `[system] [episodes] Found ${resultAnimes.length} animes with filtered episodes`);
-
-  return jsonResponse({
-    errorCode: 0,
-    success: true,
-    errorMessage: "",
-    animes: resultAnimes
-  });
+  log('info', `[system] [episodes] 找到 ${results.length} 个含目标集的候选`);
+  return jsonResponse({ errorCode: 0, success: true, errorMessage: results.length ? '' : getAddAnimeError(details), hasMore: false, animes: results });
 }
 
 // Extracted function for GET /api/v2/bangumi/:animeId
@@ -2756,7 +2828,9 @@ function buildBangumiData(anime, idParam = "") {
       seasonId: `season-${anime.animeId}`,
       episodeId: link.id,
       episodeTitle: `${link.title}`,
-      episodeNumber: `${extractEpisodeNumberFromTitle(link.title) ?? i + 1}`,
+      episodeNumber: `${extractEpisodeNumberFromTitle(link.title)
+        ?? ([link.episodeNumber, link.sort].map(Number).find(number => Number.isFinite(number) && number > 0))
+        ?? i + 1}`,
       airDate: anime.startDate,
       url: link.url || ""
     });

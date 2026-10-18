@@ -351,6 +351,15 @@ export function isCommentCacheValid(videoUrl) {
     const commentCount = Array.isArray(cached.comments) ? cached.comments.length : 0;
     const minCount = Math.max(0, globals.commentCacheMinCount || 0);
 
+    // 刷新缺少有效正文的旧缓存。
+    if (commentCount > 0 && cached.comments.some(comment => (
+        typeof comment?.m !== 'string' || comment.m.trim().length === 0
+    ))) {
+        globals.commentCache.delete(videoUrl);
+        log("info", `[cache] Comment cache for "${videoUrl}" has legacy or empty text fields, refreshing`);
+        return false;
+    }
+
     // 独立 UGC 源已在匹配阶段验证非空；少量弹幕也要保留给紧接着的播放器请求。
     const ugcFallback = globals.animes.some(anime => anime.type === 'B站投稿' && anime.links.some(link => link.url === videoUrl));
     if (minCount > 0 && commentCount < minCount && !ugcFallback && !(cached.ugcAddedCount > 0)) {
@@ -577,7 +586,9 @@ export function addAnime(anime, detailStore = null) {
             if (link.url) {
                 const episode = allocateEpisode(link.url, link.title);
                 if (episode) {
-                    newLinks.push(episode); // 仅添加成功添加的 episode
+                    newLinks.push({ ...episode,
+                      ...(link.episodeNumber != null ? { episodeNumber: link.episodeNumber } : {}),
+                      ...(link.sort != null ? { sort: link.sort } : {}) });
                 }
             } else {
                 log("error", `[cache] Invalid link in anime, missing url: ${JSON.stringify(link)}`);
@@ -592,7 +603,7 @@ export function addAnime(anime, detailStore = null) {
         storeAnimeDetail(detailStore, animeCopy);
 
         // 检查是否已存在相同 animeId 的 anime
-        const existingAnimeIndex = globals.animes.findIndex(a => a.animeId === anime.animeId);
+        const existingAnimeIndex = globals.animes.findIndex(a => a.animeId === anime.animeId && a.source === anime.source);
 
         if (existingAnimeIndex !== -1) {
             // 如果存在，先删除旧的
