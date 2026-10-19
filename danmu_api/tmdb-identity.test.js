@@ -7,7 +7,7 @@ import { parseAutoMatchMappingRules, collectAutoMatchCandidates } from './utils/
 import { Globals } from './configs/globals.js';
 import { handleRequest } from './worker.js';
 import { getSourceByKey } from './sources/registry.js';
-import { addAnime } from './utils/cache-util.js';
+import { addAnime, setPreferForTitle } from './utils/cache-util.js';
 import { refreshRemoteAutoMatchMappingNow } from './utils/auto-match-mapping-url-util.js';
 import { Anime } from './models/player-model.js';
 import { httpGet } from './utils/http-util.js';
@@ -738,4 +738,49 @@ test('main-title matching rejects short prefixes, other categories, dates and du
   assert.equal(choose(wrongDate), null);
   const duplicate = pureCatalog(); duplicate.links.push({ ...duplicate.links[0], url: 'https://v.qq.com/duplicate' });
   assert.equal(choose(duplicate), null);
+});
+
+
+test('a yearless request keeps the selected version despite a same-title cached TMDB identity', async t => {
+  Globals.init({ TOKEN_AUTH_DISABLED: 'true', LOG_LEVEL: 'error', SOURCE_ORDER: 'tencent,youku',
+    PLATFORM_ORDER: 'tencent,youku', MERGE_SOURCE_PAIRS: '', CUSTOM_MERGE_RULES: '',
+    LOCAL_CACHE_ENABLED: 'false', LOCAL_REDIS_URL: '', USE_BANGUMI_DATA: 'false',
+    TITLE_MAPPING_TABLE: '', TITLE_MAPPING_TABLE_URL: '', AUTO_MATCH_MAPPING_TABLE: '',
+    AUTO_MATCH_MAPPING_TABLE_URL: '', TMDB_API_KEY: '', BILIBILI_UGC_ENABLED: 'false',
+    REMEMBER_LAST_SELECT: 'true', MATCH_FAST_ENABLED: 'false' });
+  Globals.animes = []; Globals.episodeIds = []; Globals.episodeNum = 10001;
+  Globals.searchCache = new Map(); Globals.lastSelectMap = new Map();
+  const animation = fixtureAnime('武神主宰', 2020, 9901);
+  animation.type = '3D动漫';
+  animation.links = [{ title: '【tencent】 武神主宰 第3话', url: 'https://v.qq.com/x/cover/wushen/ep3.html' }];
+  const drama = { ...fixtureAnime('武神主宰', 2023, 9902), source: 'youku',
+    animeTitle: '武神主宰(2023)【电视剧】from youku', type: '电视剧',
+    links: [{ title: '【youku】 第3集 武神主宰 03', url: 'https://v.youku.com/v_show/id_wushen3.html' }],
+    tmdbIdentity: { key: 'tv:228707', tmdbId: '228707', mediaType: 'tv', title: '武神主宰',
+      aliases: ['武神主宰'], year: 2023, seasons: [{ season: 1, year: 2023 }] } };
+  addAnime(animation); addAnime(drama);
+  setPreferForTitle('武神主宰', animation.animeId, 'tencent', 1);
+  for (const [key, anime] of [['tencent', animation], ['youku', drama]]) {
+    const source = getSourceByKey(key);
+    t.mock.method(source, 'search', async () => []);
+    t.mock.method(source, 'handleAnimes', async (_raw, _title, results, details) => {
+      addAnime(anime, details); const { links, ...dto } = anime; results.push(dto);
+    });
+  }
+  t.mock.method(globalThis, 'fetch', async input => new URL(input).pathname.endsWith('/tv/228707')
+    ? Response.json({ id: 228707, name: '武神主宰', first_air_date: '2023-06-14',
+      seasons: [{ season_number: 1, air_date: '2023-06-14' }] })
+    : Response.json({ results: [] }));
+  const match = async body => (await handleRequest(new Request('http://localhost/api/v2/match', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }), Globals.env, 'node', '127.0.0.1')).json();
+  const selected = await match({ fileName: '武神主宰 S01E03 第 3 集' });
+  assert.equal(selected.isMatched, true);
+  assert.equal(selected.matches[0].animeId, animation.animeId);
+  const explicitYear = await match({ fileName: '武神主宰 S01E03 第 3 集', year: 2023 });
+  assert.equal(explicitYear.isMatched, true);
+  assert.equal(explicitYear.matches[0].animeId, drama.animeId, 'an explicit request year still takes precedence');
+  const explicitId = await match({ fileName: '武神主宰 S01E03 第 3 集', tmdbId: 228707, mediaType: 'tv' });
+  assert.equal(explicitId.isMatched, true);
+  assert.equal(explicitId.matches[0].animeId, drama.animeId, 'an explicit TMDB identity still takes precedence');
 });
