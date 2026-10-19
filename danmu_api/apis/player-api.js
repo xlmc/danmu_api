@@ -2141,7 +2141,18 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     if (requestMediaType === 'movie') { parsed.season = null; parsed.episode = null; }
     const fileNameVarietyKey = varietyKey(extractVarietyFragment(cleanFileName));
     if (fileNameVarietyKey) log('info', `[system] [match] 文件名已写明综艺期号: ${fileNameVarietyKey}`);
-    let tmdbIdentity = findSavedTmdbIdentity(globals.animes, parsed);
+    const originalTitle = normalizeMatchTitle(parsed.title);
+    const originalSeason = parsed.season;
+    const preferenceTitles = [...new Set([originalTitle, parsed.title].filter(Boolean))];
+    const manualPreferenceTitle = findSeasonPreferenceTitle(preferenceTitles, originalSeason);
+    let savedIdentityCandidates = globals.animes;
+    if (manualPreferenceTitle && !parsed.year && !parsed.tmdbId) {
+      // 无身份请求先尊重已选版本，不能借用同名其他版本的 TMDB 缓存覆盖选择。
+      const [animeId, source] = getPreferAnimeId(manualPreferenceTitle, originalSeason);
+      savedIdentityCandidates = globals.animes.filter(anime => String(anime.animeId) === String(animeId) &&
+        (!source || anime.source === source));
+    }
+    let tmdbIdentity = findSavedTmdbIdentity(savedIdentityCandidates, parsed);
     let tmdbIdentityAttempted = false;
     if (parsed.tmdbId) {
       tmdbIdentityAttempted = true;
@@ -2151,8 +2162,6 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     const sourceSearches = new Map();
     const identity = { title: parsed.title, year: parsed.year, mediaType: requestMediaType, season: parsed.season, episode: parsed.episode, preferredPlatform, releaseGroups, tmdbIdentity };
     logEvent('info', 'match.identity', '[system] [match-trace] 解析身份 ' + JSON.stringify(identity), identity);
-    const originalTitle = normalizeMatchTitle(parsed.title);
-    const originalSeason = parsed.season;
     const originalEpisode = parsed.episode;
     const fileEpisodeTitle = parsed.episodeTitle;
     const fileContext = buildUgcRequestContext({ title: parsed.title, year: parsed.year,
@@ -2162,8 +2171,6 @@ async function matchAnimeWithTrace(url, req, clientIp) {
     let originalYear = parsed.year || (tmdbIdentity ? (originalSeason > 1 ? tmdbIdentity.seasonYear : tmdbIdentity.year) : null);
     const originalReleaseGroups = parsed.releaseGroups || releaseGroups || [];
 
-    const preferenceTitles = [...new Set([originalTitle, parsed.title].filter(Boolean))];
-    const manualPreferenceTitle = findSeasonPreferenceTitle(preferenceTitles, originalSeason);
     const attemptedTitlePaths = new Set();
     let attempt = null;
     let mappingApplied = false;
