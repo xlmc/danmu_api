@@ -4,6 +4,7 @@ import { Globals } from './configs/globals.js';
 import { handleRequest } from './worker.js';
 import { extractTitleSeasonEpisode, getBangumi, matchAniAndEp, searchAnime, searchEpisodes, selectCollectionEpisode } from './apis/player-api.js';
 import YoukuSource from './sources/youku.js';
+import TencentSource from './sources/tencent.js';
 import { buildUgcRequestContext, ugcSupplement } from './utils/bilibili-ugc-util.js';
 import { addAnime } from './utils/cache-util.js';
 import { getSourceByKey } from './sources/registry.js';
@@ -626,4 +627,60 @@ test('平台限定映射只查询指定源，失败后普通路径恢复 PLATFOR
     assert.equal((await match()).matches[0].animeId, 7003);
     assert.deepEqual(calls, [['bilibili', '不存在'], ['tencent', '诛仙'], ['youku', '诛仙']]);
   } finally { restores.forEach(restore => restore()); }
+});
+
+
+test('季限定标题映射接受最终季目录的普通集号', async () => {
+  reset();
+  const data = anime();
+  data.links = data.links.map((link, i) => ({ ...link, title: `【tencent】 诛仙 最终季 第${i + 1}话` }));
+  const details = new Map();
+  addAnime(data, details);
+  const restore = installSource('tencent', null, async () => { throw new Error('已缓存目录不应联网'); });
+  try {
+    const result = await match();
+    assert.equal(result.isMatched, true);
+    assert.equal(result.matches[0].animeId, 7001);
+    assert.equal(result.matches[0].episodeTitle, '【tencent】 诛仙 最终季 第9话');
+    const ordinary = await matchAniAndEp(4, 9, null, { animes: [data] }, '诛仙 最终季', null, 'qq', null, null, details);
+    assert.equal(ordinary.resAnime, null, '未携带季限定映射依据时仍拒绝推断');
+  } finally { restore(); }
+});
+
+
+test('同号分集先筛平台且同平台不同视频不盲选', async () => {
+  reset();
+  const data = anime();
+  data.links = [
+    { title: '【youku】 诛仙4_09', url: 'https://v.youku.com/v_show/id_other.html' },
+    { title: '【tencent】 诛仙4_09', url: 'https://v.qq.com/x/cover/test/first.html' }
+  ];
+  const details = new Map();
+  addAnime(data, details);
+  const run = () => matchAniAndEp(4, 9, null, { animes: [data] }, '诛仙', null, 'qq', null, null, details);
+  // Use an explicit season alias: a two-entry directory need not provide season inference.
+  data.aliases = ['诛仙 第四季'];
+  addAnime(data, details);
+  assert.equal((await run()).resEpisode.url, data.links[1].url);
+  data.links.push({ title: '【tencent】 诛仙4_09', url: 'https://v.qq.com/x/cover/test/second.html' });
+  addAnime(data, details);
+  assert.equal((await run()).resEpisode, null);
+});
+
+
+test('诛仙第四季第12话排除同名腾讯预告并命中正片', async () => {
+  reset();
+  const source = new TencentSource();
+  const data = anime();
+  const raw = [
+    { vid: 'v4102hb2vn1', play_title: '诛仙 最终季 第12话', union_title: '预告片_12', is_trailer: '1' },
+    { vid: 'v4102vs0pxu', play_title: '诛仙 最终季 第12话', union_title: '诛仙4_12', is_trailer: '0' }
+  ];
+  data.links = raw.map(item => ({ title: `【tencent】 ${source.buildEpisodeTitle(source.extractEpisodeMeta(item))}`,
+    url: `https://v.qq.com/x/cover/mzc00200w9z1axf/${item.vid}.html` }));
+  data.episodeCount = 2;
+  addAnime(data, new Map());
+  const result = await match('诛仙 S04E12 第12集');
+  assert.equal(result.isMatched, true);
+  assert.equal(result.matches[0].url, data.links[1].url);
 });
