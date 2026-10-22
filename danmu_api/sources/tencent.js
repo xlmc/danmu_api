@@ -312,6 +312,7 @@ export default class TencentSource extends BaseSource {
       playTitle: p.play_title || '',
       videoSubtitle: p.video_subtitle || '',
       cTitleOutput: p.c_title_output || '',
+      isTrailer: String(p.is_trailer) === '1',
     };
   }
 
@@ -363,6 +364,10 @@ export default class TencentSource extends BaseSource {
     // 追加集副标题，避免与主标题重复
     if (subtitle && !base.includes(subtitle)) {
       base = `${base} ${subtitle}`;
+    }
+    // 展示标题可能与正片完全一致，保留源站预告标记供选集过滤。
+    if ((ep.isTrailer || /预告|預告/.test(String(ep.unionTitle || ''))) && !/预告|預告/.test(base)) {
+      base += ' 预告';
     }
     return base;
   }
