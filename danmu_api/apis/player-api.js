@@ -1,4 +1,3 @@
-import { assignInfuseEpisodeIds, decodeInfuseEpisodeId, getInfuseEpisodeMapping, rememberInfuseEpisodeMapping } from '../utils/infuse-util.js';
 import { resolveTmdbMatchIdentity, filterTmdbMatchCandidates, findSavedTmdbIdentity, resolveTmdbEpisodeMetadata, selectTmdbEpisode, selectVarietyEpisodeByKey, varietyKey } from '../utils/tmdb-match-util.js';
 import { SUPPORTED_SOURCES, isSupportedSource, isSupportedLocation, sourceForUrl } from '../sources/policy.js';
 import { canonicalPlatformName } from '../utils/platform-util.js';
@@ -675,12 +674,13 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
   }
 
   const requestAnimeDetailsMap = detailStore instanceof Map ? detailStore : new Map();
+  let canCacheLookup = episodeLookupDeadline === null;
   const cacheKey = querySeason !== null ? `${queryTitle}_S${querySeason}` : queryTitle;
 
   let cachedResults = forceRefresh ? null : getSearchCache(scopedKey(cacheKey), requestAnimeDetailsMap);
 
   // 如果带季度的特定缓存未命中，尝试获取不带季度的通用搜索缓存
-  if (cachedResults === null && querySeason !== null) {
+  if (!forceRefresh && cachedResults === null && querySeason !== null) {
     const genericCachedResults = getSearchCache(scopedKey(queryTitle), requestAnimeDetailsMap);
     if (genericCachedResults !== null) {
       log("info", `[system] [searchAnime] Cache miss for ${cacheKey}, fallback to generic cache for ${queryTitle}`);
@@ -939,6 +939,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
 
     // 并发执行所有逐源管道，每个管道内部 search 完成后立即衔接 handleAnimes
     const pipelineResults = await Promise.allSettled(pipelineTasks.map(task => task.promise));
+    canCacheLookup = episodeLookupDeadline === null || pipelineResults.every(result => result.status === 'fulfilled');
 
     // 按SOURCE_ORDER顺序合并各管道的独立结果到目标容器
     // 先处理的源数据优先保留（animeId去重、detailStore键去重）
@@ -974,7 +975,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
     }
 
     // 缓存首季/默认请求结果，剥离附加链接
-    if (curAnimes.length > 0 && !searchSources && episodeLookupDeadline === null) {
+    if (curAnimes.length > 0 && !searchSources && canCacheLookup) {
       setSearchCache(scopedKey(cacheKey), curAnimes.map(({ links, ...pureAnime }) => pureAnime), requestAnimeDetailsMap);
     }
 
@@ -1033,7 +1034,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
             for (let s = expansionStart; s <= expansionEnd; s++) {
               const seasonAnimes = [];
               await executeSourceHandlers({ [source]: resultData[source] }, queryTitle, seasonAnimes, requestAnimeDetailsMap, s, preferAnimeId, preferSource, sourceOrder);
-              if (seasonAnimes.length > 0 && !searchSources && episodeLookupDeadline === null) {
+              if (seasonAnimes.length > 0 && !searchSources && canCacheLookup) {
                 setSearchCache(scopedKey(`${queryTitle}_S${s}`), seasonAnimes.map(({ links, ...pureAnime }) => pureAnime), requestAnimeDetailsMap);
               }
               sourceResults.push(seasonAnimes);
@@ -1115,7 +1116,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
     const responseAnimes = curAnimes.map(({ links, ...pureAnime }) => pureAnime);
 
     // 缓存搜索结果
-    if (responseAnimes.length > 0 && episodeLookupDeadline === null) {
+    if (responseAnimes.length > 0 && canCacheLookup) {
       const cacheKey = querySeason !== null ? `${queryTitle}_S${querySeason}` : queryTitle;
       setSearchCache(scopedKey(cacheKey), responseAnimes, requestAnimeDetailsMap);
     }
@@ -2799,61 +2800,17 @@ export async function searchEpisodes(url, clientIp = null, options = {}) {
     }
   }
   log('info', `[system] [episodes] 找到 ${results.length} 个含目标集的候选`);
-  const candidates = results.flatMap(({ animeItem, episodes }) => episodes.map(ep => ({
-    source: animeItem.source, url: ep.url || '', title: ep.episodeTitle,
-  })));
-  const stableIds = tmdbId ? assignInfuseEpisodeIds(candidates, {
-    tmdbId, mediaType, episode: /^\d+$/.test(episode) ? Number(episode) : (featureRequest ? 1 : 0),
-  }) : null;
-  let index = 0;
-  const mappingWrites = [];
   const animes = results.map(({ animeItem, episodes }) => Episodes.fromJson({
     animeId: animeItem.animeId, animeTitle: animeItem.animeTitle,
     type: animeItem.type, typeDescription: animeItem.typeDescription,
-    episodes: episodes.map(ep => {
-      const episodeId = stableIds?.[index++] ?? ep.episodeId;
-      if (stableIds && ep.url) mappingWrites.push(rememberInfuseEpisodeMapping({
-        id: episodeId, url: ep.url, title: ep.episodeTitle,
-        animeTitle: animeItem.animeTitle, source: animeItem.source, legacyEpisodeId: ep.episodeId,
-      }));
-      return { episodeId, episodeTitle: ep.episodeTitle, url: ep.url || '' };
-    }),
+    episodes: episodes.map(ep => ({ episodeId: ep.episodeId, episodeTitle: ep.episodeTitle, url: ep.url || '' })),
   }));
-  await Promise.allSettled(mappingWrites);
   const data = { errorCode: 0, success: true, errorMessage: animes.length ? '' : getAddAnimeError(details), animes };
   if (!animes.length) data.hasMore = false;
   return jsonResponse(data);
 }
 
-// 编码 ID 未命中内存时，按 ID 中的作品、集号和来源重建映射；兼容 NAS 重启。
-export async function recoverInfuseEpisodeMapping(commentId, searchEpisodesFn = searchEpisodes) {
-  const existing = await getInfuseEpisodeMapping(commentId);
-  if (existing) return existing;
-  const context = decodeInfuseEpisodeId(commentId);
-  if (!context || (context.source && !isSupportedSource(context.source))) return null;
-  const url = new URL('http://infuse-recovery.local/api/v2/search/episodes');
-  url.searchParams.set('tmdbId', String(context.tmdbId));
-  url.searchParams.set('tmdbIdType', context.mediaType === 'movie' ? '1' : '0');
-  url.searchParams.set('episode', String(context.episode || 1));
-  try {
-    const response = await searchEpisodesFn(url, null,
-      context.source ? { sourceOrderOverride: [context.source] } : {});
-    if (!response.ok) return null;
-    const data = await response.json();
-    for (const anime of data.animes || []) {
-      for (const ep of anime.episodes || []) {
-        if (Number(ep.episodeId) !== Number(commentId) || !ep.url) continue;
-        // searchEpisodes 已写入包含 NAS 原始 ID 的完整映射，优先保留它。
-        return await getInfuseEpisodeMapping(commentId) || await rememberInfuseEpisodeMapping({
-          id: commentId, url: ep.url, title: ep.episodeTitle, animeTitle: anime.animeTitle, source: context.source,
-        });
-      }
-    }
-  } catch (error) {
-    log('warn', `[system] [Infuse] 恢复剧集映射失败: ${error.message}`);
-  }
-  return null;
-}
+
 
 // Extracted function for GET /api/v2/bangumi/:animeId
 export async function getBangumi(path, detailStore = null, source = null) {
@@ -3220,14 +3177,11 @@ async function supplementAndFilterForEpisode(commentId, url, comments, animeTitl
 }
 
 async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, includeDuration) {
-  const requestedId = parseInt(path.split("/").pop());
-  let mapping = await getInfuseEpisodeMapping(requestedId);
-  if (!mapping && decodeInfuseEpisodeId(requestedId)) mapping = await recoverInfuseEpisodeMapping(requestedId);
-  const commentId = mapping?.legacyEpisodeId ?? requestedId;
-  let animeTitle = mapping?.animeTitle || findAnimeTitleById(commentId);
-  let url = mapping?.url || findUrlById(commentId);
-  let title = mapping?.title || findTitleById(commentId);
-  let plat = (title ? extractEpisodeTitle(title) : null) || mapping?.source || null;
+  const commentId = parseInt(path.split('/').pop());
+  let animeTitle = findAnimeTitleById(commentId);
+  let url = findUrlById(commentId);
+  let title = findTitleById(commentId);
+  let plat = title ? extractEpisodeTitle(title) : null;
 
   // 分段请求不会用到本地兜底结果，直接跳过这次全量扫描（本地资源多时它是白跑的开销）。
 
