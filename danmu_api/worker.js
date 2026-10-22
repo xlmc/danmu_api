@@ -1,4 +1,3 @@
-import { getInfuseEpisodeMapping, isInfuseEpisodeId } from './utils/infuse-util.js';
 import { handleMappingShare } from './utils/mapping-share-util.js';
 import { initializePersistentCaches } from './utils/persistent-cache-util.js';
 import { Globals } from './configs/globals.js';
@@ -326,8 +325,7 @@ async function handleRequest(req, env, deployPlatform, clientIp) {
     }
 
     const commentId = parseInt(path.split("/").pop());
-    const mapping = await getInfuseEpisodeMapping(commentId);
-    let urlForComment = mapping?.url || (isInfuseEpisodeId(commentId) ? null : findUrlById(commentId));
+    const urlForComment = findUrlById(commentId);
 
     if (urlForComment) {
       // 检查弹幕缓存 - 缓存命中时直接返回，不计入限流

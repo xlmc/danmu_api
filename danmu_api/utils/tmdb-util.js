@@ -549,7 +549,7 @@ export async function getTmdbMatchDetails(mediaType, tmdbId) {
   })}`));
 }
 
-// Infuse 的剧集搜索可只提供 TMDB ID；沿用代理/网关认证和标题回退。
+// 剧集搜索可只提供 TMDB ID；沿用代理/网关认证和标题回退。
 export async function getTmdbMediaTitleById(tmdbId, preferredMediaType = 'tv') {
   const id = String(tmdbId ?? '').trim();
   if (!/^\d+$/.test(id)) return null;

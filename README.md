@@ -94,9 +94,9 @@ curl 'http://<NAS_IP>:<NAS_HTTP_PORT>/<TOKEN>/api/v2/match' \
 
 搜索结果用于继续查询分集，匹配结果用于获取对应弹幕；完整接口及可选年份、类型、TMDB ID 参数见 [配置参考](docs/configuration.md)。
 
-Infuse 可只传 TMDB ID 查询分集，例如：`/<TOKEN>/api/v2/search/episodes?tmdbId=300146&tmdbIdType=0&episode=1`。`tmdbIdType=0` 表示电视剧（默认），`1` 表示电影；`episode` 可传集数或 `movie`。服务通过 TMDB 详情解析标题后搜索弹幕源，认证沿用 `TMDB_API_KEY` 或现有代理/网关配置。解析失败返回空结果，同时传入 `anime` 时优先使用标题；返回的 `episodeId` 可用于后续 `/api/v2/comment/:episodeId` 请求，映射沿用 NAS 现有文件或 Redis 缓存。
+播放器可只传 TMDB ID 查询分集，例如：`/<TOKEN>/api/v2/search/episodes?tmdbId=300146&tmdbIdType=0&episode=1`。`tmdbIdType=0` 表示电视剧（默认），`1` 表示电影；`episode` 可传集数或 `movie`。服务通过 TMDB 详情解析标题后搜索弹幕源，认证沿用 `TMDB_API_KEY` 或现有代理/网关配置。解析失败返回空结果，同时传入 `anime` 时优先使用标题；返回的 `episodeId` 可用于后续 `/api/v2/comment/:episodeId` 请求，映射沿用 NAS 现有文件或 Redis 缓存。
 
-Infuse 与其他播放器共用上游的搜索结果和弹幕输出流程，保留 `episodeTitle`、来源原始类型及弹幕字段，不根据 User-Agent 额外裁剪或重命名下载。未指定 `format` 时使用 `DANMU_OUTPUT_FORMAT`，也可显式请求 `format=json` 或 `format=xml`。TMDB 分集查询保留上游的稳定剧集 ID；NAS 的演员屏蔽、UGC 补充与缓存逻辑继续生效。
+播放器共用搜索结果和弹幕输出流程。分集查询返回 NAS 通用剧集 ID，下载时使用相同 ID 查询目录；不再生成或恢复 Infuse 专用长 ID。未指定 `format` 时使用 `DANMU_OUTPUT_FORMAT`。升级后已保存旧长 ID 的客户端需要重新搜索并选择弹幕。
 
 ## 常用配置
 
