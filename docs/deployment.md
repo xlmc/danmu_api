@@ -15,7 +15,7 @@ docker build -t danmu-api-nas-slim:local .
 ## 选择镜像
 
 - 部署镜像：`ghcr.io/xlmc/danmu_api:latest`，由 GitHub Actions 构建，不需要 Docker Hub 账户，不要求固定版本。
-- 源码标签、镜像标签和 Release 统一使用 `custom-YYYY.MM.DD.N`；版本标签与 digest 用于追溯和回滚，不作为日常部署必填项。已有历史 SHA 镜像不会删除。
+- 源码标签、镜像标签和 Release 统一使用 `xdanmu-v0.N`（历史版本可能使用 `custom-YYYY.MM.DD.N`）；版本标签与 digest 用于追溯和回滚，不作为日常部署必填项。已有历史 SHA 镜像不会删除。
 - `latest` 随 main 发布变化。迁移/回滚不要仅记录 latest，应记录实际镜像 ID/digest。
 - 从 [Releases](https://github.com/xlmc/danmu_api/releases) 或对应提交成功的 [发布工作流](https://github.com/xlmc/danmu_api/actions/workflows/docker-image.yml) 查看同名版本更新说明，核对 NAS 架构是否为支持的 `linux/amd64` 或 `linux/arm64`。
 - 首先在 NAS 执行 `docker pull ghcr.io/xlmc/danmu_api:latest`。若失败，检查标签是否存在、网络与包可见性；需要认证时使用具备包读取权限的凭据登录 GHCR，勿将凭据写入仓库。
