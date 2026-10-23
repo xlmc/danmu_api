@@ -467,7 +467,7 @@ export async function getDomesticPersonMetadataForTitle(title) {
       resolved.names = [...new Set([...resolved.actorNames, ...resolved.characterNames])];
       const status = resolved.names.length === 0 ? 'unavailable' : incomplete ? 'partial' : 'ready';
       log('info', `[system] [person-metadata] 「${title}」TMDB ${candidate ? `${candidate.media_type}/${candidate.id}${candidate.personSeason ? ` S${candidate.personSeason.number}(${candidate.personSeason.year})` : ''}` : '身份未匹配'}${bangumiSubjectId ? ` + Bangumi ${bangumiSubjectId}` : ''}，演员 ${resolved.actorNames.length} 个，角色 ${resolved.characterNames.length} 个，状态 ${status}`);
-      return { ...resolved, status };
+      return { ...resolved, status, workTitles: [...new Set([searchTitle, candidate?.name, candidate?.original_name, candidate?.title, candidate?.original_title].filter(Boolean))] };
     } catch (error) {
       log('warn', `[system] [tmdb] 作品演员表加载失败，已跳过国内明星屏蔽: ${error.message}`);
       return emptyPersonMetadata();

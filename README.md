@@ -11,7 +11,7 @@
 - **搜索与自动匹配**：按文件名识别作品、年份、季号和集号，支持标题映射、季集修正及手动选择记忆；需要时通过 TMDB 辅助确认作品和分集。
 - **多源弹幕**：默认启用腾讯、爱奇艺、优酷、芒果、B站，可配置来源顺序、多源合并与时间偏移。还支持咪咕、搜狐、乐视、红果、韩剧 TV、人人视频和巴哈姆特，需在 `SOURCE_ORDER` 中启用。
 - **B站投稿补充**：UGC 指用户投稿视频。可通过 `BILIBILI_UGC_ENABLED` 开启投稿检索、匹配兜底和弹幕补充，默认关闭；不同剪辑版本的时间轴仍需核对。
-- **过滤与显示**：支持屏蔽词、正则、当前作品演员/角色名过滤、去重、简繁转换和渐变扩展。人物过滤默认关闭；文字渐变需要播放器支持。
+- **过滤与显示**：支持屏蔽词、正则、当前作品演员/角色及作品名过滤、去重、简繁转换和渐变扩展。人物与作品过滤默认关闭；文字渐变需要播放器支持。
 - **管理与缓存**：提供配置、匹配追踪、日志与缓存管理；查询快照可保存到本地文件或可选本地 Redis，普通搜索和弹幕缓存保存在内存。
 
 ### 快速导航
@@ -109,7 +109,7 @@ curl 'http://<NAS_IP>:<NAS_HTTP_PORT>/<TOKEN>/api/v2/match' \
 | 合并多个来源 | `MERGE_SOURCE_PAIRS` / `CUSTOM_MERGE_RULES`：`PLATFORM_ORDER` 中的 `&` 只控制并发，不会开启合并 |
 | 修正作品名、季号和集号 | `TITLE_MAPPING_TABLE` / `AUTO_MATCH_MAPPING_TABLE`：本机规则优先；远程映射默认关闭，填写对应 `_URL` 后启用 |
 | 补充B站投稿弹幕 | `BILIBILI_UGC_ENABLED=true`：启用后检索并校验投稿，主源弹幕充足时跳过补充 |
-| 过滤弹幕内容 | `BLOCKED_WORDS`；人物过滤另设 `BLOCK_DOMESTIC_CELEBRITIES`，可用 `PERSON_FILTER_EXCLUDED_TITLES` 排除指定作品 |
+| 过滤弹幕内容 | `BLOCKED_WORDS`；人物与作品过滤共用 `BLOCK_DOMESTIC_CELEBRITIES`，可用 `PERSON_FILTER_EXCLUDED_TITLES` 排除指定作品 |
 | 修正弹幕时间 | `DANMU_OFFSET`：正数延后、负数提前，可按作品、季、集和来源设置 |
 | 开启渐变扩展 | `GRADIENT_ENABLED` 与 `GRADIENT_CHANCE`：需同时启用并设置概率，播放器绘制方式见接入指南 |
 | 查看详细匹配过程 | `LOG_LEVEL=debug`：排查后可恢复 `info`，减少逐请求日志 |

@@ -432,8 +432,12 @@ export function filterDanmusByBlockedNames(danmus, names, options = {}) {
   const matchers = [...characterMatchers, ...actorMatchers,
     ...buildCharacterNicknameMatchers(options.characterNames),
     ...buildPersonNicknameMatchers(options.actorNames, '演员'), ...buildBlockedNameMatchers(names)];
+  const workTitles = [...new Set(options.workTitles || [])].map(title => ({
+    label: `作品：${title}`,
+    needle: simplized(String(title).normalize('NFKC')).replace(/[\s\p{P}\p{S}]/gu, '').toLocaleLowerCase()
+  })).filter(item => Array.from(item.needle).length >= 2);
   const surnameMatchers = buildBlockedSurnameMatchers(options.surnameNames, options.surnameMatcherOptions);
-  if (matchers.length === 0 && surnameMatchers.length === 0) {
+  if (matchers.length === 0 && surnameMatchers.length === 0 && workTitles.length === 0) {
     return { danmus, removedCount: 0, hits: [] };
   }
   const needleTrie = buildNeedleTrie(matchers);
@@ -448,6 +452,10 @@ export function filterDanmusByBlockedNames(danmus, names, options = {}) {
     let hit = needleTrie.size ? matchNeedleTrie(needleTrie, personText) : null;
     if (hit === null && regexMatchers.length) hit = regexMatchers.find(candidate => candidate.regex.test(personText))?.label ?? null;
     if (hit === null) hit = surnameMatchers.find(candidate => candidate.regex.test(text))?.label ?? null;
+    if (hit === null && workTitles.length) {
+      const workText = simplized(rawText).replace(/[\s\p{P}\p{S}]/gu, '').toLocaleLowerCase();
+      hit = workTitles.find(item => workText.includes(item.needle))?.label ?? null;
+    }
     if (hit === null) return true;
     hitCounts.set(hit, (hitCounts.get(hit) || 0) + 1);
     return false;
