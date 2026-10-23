@@ -2,7 +2,7 @@ import { BLOCKED_WORD_PRESETS } from './utils/blocked-word-presets.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Globals } from './configs/globals.js';
-import { shouldBlockDomesticCelebrities, splitPersonFilterExcludedTitles } from './utils/person-filter-exclusion-util.js';
+import { shouldBlockDomesticCelebrities, splitPersonFilterExcludedTitles, getCurrentWorkFilterTitles } from './utils/person-filter-exclusion-util.js';
 import { applyRemoteTitleMappingText, resolveLocalTitleMapping } from './utils/title-mapping-url-util.js';
 import { getComment, getCommentByUrl, getSegmentComment } from './apis/player-api.js';
 import { getSourceByKey } from './sources/registry.js';
@@ -141,9 +141,9 @@ test('同一弹幕缓存随人物名单热更新，其他作品仍屏蔽角色',
     original_language: 'zh', origin_country: ['CN'], genre_ids: [] }), () => true);
   await cachedPersonSource(`${key}:tv/990099:credits-v2`, async () => ({ actorNames: ['黄景瑜', '于和伟', '陆川'], characterNames: ['张小凡'] }), () => true);
   await cachedPersonSource(`${key}:wiki`, async () => ({ actorNames: [], characterNames: [] }), () => true);
-  Globals.animes = [{ animeTitle: title, links: [{ id: 990099, url }] }];
+  Globals.animes = [{ animeTitle: title, aliases: ['測試別名', 'Jade Dynasty'], links: [{ id: 990099, url }] }];
   Globals.commentCache = new Map();
-  const texts = ['张小凡出场了', '景瑜来了', '小于', '阿川', '川儿', '川子', '川崽', '剧情很好看'];
+  const texts = ['张小凡出场了', '景瑜来了', '小于', '阿川', '川儿', '川子', '川崽', title + '真好看', '测试别名好看', 'JADE.DYNASTY好看', '剧情很好看'];
   setCommentCache(url, texts.map((m, i) => ({ p: `${i + 1},1,16777215,[test]`, m })));
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => { throw new Error('测试资料已预置，不应联网'); };
@@ -251,4 +251,21 @@ test('已缓存的普通、URL和分段弹幕按当前正则列表过滤，删�
     Globals.commentCache = new Map();
     Globals.deployPlatform = previousDeployPlatform;
   }
+});
+
+
+test('作品名过滤使用当前作品别名，不派生人名称呼或收集其他版本', () => {
+  Globals.init({ BLOCK_DOMESTIC_CELEBRITIES: 'true', TITLE_MAPPING_TABLE: '诛仙S04->诛仙最终季' });
+  Globals.animes = [
+    { animeTitle: '诛仙最终季(2026)【动漫】from tencent', aliases: ['誅仙', 'Jade Dynasty'] },
+    { animeTitle: '诛仙最终季(2025)【动漫】from tencent', aliases: ['其他年份别名'] },
+    { animeTitle: '其他作品', aliases: ['无关别名'] }
+  ];
+  try {
+    const workTitles = getCurrentWorkFilterTitles('诛仙最终季(2026)【动漫】from tencent');
+    const texts = ['诛仙真好看', 'Jade.Dynasty真好看', '其他年份别名', '无关别名', '小诛好帅', '剧情很好看'];
+    const result = filterDanmusByBlockedNames(texts.map(m => ({ m })), [], { workTitles });
+    assert.deepEqual(result.danmus.map(item => item.m), texts.slice(2));
+    assert.ok(result.hits.every(hit => hit.name.startsWith('作品：')));
+  } finally { Globals.init({}); Globals.animes = []; }
 });

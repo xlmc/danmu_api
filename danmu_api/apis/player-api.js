@@ -27,7 +27,7 @@ import {
   extractYear, matchMediaType, workIdentityConflict, titleMatches, extractAnimeInfo, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle
 } from "../utils/common-util.js";
 import { getDomesticPersonMetadataForTitle, getTmdbMediaTitleById, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
-import { shouldBlockDomesticCelebrities } from '../utils/person-filter-exclusion-util.js';
+import { shouldBlockDomesticCelebrities, getCurrentWorkFilterTitles } from '../utils/person-filter-exclusion-util.js';
 import { applyMergeLogic, mergeDanmakuList, MERGE_DELIMITER, sanitizeUrl } from "../utils/merge-util.js";
 
 
@@ -102,11 +102,13 @@ async function applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata 
   }
 
   const blockedNames = blockCelebrities ? metadata.names : [];
+  const workTitles = [...getCurrentWorkFilterTitles(animeTitle), ...(metadata.workTitles || [])];
   if (blockCelebrities) log(metadata.names.length ? 'info' : 'warn', `[system] [danmu] [person-filter] 演员 ${metadata.actorNames.length} 个，角色 ${metadata.characterNames.length} 个，状态 ${metadata.status}${animeTitle ? '' : '（此请求无作品标题）'}`);
   const result = filterDanmusByBlockedNames(danmus, blockedNames, {
     actorNames: blockCelebrities ? metadata.actorNames : [],
     characterNames: blockCelebrities ? metadata.characterNames : [],
     surnameNames: blockCelebrities ? metadata.actorNames : [],
+    workTitles,
     surnameMatcherOptions: { bareSurname: false }
   });
   if (blockCelebrities) {
@@ -116,7 +118,7 @@ async function applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata 
   if (result.removedCount > 0) {
     log('info', `[system] [danmu] [domestic-filter] 已拦截 ${result.removedCount}/${danmus.length} 条弹幕，命中 ${result.hits.length} 条规则`);
   } else {
-    log('info', `[system] [danmu] [domestic-filter] 已加载演员/角色 ${blockedNames.length} 个，本集无命中`);
+    log('info', `[system] [danmu] [domestic-filter] 已加载演员/角色 ${blockedNames.length} 个、作品名称 ${workTitles.length} 个，本集无命中`);
   }
   return result.danmus;
 }

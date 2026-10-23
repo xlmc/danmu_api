@@ -79,3 +79,33 @@ export async function shouldBlockDomesticCelebrities(animeTitle) {
       && (!entry.year || entry.year === work.year);
   });
 }
+
+
+// Reuse confirmed catalog aliases and existing mappings; never collect other works by an actor.
+export function getCurrentWorkFilterTitles(animeTitle) {
+  if (!animeTitle) return [];
+  const identity = mappedIdentity(animeTitle);
+  const titles = new Set();
+  const add = value => {
+    const parsed = titleIdentity(value);
+    for (const title of [parsed.title.replace(/\((?:19|20)\d{2}\)/g, '').trim(), parsed.baseTitle]) {
+      if (title && Array.from(title).length >= 2) titles.add(title);
+    }
+  };
+  const sameWork = value => {
+    const other = mappedIdentity(value);
+    return other.key === identity.key && (other.season || 1) === (identity.season || 1)
+      && (!identity.year || other.year === identity.year);
+  };
+  add(animeTitle);
+  add(identity.title);
+  for (const anime of globals.animes) {
+    if (anime.animeTitle !== animeTitle && !sameWork(anime.animeTitle)) continue;
+    [anime.animeTitle, ...(anime.aliases || []), ...(anime.tmdbIdentity?.aliases || []), anime.tmdbIdentity?.title]
+      .filter(Boolean).forEach(add);
+  }
+  for (const [key, value] of globals.localTitleMappingTable || []) {
+    if (sameWork(key)) { add(key); add(value); }
+  }
+  return [...titles];
+}
