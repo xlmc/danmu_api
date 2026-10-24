@@ -1637,7 +1637,9 @@ export async function extractTitleSeasonEpisode(cleanFileName, suppliedReleaseGr
     const titleMatch = normalizedFileName.match(titleRegex);
 
     // 找到就以空格分隔（点号转为空格）；找不到就整串当剧名（至少不会更糟）
-    title = titleMatch ? titleMatch[1].replace(/[._]/g, ' ').trim() : normalizedFileName;
+    // 中文名.英文名.年份是双语资源名；先取中文名，再转换分隔符，避免把英文别名并入搜索词。
+    const titlePart = titleMatch?.[1].replace(/^([\u4e00-\u9fa5·]+)\.[A-Za-z][A-Za-z0-9._ &'!?-]*$/, '$1');
+    title = titleMatch ? titlePart.replace(/[._]/g, ' ').trim() : normalizedFileName;
     season = null;
     episode = null;
 
