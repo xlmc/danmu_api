@@ -500,28 +500,37 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
       try {
         logger('candidate.fetch', '获取候选弹幕：' + c.bvid + ' P' + c.page, { bvid: c.bvid, cid: c.cid });
         // 详情已经确认 CID 和时长，复用已有分段入口，避免再次查详情失败丢掉可用弹幕。
-        const raw = await abortable(source.getEpisodeDanmu(`https://www.bilibili.com/combine?cid${c.cid}=0-${c.duration}`, { signal, xmlCid: c.cid }), signal);
-        const all = source.formatComments(raw);
-        // 投稿弹幕常含「点点关注」等引流内容；平台主源弹幕不受此规则影响。
-        const comments = all.filter(item => !isUgcPromo(commentText(item)));
-        if (comments.length !== all.length) logger('candidate.promo', '候选过滤引流弹幕 ' + (all.length - comments.length) + ' 条', { bvid: c.bvid, cid: c.cid, removed: all.length - comments.length, count: comments.length });
-        signal?.throwIfAborted();
-        c.fetchedCount = comments.length;
-        logger('candidate.comments', '候选取得 ' + comments.length + ' 条弹幕', { bvid: c.bvid, cid: c.cid, count: comments.length });
-        if (!comments.length) {
-          c.timeline = { status: 'pending', reason: 'no-comments' };
-          logger('candidate.reject', '候选没有弹幕', { bvid: c.bvid, cid: c.cid, reason: 'no-comments' });
-          return { rejected: true };
-        }
-        const duration = Math.min(c.duration, rangeSeconds ?? c.duration);
-        c.timeline = { status: 'metadata-matched', offsetSeconds: 0, validRange: [0, duration] };
-        logger('candidate.accept', '候选身份匹配，保留原始弹幕时间戳；时间轴未经音频校验',
-          { bvid: c.bvid, cid: c.cid, page: c.page, candidateTitle: c.title, part: c.part, evidence: c.evidence, status: 'metadata-matched', timelineVerified: false, offsetSeconds: 0, validRange: [0, duration], durationMs: Math.round(performance.now() - started) });
-        // 每个候选完成即保留，其他候选超时不能丢掉已经取得的弹幕。
-        result.accepted.push({ cid: c.cid, comments, timeline: c.timeline });
+        const acceptComments = raw => {
+          signal?.throwIfAborted();
+          const all = source.formatComments(raw);
+          // 投稿弹幕常含「点点关注」等引流内容；平台主源弹幕不受此规则影响。
+          const comments = all.filter(item => !isUgcPromo(commentText(item)));
+          const changed = c.fetchedCount !== comments.length;
+          if (changed && comments.length !== all.length) logger('candidate.promo', '候选过滤引流弹幕 ' + (all.length - comments.length) + ' 条', { bvid: c.bvid, cid: c.cid, removed: all.length - comments.length, count: comments.length });
+          signal?.throwIfAborted();
+          c.fetchedCount = comments.length;
+          if (changed) logger('candidate.comments', '候选取得 ' + comments.length + ' 条弹幕', { bvid: c.bvid, cid: c.cid, count: comments.length });
+          if (!comments.length) {
+            c.timeline = { status: 'pending', reason: 'no-comments' };
+            logger('candidate.reject', '候选没有弹幕', { bvid: c.bvid, cid: c.cid, reason: 'no-comments' });
+            return { rejected: true };
+          }
+          const duration = Math.min(c.duration, rangeSeconds ?? c.duration);
+          c.timeline = { status: 'metadata-matched', offsetSeconds: 0, validRange: [0, duration] };
+          if (changed) logger('candidate.accept', '候选身份匹配，保留原始弹幕时间戳；时间轴未经音频校验',
+            { bvid: c.bvid, cid: c.cid, page: c.page, candidateTitle: c.title, part: c.part, evidence: c.evidence, status: 'metadata-matched', timelineVerified: false, offsetSeconds: 0, validRange: [0, duration], durationMs: Math.round(performance.now() - started) });
+          // 每个候选完成即保留，其他候选超时不能丢掉已经取得的弹幕。
+          const accepted = { cid: c.cid, comments, timeline: c.timeline };
+          const index = result.accepted.findIndex(item => item.cid === c.cid);
+          if (index >= 0) result.accepted[index] = accepted;
+          else result.accepted.push(accepted);
+        };
+        const raw = await abortable(source.getEpisodeDanmu(`https://www.bilibili.com/combine?cid${c.cid}=0-${c.duration}`,
+          { signal, xmlCid: c.cid, onPartial: acceptComments }), signal);
+        acceptComments(raw);
       } catch (e) {
         const reason = signal?.aborted ? 'timeout' : e.message;
-        c.timeline = { status: 'pending', reason };
+        if (!result.accepted.some(item => item.cid === c.cid)) c.timeline = { status: 'pending', reason };
         logger('candidate.failure', '候选弹幕获取失败：' + c.bvid + '，' + reason, { bvid: c.bvid, cid: c.cid, reason }, 'warn');
         result.failures.push({ bvid: c.bvid, reason });
       }

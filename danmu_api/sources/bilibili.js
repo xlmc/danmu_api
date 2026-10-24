@@ -966,29 +966,49 @@ export default class BilibiliSource extends BaseSource {
     return { cid, aid, duration, title };
   }
 
-  async getEpisodeDanmu(id, { signal, xmlCid } = {}) {
+  async getEpisodeDanmu(id, { signal, xmlCid, onPartial } = {}) {
     log("info", "[bilibili] 开始从本地请求B站弹幕...", id);
 
-    // UGC 已确认分P身份；XML 池可能比分段接口返回更多弹幕，失败再走原分段路径。
+    // 两个接口的弹幕池不相同；并行读取并按原始弹幕 ID 合并，分段数据保留点赞等字段。
     if (xmlCid) {
-      try {
+      let xmlComments = [], segmentComments = [];
+      const mergePools = () => {
+        const byId = new Map();
+        for (const item of [...xmlComments, ...segmentComments]) {
+          const key = item.idStr || item.p?.split(',')[7] || (Number.isSafeInteger(item.id) ? String(item.id) : null);
+          byId.set(key && key !== '0' ? key : Symbol(), item);
+        }
+        return [...byId.values()];
+      };
+      const publish = () => {
+        const comments = mergePools();
+        if (comments.length && !signal?.aborted) onPartial?.(comments);
+      };
+      const outcomes = await Promise.allSettled([(async () => {
         const response = await httpGet(`https://comment.bilibili.com/${xmlCid}.xml`, {
           headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://www.bilibili.com/', Cookie: globals.bilibliCookie || '' },
           signal, retries: 0, quiet: true
         });
         const xml = response.data;
         if (typeof xml !== 'string' || !/<i(?:\s|>)/.test(xml) || !xml.includes('</i>')) throw new Error('invalid-danmaku-xml');
-        const comments = [...xml.matchAll(/<d\b[^>]*\bp="([^"]+)"[^>]*>([\s\S]*?)<\/d>/g)].map(match => {
+        xmlComments = [...xml.matchAll(/<d\b[^>]*\bp="([^"]+)"[^>]*>([\s\S]*?)<\/d>/g)].map(match => {
           const p = decodeHtmlEntities(match[1]);
           if (p.split(',').length < 8 || !Number.isFinite(Number(p.split(',')[0]))) throw new Error('invalid-danmaku-xml-row');
           return { p, m: decodeHtmlEntities(match[2]) };
         });
-        log('info', `[bilibili] XML弹幕池取得 ${comments.length} 条，CID=${xmlCid}`);
-        if (comments.length) return comments;
-      } catch (error) {
-        signal?.throwIfAborted();
-        log('warn', `[bilibili] XML弹幕获取失败，回退分段接口：${error.message}`);
+        log('info', `[bilibili] XML弹幕池取得 ${xmlComments.length} 条，CID=${xmlCid}`);
+        publish();
+      })(), (async () => {
+        segmentComments = await this.getEpisodeDanmu(id, { signal });
+        publish();
+      })()]);
+      const comments = mergePools();
+      for (const outcome of outcomes) {
+        if (outcome.status === 'rejected' && !signal?.aborted) log('warn', `[bilibili] 部分弹幕池获取失败，保留已取得数据：${outcome.reason.message}`);
       }
+      if (!comments.length) signal?.throwIfAborted();
+      log('info', `[bilibili] 弹幕池合并: XML ${xmlComments.length} 条，分段 ${segmentComments.length} 条，按ID去重后 ${comments.length} 条，CID=${xmlCid}`);
+      return comments;
     }
 
     // 获取弹幕分段数据

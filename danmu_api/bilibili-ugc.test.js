@@ -36,7 +36,7 @@ test('无集号电影按片名检索，续集数字不作集号，仍拒绝第�
   assert.equal(buildUgcRequestContext({ title: '剧集', type: '电视剧' }), null);
 });
 
-test('UGC XML pool decodes comments and falls back on an invalid response', async () => {
+test('UGC combines decoded XML with segment comments and tolerates an invalid XML response', async () => {
   const originalFetch = globalThis.fetch;
   const source = new BilibiliSource(), url = 'https://www.bilibili.com/combine?cid55=0-40';
   const signal = new AbortController().signal;
@@ -48,12 +48,42 @@ test('UGC XML pool decodes comments and falls back on an invalid response', asyn
       assert(options.signal);
       return new Response('<i><d p="1,1,25,0,0,0,user,1">A &amp; B &lt; C</d></i>');
     };
-    assert.deepEqual(await source.getEpisodeDanmu(url, { signal, xmlCid: 55 }), [{ p: '1,1,25,0,0,0,user,1', m: 'A & B < C' }]);
-    assert.equal(fallback, 0);
+    assert.deepEqual(await source.getEpisodeDanmu(url, { signal, xmlCid: 55 }), [
+      { p: '1,1,25,0,0,0,user,1', m: 'A & B < C' }, { p: '2,1,25,0,0,0,user,2', m: '分段弹幕' }
+    ]);
+    assert.equal(fallback, 1);
     globalThis.fetch = async () => new Response('<html>verification</html>');
     assert.equal((await source.getEpisodeDanmu(url, { signal, xmlCid: 55 }))[0].m, '分段弹幕');
-    assert.equal(fallback, 1);
+    assert.equal(fallback, 2);
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test('UGC deduplicates overlapping pools by exact comment ID and keeps segment metadata', async () => {
+  const saved = globalThis.fetch;
+  const source = new BilibiliSource();
+  const duplicate = { idStr: '9007199254740993', progress: 1000, content: '相同内容', like_num: 7 };
+  source.getEpisodeSegmentDanmu = async () => [duplicate, { idStr: '9007199254740995', progress: 1000, content: '相同内容' }];
+  try {
+    globalThis.fetch = async () => new Response('<i><d p="1,1,25,0,0,0,user,9007199254740993">相同内容</d><d p="2,1,25,0,0,0,user,9007199254740994">XML独有</d></i>');
+    const rows = await source.getEpisodeDanmu('https://www.bilibili.com/combine?cid55=0-40', { xmlCid: 55 });
+    assert.equal(rows.length, 3);
+    assert.equal(rows.filter(item => item.content === '相同内容').length, 2, '不同ID的同文弹幕保留');
+    assert.strictEqual(rows[0], duplicate, '分段接口的点赞等字段优先');
+    assert(rows.some(item => item.m === 'XML独有'));
+  } finally { globalThis.fetch = saved; }
+});
+
+test('UGC retains a completed pool when another pool exceeds the shared budget', async () => {
+  const deps = dependencies();
+  const source = { ...deps.source, getEpisodeDanmu: async (_url, { onPartial }) => {
+    onPartial([{ p: '5,1,25,0', m: '已完成池的弹幕' }]);
+    return new Promise(() => {});
+  } };
+  const { result } = await createUgcSupplement({ ...deps, source }).prepare(context, { budgetMs: 100, logger: () => {} });
+  assert.equal(result.timedOut, true);
+  assert.equal(result.accepted.length, 1);
+  assert.equal(result.accepted[0].comments[0].m, '已完成池的弹幕');
+  assert.equal(result.accepted[0].timeline.status, 'metadata-matched');
 });
 
 // UGC 的适用范围：番剧/国外剧、以及弹幕本来就少的国外平台；
