@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Globals } from './configs/globals.js';
 import { extractBaiduPersonMetadata, getBaiduPersonMetadata } from './utils/baidu-person-util.js';
-import { getDomesticPersonMetadataForTitle } from './utils/tmdb-util.js';
+import { getDomesticPersonMetadataForTitle, getBangumiSeriesCharacterNames } from './utils/tmdb-util.js';
 import { cachedPersonSource, personCacheIdentity } from './utils/person-source-cache.js';
 import { getComment, getCommentByUrl, getSegmentComment } from './apis/player-api.js';
 import { setCommentCache } from './utils/cache-util.js';
@@ -134,6 +134,63 @@ async function seed(title, actors, roles, {candidate=true, wikiRoles=[]} = {}) {
   if (candidate) await cachedPersonSource(`${key}:tv/990701:credits-v2`,async()=>({actorNames:actors,characterNames:roles}),()=>true);
   await cachedPersonSource(`${key}:wiki`,async()=>({actorNames:[],characterNames:wikiRoles}),()=>true);
 }
+
+test('人物别名慢请求不阻塞已取得名单，后续请求复用补齐缓存', async () => {
+  Globals.init({ LOG_LEVEL: 'error' });
+  const title = '人物慢查询回归';
+  const key = await personCacheIdentity([title, '2026', '', '', false]);
+  await cachedPersonSource(`${key}:identity`, async () => ({ id: 990811, media_type: 'tv', name: title,
+    first_air_date: '2026-01-01', genre_ids: [] }), () => true);
+  await cachedPersonSource(`${key}:wiki`, async () => ({ actorNames: [], characterNames: [] }), () => true);
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  const original = globalThis.fetch;
+  let aliasRequests = 0;
+  globalThis.fetch = async url => {
+    if (String(url).includes('/aggregate_credits')) return Response.json({ cast: [
+      { id: 990812, name: '演员甲', roles: [{ character: '角色甲' }] }
+    ] });
+    assert(String(url).includes('/person/990812'));
+    aliasRequests++;
+    await held;
+    return Response.json({ id: 990812, name: '演员甲', also_known_as: ['别名甲'] });
+  };
+  try {
+    const partial = await getDomesticPersonMetadataForTitle(`${title}(2026)`, { budgetMs: 25 });
+    assert.equal(partial.status, 'partial');
+    assert(partial.actorNames.includes('演员甲'));
+    assert(partial.characterNames.includes('角色甲'));
+    assert(!partial.names.includes('别名甲'));
+    assert.deepEqual(filterDanmusByBlockedNames([{ m: '演员甲出场' }, { m: '角色甲出场' }, { m: '剧情很好看' }], partial.names).danmus.map(c => c.m), ['剧情很好看']);
+    release();
+    const complete = await getDomesticPersonMetadataForTitle(`${title}(2026)`);
+    assert(complete.actorNames.includes('别名甲'));
+    await getDomesticPersonMetadataForTitle(`${title}(2026)`);
+    assert.equal(aliasRequests, 1);
+    assert(!partial.names.includes('别名甲'), '已返回的快照不会被后台查询修改');
+  } finally { release(); globalThis.fetch = original; Globals.init({}); }
+});
+
+test('Bangumi角色查询完成后立即提供名单，不等待慢季度关系', async () => {
+  Globals.init({ LOG_LEVEL: 'error' });
+  const original = globalThis.fetch;
+  let release, progress;
+  const held = new Promise(resolve => { release = resolve; });
+  const progressed = new Promise(resolve => { progress = resolve; });
+  globalThis.fetch = async url => {
+    if (String(url).endsWith('/characters')) return Response.json([{ name: '藤原拓海' }]);
+    await held;
+    return Response.json([]);
+  };
+  const task = getBangumiSeriesCharacterNames(990813, progress);
+  let timer;
+  try {
+    const names = await Promise.race([progressed, new Promise(resolve => { timer = setTimeout(() => resolve(null), 100); })]);
+    assert.deepEqual(names, ['藤原拓海']);
+    release();
+    assert.deepEqual((await task).names, ['藤原拓海']);
+  } finally { clearTimeout(timer); release(); await task; globalThis.fetch = original; Globals.init({}); }
+});
 
 test('真实人物加载入口按缺项补查，演员表取并集，失败不丢弃已有资料', async () => {
   Globals.init({LOG_LEVEL:'error'});

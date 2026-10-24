@@ -242,7 +242,7 @@ export async function getBangumiPersonResponse(url, validate) {
   return request(globals.makeProxyUrl(url));
 }
 
-async function getBangumiCharacterNames(title) {
+async function getBangumiCharacterNames(title, onProgress) {
   // NAS 的内置中转只转发 GET，使用已验证的公开 GET 搜索接口。
   // 优先复用本地作品 ID；详情校验仍须通过精确名称及年份检查。
   let subject = null;
@@ -260,11 +260,11 @@ async function getBangumiCharacterNames(title) {
     subject = selectBangumiPersonSubject(readTmdbData(response)?.list, title);
   }
   if (!subject) throw new Error('Bangumi 未找到唯一且年份一致的动画条目');
-  return getBangumiSeriesCharacterNames(subject.id);
+  return getBangumiSeriesCharacterNames(subject.id, onProgress);
 }
 
 /** 仅沿动画前传/续集关系收集角色；限制条目数以避免异常关联图无限扩展。 */
-export async function getBangumiSeriesCharacterNames(subjectId) {
+export async function getBangumiSeriesCharacterNames(subjectId, onProgress) {
   const limit = 12;
   const subjectIds = [];
   const seen = new Set([Number(subjectId)]);
@@ -275,16 +275,19 @@ export async function getBangumiSeriesCharacterNames(subjectId) {
     const id = pending.shift();
     subjectIds.push(id);
     const results = await Promise.allSettled([
-      getBangumiPersonResponse(`https://api.bgm.tv/v0/subjects/${id}/characters`, Array.isArray),
+      getBangumiPersonResponse(`https://api.bgm.tv/v0/subjects/${id}/characters`, Array.isArray).then(response => {
+        for (const item of readTmdbData(response)) {
+          const name = normalizeTmdbChineseName(item.name);
+          if (name) names.add(name);
+        }
+        onProgress?.([...names]);
+        return response;
+      }),
       getBangumiPersonResponse(`https://api.bgm.tv/v0/subjects/${id}/subjects`, Array.isArray),
     ]);
     const [characters, relations] = results;
     if (characters.status === 'fulfilled') {
       const entries = readTmdbData(characters.value);
-      for (const item of entries) {
-        const name = normalizeTmdbChineseName(item.name);
-        if (name) names.add(name);
-      }
       if (entries.length === 0) incomplete = true;
     } else {
       incomplete = true;
@@ -311,7 +314,19 @@ export async function getBangumiSeriesCharacterNames(subjectId) {
 const emptyPersonMetadata = (status = 'unavailable') => ({ actorNames: [], characterNames: [], names: [], status });
 const copyPersonMetadata = value => ({ ...value, actorNames: value.actorNames.slice(), characterNames: value.characterNames.slice(), names: value.names.slice() });
 
-export async function getDomesticPersonMetadataForTitle(title) {
+async function waitForPersonMetadata(state, title, budgetMs) {
+  let timer;
+  try {
+    return copyPersonMetadata(await Promise.race([state.task, new Promise(resolve => {
+      timer = setTimeout(() => {
+        log('warn', `[system] [person-metadata] 「${title}」等待达到 ${budgetMs}ms，先使用演员 ${state.value.actorNames.length} 个、角色 ${state.value.characterNames.length} 个；剩余查询继续补齐缓存`);
+        resolve(state.value);
+      }, budgetMs);
+    })]));
+  } finally { clearTimeout(timer); }
+}
+
+export async function getDomesticPersonMetadataForTitle(title, { budgetMs = 1500 } = {}) {
   if (!String(title || '').trim()) return emptyPersonMetadata();
 
   const context = personSeasonContext(title);
@@ -322,9 +337,17 @@ export async function getDomesticPersonMetadataForTitle(title) {
   if (!searchTitle) return emptyPersonMetadata();
 
   if (TMDB_ACTOR_NAMES_PENDING.has(cacheKey)) {
-    return copyPersonMetadata(await TMDB_ACTOR_NAMES_PENDING.get(cacheKey));
+    return waitForPersonMetadata(TMDB_ACTOR_NAMES_PENDING.get(cacheKey), title, budgetMs);
   }
 
+  const state = { value: emptyPersonMetadata(), task: null };
+  const publish = (value = {}) => {
+    const actorNames = [...new Set([...state.value.actorNames, ...(value.actorNames || [])])];
+    const characterNames = [...new Set([...state.value.characterNames, ...(value.characterNames || [])])];
+    const names = [...new Set([...actorNames, ...characterNames])];
+    state.value = { actorNames, characterNames, names, status: names.length ? 'partial' : 'unavailable',
+      workTitles: [...new Set([...(state.value.workTitles || []), ...(value.workTitles || [])])] };
+  };
   const task = (async () => {
     try {
       // 复用 bangumi-data 中已经建立的 TMDB ID 映射，并用详情再次校验身份。
@@ -359,12 +382,14 @@ export async function getDomesticPersonMetadataForTitle(title) {
       const sourceYear = candidate?.personSeason ? String(candidate.first_air_date || '').slice(0, 4)
         : year || String(candidate?.first_air_date || candidate?.release_date || '').slice(0, 4);
       const bangumiTitle = `${sourceTitle}${sourceYear ? `(${sourceYear})` : ''}`;
+      publish({ workTitles: [searchTitle, candidate?.name, candidate?.original_name, candidate?.title, candidate?.original_title].filter(Boolean) });
       // Independent providers load together; partial failure must not discard another provider's names.
       const creditsLoader = async () => {
         const response = readTmdbData(await tmdbApiGet(
           `${candidate.media_type}/${candidate.id}/${creditsPath}?${tmdbQuery({ language: 'zh-CN' })}`));
         if (!Array.isArray(response?.cast)) throw new Error('TMDB 演员表获取失败');
         const names = extractTmdbChineseCastNames(response, candidate.media_type);
+        publish(names);
         const ids = [...new Set(response.cast.filter(person => Number.isInteger(person.id) && person.id > 0).map(person => person.id))];
         // 演员表不含本名/别名；按人物 ID 补详情，缓存跨作品复用，分批避免同时请求整个演员表。
         for (let i = 0; i < ids.length; i += 5) {
@@ -380,13 +405,16 @@ export async function getDomesticPersonMetadataForTitle(title) {
             names.actorNames = [...new Set([...names.actorNames, ...(result.value || [])])];
             if (result.stale) names.aliasesIncomplete = true;
           }
+          publish(names);
         }
         return names;
       };
       const [creditsResult, bangumiResult, wikiResult] = await Promise.all([
-        candidate ? cachedPersonSource(`${cacheKey}:${candidate.media_type}/${candidate.id}:credits-v2`, creditsLoader, value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames) && value.actorNames.length + value.characterNames.length > 0, value => !value.aliasesIncomplete) : Promise.resolve({ value: null, stale: true }),
-        isAnimation ? cachedPersonSource(`${cacheKey}:bangumi`, () => getBangumiCharacterNames(bangumiTitle),
-          value => Array.isArray(value?.names) && value.names.length > 0, value => !value.incomplete) : Promise.resolve(null),
+        candidate ? cachedPersonSource(`${cacheKey}:${candidate.media_type}/${candidate.id}:credits-v2`, creditsLoader, value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames) && value.actorNames.length + value.characterNames.length > 0, value => !value.aliasesIncomplete)
+          .then(result => { publish(result.value || {}); return result; }) : Promise.resolve({ value: null, stale: true }),
+        isAnimation ? cachedPersonSource(`${cacheKey}:bangumi`, () => getBangumiCharacterNames(bangumiTitle, characterNames => publish({ characterNames })),
+          value => Array.isArray(value?.names) && value.names.length > 0, value => !value.incomplete)
+          .then(result => { publish({ characterNames: result.value?.names || [] }); return result; }) : Promise.resolve(null),
         cachedPersonSource(`${cacheKey}:wiki`, async () => {
           let res = await getWikipediaPersonMetadata(sourceTitle, sourceYear);
           if ((!res || res.actorNames.length + res.characterNames.length === 0) && context.hasSeason) {
@@ -407,7 +435,8 @@ export async function getDomesticPersonMetadataForTitle(title) {
             }
           }
           return res;
-        }, value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames)),
+        }, value => Array.isArray(value?.actorNames) && Array.isArray(value?.characterNames))
+          .then(result => { publish(result.value || {}); return result; }),
       ]);
       const credits = creditsResult.value;
       const resolved = credits || { actorNames: [], characterNames: [] };
@@ -469,17 +498,15 @@ export async function getDomesticPersonMetadataForTitle(title) {
       log('info', `[system] [person-metadata] 「${title}」TMDB ${candidate ? `${candidate.media_type}/${candidate.id}${candidate.personSeason ? ` S${candidate.personSeason.number}(${candidate.personSeason.year})` : ''}` : '身份未匹配'}${bangumiSubjectId ? ` + Bangumi ${bangumiSubjectId}` : ''}，演员 ${resolved.actorNames.length} 个，角色 ${resolved.characterNames.length} 个，状态 ${status}`);
       return { ...resolved, status, workTitles: [...new Set([searchTitle, candidate?.name, candidate?.original_name, candidate?.title, candidate?.original_title].filter(Boolean))] };
     } catch (error) {
-      log('warn', `[system] [tmdb] 作品演员表加载失败，已跳过国内明星屏蔽: ${error.message}`);
-      return emptyPersonMetadata();
+      log('warn', `[system] [tmdb] 作品演员表加载失败，保留已取得名单: ${error.message}`);
+      return state.value;
     }
   })();
 
-  TMDB_ACTOR_NAMES_PENDING.set(cacheKey, task);
-  try {
-    return copyPersonMetadata(await task);
-  } finally {
-    TMDB_ACTOR_NAMES_PENDING.delete(cacheKey);
-  }
+  state.task = task;
+  TMDB_ACTOR_NAMES_PENDING.set(cacheKey, state);
+  task.finally(() => TMDB_ACTOR_NAMES_PENDING.delete(cacheKey)).catch(() => {});
+  return waitForPersonMetadata(state, title, budgetMs);
 }
 
 export async function getTmdbDomesticCastNamesForTitle(title) {
