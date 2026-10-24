@@ -148,6 +148,22 @@ test('文件名不同季集分隔形式沿同一匹配入口选择真实集号�
   } finally { restore(); Globals.logBuffer = []; }
 });
 
+test('电影双语文件名优先中文名，保留片名内字母和纯英文续作编号', async () => {
+  for (const [fileName, expected] of [
+    ['空枪.V.2026.WEB-DL HQ DoVi.2160p.H265.DTS 5.1-DoVi-HHWEB', '空枪'],
+    ['黑客帝国.The.Matrix.1999.1080p.BluRay.mkv', '黑客帝国'],
+    ['V.2026.1080p.WEB-DL.mkv', 'V'],
+    ['亲爱的X.2026.1080p.WEB-DL.mkv', '亲爱的X'],
+    ['Rocky.V.1990.1080p.BluRay.mkv', 'Rocky V'],
+    ['长安.三万里.2023.1080p.WEB-DL.mkv', '长安 三万里'],
+  ]) {
+    const parsed = await extractTitleSeasonEpisode(fileName);
+    assert.equal(parsed.title, expected, fileName);
+    assert.equal(parsed.season, null);
+    assert.equal(parsed.episode, null);
+  }
+});
+
 test('稀疏优酷目录保留源集号，手工选集锚点顺延真实条目，FongMi拒绝明确冲突分集', async () => {
   reset({ SOURCE_ORDER: 'youku', PLATFORM_ORDER: 'youku', TITLE_MAPPING_TABLE: '', TMDB_API_KEY: '', LOG_LEVEL: 'error' });
   const formatted = new YoukuSource()._processAndFormatEpisodes([
