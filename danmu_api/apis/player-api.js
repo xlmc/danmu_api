@@ -2387,7 +2387,12 @@ async function matchAnimeWithTrace(url, req, clientIp) {
         found.accepted.some(accepted => accepted.cid === item.cid && accepted.comments.length))
         .map(item => ({ ...item, searchCount: found.accepted.find(accepted => accepted.cid === item.cid).comments.length }));
       const candidate = pickUgcEpisode(candidates);
-      if (!candidate) { logger('match.none', 'UGC 兜底没有可用分集'); return null; }
+      if (!candidate) {
+        const timedOut = !found || found.timedOut;
+        logger('match.none', timedOut ? 'UGC 兜底超时，未取得可用弹幕' : 'UGC 兜底没有可用分集',
+          { reason: timedOut ? 'timeout' : 'no-usable-comments' });
+        return null;
+      }
       const accepted = found.accepted.filter(item => candidates.some(candidate => candidate.cid === item.cid));
       const comments = convertToDanmakuJson(mergeUgcComments([], accepted), 'bilibili');
       if (!comments.length) { logger('match.none', 'UGC 兜底没有有效时间范围内的弹幕'); return null; }

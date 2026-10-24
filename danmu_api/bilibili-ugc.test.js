@@ -264,6 +264,62 @@ test('one failed search preserves other successful keywords', async () => {
   assert(result.failures.some(failure => failure.reason === 'search disconnected'));
 });
 
+test('UGC fetches the first keyword batch before spending its budget on later aliases', async () => {
+  const deps = dependencies();
+  let searches = 0;
+  const service = createUgcSupplement({ ...deps, json: async url => {
+    if (url.includes('/search/type') && ++searches > 3) return new Promise(() => {});
+    return deps.json(url);
+  } });
+  const { result } = await service.prepare({ ...context, episodeTitle: '' }, { budgetMs: 150, logger: () => {} });
+  assert.equal(result?.accepted.length, 1);
+  assert.equal(searches, 3, '已有非空弹幕后不再扩展下一批关键词');
+});
+
+test('UGC preserves fetched comments when another detail or comment request reaches the deadline', async () => {
+  for (const slowStage of ['detail', 'comments']) {
+    const deps = dependencies();
+    let slowSignal, fetchedBeforeAbort = false;
+    const service = createUgcSupplement({
+      source: { ...deps.source, getEpisodeDanmu: async (url, { signal }) => {
+        if (url.includes('cid56=')) { slowSignal = signal; return new Promise(() => {}); }
+        fetchedBeforeAbort = !signal.aborted;
+        return deps.source.getEpisodeDanmu(url);
+      } },
+      json: async (url, { signal }) => {
+        if (url.includes('/search/type')) return { code: 0, data: { result: [
+          { bvid: 'BVcandidate', title: '测试作品 第2季 第5集' },
+          ...(slowStage === 'detail' ? [{ bvid: 'BVslow', title: '测试作品 第2季 第5集' }] : [])
+        ] } };
+        if (url.includes('BVslow')) { slowSignal = signal; return new Promise(() => {}); }
+        const data = video('测试作品 第2季 第5集', [
+          { cid: 55, page: 1, part: '第5集', duration: 40 },
+          ...(slowStage === 'comments' ? [{ cid: 56, page: 2, part: '第5集', duration: 40 }] : [])
+        ]);
+        return { code: 0, data };
+      }
+    });
+    const { result } = await service.prepare(context, { budgetMs: 150, logger: () => {} });
+    assert(fetchedBeforeAbort, slowStage);
+    assert(slowSignal.aborted, slowStage);
+    assert.equal(result.timedOut, true, slowStage);
+    assert.deepEqual(result.accepted.map(item => item.cid), [55], slowStage);
+    assert(result.candidates.some(item => item.cid === 55), slowStage);
+  }
+});
+
+test('UGC rejects numbered theme songs and prequels while keeping the actual episode in a collection', () => {
+  const ctx = { title: '洛洛历险记', aliases: ['百变机兽'], year: 2008, mediaType: 'tv', season: 1, episode: 1 };
+  const selected = selectUgcPages(ctx, { bvid: 'BVcollection', title: '洛洛历险记 全集', pages: [
+    { cid: 1, page: 1, part: '1_主题曲', duration: 414 },
+    { cid: 2, page: 2, part: '01 游戏高手', duration: 1345 }
+  ] });
+  assert.deepEqual(selected.map(item => item.cid), [2]);
+  assert.equal(selectUgcPages(ctx, { bvid: 'BVprequel', title: '百变机兽前传第一集', pages: [
+    { cid: 3, page: 1, part: '百变机兽前传第一集', duration: 161 }
+  ] }).length, 0);
+});
+
 test('failed and verification-only searches are not cached as empty matches', async () => {
   for (const reason of ['network unavailable', 'ugc-search-verification-required']) {
     const deps = dependencies();

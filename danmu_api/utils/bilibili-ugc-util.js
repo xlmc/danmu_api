@@ -12,7 +12,7 @@ const normalize = s => simplized(String(s || '')).normalize('NFKC').toLowerCase(
 const clean = s => decodeHtmlEntities(String(s || '').replace(/<[^>]*>/g, ''));
 const number = s => /^\d+$/.test(s) ? Number(s) : convertChineseNumber(s);
 const excluded = /reaction|第一次看|首看|一口气看|解说|讲解|混剪|预告|花絮|片段|标题卡|测评|玩具|有声|小说|网盘|资源分享|\bMAD\b|\bCUT\b|纯\s*(?:OP|ED)/iu;
-const versions = /精编|(?<!未)删减|重制|英文|日语|粤语|配音|特别版|特別版|番外|续集/g;
+const versions = /精编|(?<!未)删减|重制|英文|日语|粤语|配音|特别版|特別版|番外|续集|前传|前傳/g;
 export const MIN_UGC_TITLE_PRECISION = 0.6;
 const RELEASE_DECORATORS = /(?:1080p|720p|4k|2160p|60帧|60fps|高码率|超清|高清|标清|蓝光|bd(?:rip)?|web-?dl|hdr|hevc|h264|h265|x264|x265|aac|中字|简中|繁中|双语|国语|粤语|日语|英语|中英双字|中文字幕|双语字幕|无字|生肉|熟肉|(?:未删减|完整|公映|纯净)+(?:版)?|正片|电影|剧场版|全集|合集|完结|最终话|大结局|自制|搬运|自压|压制|(?:\d{1,2}月)?新番|[^\s【】\[\]()（）]+(?:字幕组|字幕社|汉化组|译制组|压制组|工作组|制作组)|(?:19|20)\d{2}(?:年|版)?|第\s*[\d一二三四五六七八九十百]+\s*[季期部集话回]|s\d+|e\d+|ep\d+|part\s*\d+|\b\d{1,3}\s*期|\b\d{1,3}\b)/gi;
 
@@ -297,6 +297,8 @@ export function selectUgcPages(context, video, onReject = () => {}) {
   if (mediaType === 'movie' && pages.length !== 1) return reject('movie-multipart-unconfirmed');
   return pages.flatMap(p => {
     if (excluded.test(`${title} ${p.part}`)) return reject('non-content', p);
+    // 合集可能把 OP/ED 编成第1个分P；主题曲上的编号不代表正片集号。
+    if (/主题曲|主題曲|片头曲|片頭曲|片尾曲|(?:^|[\s_\d.-])(?:OP|ED)(?=$|[\s_\d.-])/i.test(p.part)) return reject('non-content', p);
     const pageSeason = String(p.part).normalize('NFKC').match(/第\s*([\d一二三四五六七八九十百]+)\s*季|(?<![a-z0-9])S(\d{1,3})(?=\s*E\d|\b)/i);
     if (pageSeason && context.season && number(pageSeason[1] || pageSeason[2]) !== context.season) return reject('season-mismatch', p);
     if ([...String(p.part).matchAll(versions)].some(m => !contextText.includes(m[0]))) return reject('version-mismatch', p);
@@ -400,7 +402,12 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
     for (const queryGroup of queryGroups) {
     if (signal?.aborted || searchBlocked) break;
     if (!queryGroup.length) continue;
-    await mapConcurrent(queryGroup, SEARCH_CONCURRENCY, async ({ keyword, order }) => {
+    // 每轮关键词返回后就验证分P、获取弹幕，避免大批别名检索耗尽整个预算。
+    const batchSize = onCandidates ? SEARCH_CONCURRENCY : queryGroup.length;
+    let inspectedInGroup = 0;
+    for (let start = 0; start < queryGroup.length; start += batchSize) {
+    if (signal?.aborted || searchBlocked || inspectedInGroup >= 30) break;
+    await mapConcurrent(queryGroup.slice(start, start + batchSize), SEARCH_CONCURRENCY, async ({ keyword, order }) => {
       if (signal?.aborted || searchBlocked) return;
       logger('search.query', '检索关键词：' + keyword + '，排序=' + order, { keyword, order });
       try {
@@ -438,10 +445,14 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
       if (Math.abs(precDiff) > 0.05) return precDiff;
       return (b.video_review || 0) - (a.video_review || 0);
     });
-    logger('search.end', '检索去重 ' + videos.size + ' 个，初筛通过 ' + ordered.length + ' 个', { discovered: videos.size, eligible: ordered.length, metadataLimit: 30 });
-    const details = await mapConcurrent(ordered.filter(v => !inspected.has(v.bvid)).slice(0, 30), DETAIL_CONCURRENCY, async v => {
-      if (signal?.aborted) return {};
+    const pendingVideos = ordered.filter(v => !inspected.has(v.bvid)).slice(0, 30 - inspectedInGroup);
+    const reportProgress = pendingVideos.length > 0 || start + batchSize >= queryGroup.length;
+    if (reportProgress) logger('search.end', '检索去重 ' + videos.size + ' 个，初筛通过 ' + ordered.length + ' 个', { discovered: videos.size, eligible: ordered.length, metadataLimit: 30 });
+    let hasComments = false, candidateWork = Promise.resolve(false);
+    await mapConcurrent(pendingVideos, DETAIL_CONCURRENCY, async v => {
+      if (signal?.aborted || hasComments) return;
       inspected.add(v.bvid);
+      inspectedInGroup++;
       try {
         logger('candidate.detail', '读取投稿分P：' + v.bvid, { bvid: v.bvid });
         const view = await abortable(json('https://api.bilibili.com/x/web-interface/view?bvid=' + v.bvid, { signal }), signal);
@@ -451,20 +462,22 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
           { bvid: v.bvid, cid: page?.cid, page: page?.page, part: page?.part, candidateTitle: clean(view.data?.title), reason }));
         for (const c of selected) logger('candidate.select', '候选通过身份校验：' + c.bvid + ' P' + c.page + '，CID=' + c.cid,
           { bvid: c.bvid, cid: c.cid, page: c.page, candidateTitle: c.title, part: c.part, duration: c.duration, reportedComments: c.searchCount, evidence: c.evidence });
-        return { selected };
+        result.candidates.push(...selected);
+        result.candidates.sort((a, b) => Number(b.evidence.episodeTitleMatched) - Number(a.evidence.episodeTitleMatched)
+          || b.searchCount - a.searchCount || b.precision - a.precision);
+        if (selected.length && onCandidates) {
+          // 详情一到就交给弹幕阶段；串行交接复用 resolve 的有界并发与 CID 去重。
+          candidateWork = candidateWork.then(() => signal?.aborted ? false : onCandidates(result.candidates));
+          if (await candidateWork) hasComments = true;
+        }
       } catch (e) {
         logger('candidate.failure', '投稿详情获取失败：' + v.bvid + '，' + e.message, { bvid: v.bvid, reason: e.message }, 'warn');
-        return { failure: { bvid: v.bvid, reason: e.message } };
+        result.failures.push({ bvid: v.bvid, reason: e.message });
       }
     });
-    for (const detail of details) {
-      result.candidates.push(...(detail.selected || []));
-      if (detail.failure) result.failures.push(detail.failure);
+    if (reportProgress) logger('candidates.ready', '可用分P候选 ' + result.candidates.length + ' 个', { count: result.candidates.length });
+    if (hasComments || (result.candidates.length && !onCandidates)) return result;
     }
-    result.candidates.sort((a, b) => Number(b.evidence.episodeTitleMatched) - Number(a.evidence.episodeTitleMatched)
-      || b.searchCount - a.searchCount || b.precision - a.precision);
-    logger('candidates.ready', '可用分P候选 ' + result.candidates.length + ' 个', { count: result.candidates.length });
-    if (result.candidates.length && (!onCandidates || await onCandidates(result.candidates))) return result;
     }
     return result;
   }
@@ -479,8 +492,8 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
       if (attempted.has(c.cid) || seen.has(c.cid)) return false;
       seen.add(c.cid);
       return true;
-    }).slice(0, maxCandidates);
-    const fetched = await mapConcurrent(selected, COMMENT_CONCURRENCY, async c => {
+    }).slice(0, Math.max(0, maxCandidates - attempted.size));
+    await mapConcurrent(selected, COMMENT_CONCURRENCY, async c => {
       if (signal?.aborted) return { skipped: true };
       attempted.add(c.cid);
       const started = performance.now();
@@ -504,18 +517,15 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
         c.timeline = { status: 'metadata-matched', offsetSeconds: 0, validRange: [0, duration] };
         logger('candidate.accept', '候选身份匹配，保留原始弹幕时间戳；时间轴未经音频校验',
           { bvid: c.bvid, cid: c.cid, page: c.page, candidateTitle: c.title, part: c.part, evidence: c.evidence, status: 'metadata-matched', timelineVerified: false, offsetSeconds: 0, validRange: [0, duration], durationMs: Math.round(performance.now() - started) });
-        return { accepted: { cid: c.cid, comments, timeline: c.timeline } };
+        // 每个候选完成即保留，其他候选超时不能丢掉已经取得的弹幕。
+        result.accepted.push({ cid: c.cid, comments, timeline: c.timeline });
       } catch (e) {
         const reason = signal?.aborted ? 'timeout' : e.message;
         c.timeline = { status: 'pending', reason };
         logger('candidate.failure', '候选弹幕获取失败：' + c.bvid + '，' + reason, { bvid: c.bvid, cid: c.cid, reason }, 'warn');
-        return { failure: { bvid: c.bvid, reason } };
+        result.failures.push({ bvid: c.bvid, reason });
       }
     });
-    for (const row of fetched) {
-      if (row.accepted) result.accepted.push(row.accepted);
-      if (row.failure) result.failures.push(row.failure);
-    }
     return result.accepted.length > 0;
     } });
     result.candidates = found.candidates;
@@ -566,7 +576,8 @@ export function createUgcSupplement({ source = new BilibiliSource(), json = getJ
         task.ugcId = logger.ugcId;
         pending.set(key, task);
       }
-      result = await Promise.race([task, new Promise(resolve => {
+      // 新任务由 controller 统一中断并收集已完成结果；第二个同刻计时器会抢先返回 null。
+      result = cacheState === 'miss' ? await task : await Promise.race([task, new Promise(resolve => {
         const t = setTimeout(() => resolve(null), budgetMs);
         task.finally(() => clearTimeout(t));
       })]);
