@@ -8,8 +8,11 @@ import { md5, parseDanmakuBase64 } from './utils/codec-util.js';
 import TencentSource from './sources/tencent.js';
 import IqiyiSource from './sources/iqiyi.js';
 import YoukuSource from './sources/youku.js';
-import { groupDanmusByMinute } from './utils/danmu-util.js';
+import SohuSource from './sources/sohu.js';
+import HongguoSource from './sources/hongguo.js';
+import { convertToDanmakuJson, groupDanmusByMinute } from './utils/danmu-util.js';
 import { isCommentCacheValid, setCommentCache } from './utils/cache-util.js';
+import { runWithCommentTransform } from './utils/comment-context.js';
 
 test('Japanese search preserves in-word punctuation and removes season markers', () => {
   for (const title of ['Re:ゼロから始める異世界生活', 'も～っと！おジャ魔女どれみ', '地獄先生ぬ～べ～']) {
@@ -28,6 +31,45 @@ test('Hanjutv distinguishes an empty search list from invalid responses', async 
   assert.deepEqual(await source.extractFromPayload({ rescode: 0, seriesList: [] }, 'unused', 's5'), []);
   await assert.rejects(source.extractFromPayload({ rescode: 0 }, 'unused', 's5'), /缺少有效搜索列表/);
   await assert.rejects(source.extractFromPayload({ rescode: 1, seriesList: [] }, 'unused', 's5'), /接口返回错误/);
+});
+
+for (const method of ['buildMobileHeaders', 'buildTvHeaders']) {
+  test(`Hanjutv ${method} rotates at 12 hours and shares concurrent identities`, async t => {
+    let now = 1700000000000;
+    t.mock.method(Date, 'now', () => now);
+    const source = new HanjutvSource();
+    const first = await Promise.all(Array.from({ length: 4 }, () => source[method]()));
+    assert.ok(first.every(item => item.uid === first[0].uid));
+    now += 12 * 60 * 60 * 1000 - 1;
+    assert.equal((await source[method]()).uid, first[0].uid);
+    now++;
+    const refreshed = await Promise.all(Array.from({ length: 4 }, () => source[method]()));
+    assert.notEqual(refreshed[0].uid, first[0].uid);
+    assert.ok(refreshed.every(item => item.uid === refreshed[0].uid));
+  });
+}
+
+test('Hanjutv concurrent searches wait for the refreshed mobile identity warmup', async t => {
+  let now = 1700000000000;
+  t.mock.method(Date, 'now', () => now);
+  const source = new HanjutvSource();
+  let warmups = 0, finishRefresh;
+  t.mock.method(source, 'warmupMobileIdentity', async () => {
+    if (++warmups === 2) return new Promise(resolve => { finishRefresh = resolve; });
+    return true;
+  });
+  assert.equal(await source.ensureMobileIdentityWarmed(), true);
+  now += 12 * 60 * 60 * 1000 - 1;
+  await source.ensureMobileIdentityWarmed();
+  assert.equal(warmups, 1);
+  now++;
+  let completed = 0;
+  const pending = Array.from({ length: 4 }, () => source.ensureMobileIdentityWarmed().then(value => { completed++; return value; }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(warmups, 2);
+  assert.equal(completed, 0);
+  finishRefresh(true);
+  assert.deepEqual(await Promise.all(pending), [true, true, true, true]);
 });
 
 test('Hanjutv retries failed initialization once with cache bypass', async t => {
@@ -371,4 +413,144 @@ test('comment cache refreshes malformed text while preserving valid entries', ()
   }
   setCommentCache(url, [{ m: '有效正文', p: '1,1,16777215,0' }]);
   assert.equal(isCommentCacheValid(url), true);
+});
+
+test('ungrouped mixed source labels deduplicate only identical time and text', () => {
+  Globals.init({ LOG_LEVEL: 'error', GROUP_MINUTE: '0', BLOCKED_WORDS: '', LIKE_SWITCH: 'false', CONVERT_COLOR: 'default', GRADIENT_ENABLED: 'false' });
+  const row = (time, source) => ({ p: `${time},1,16777215,[${source}]`, m: '同一句话', _sourceLabel: source });
+  const mixed = convertToDanmakuJson([row(10, 'bilibili'), row(10, 'tencent'), row(10.5, 'tencent')], 'bilibili＆tencent');
+  assert.equal(mixed.length, 2);
+  assert.deepEqual(mixed.map(item => item.t), [10, 10.5]);
+  assert.match(mixed[0].p, /bilibili＆tencent/);
+  assert.equal(convertToDanmakuJson([row(10, 'bilibili'), row(10, 'bilibili')], 'bilibili').length, 2);
+  assert.equal(convertToDanmakuJson([row(10, 'bilibili＆tencent'), row(10, 'bilibili＆tencent')], 'bilibili＆tencent').length, 1);
+});
+
+test('Sohu accepts decimal and hex colors and uses the shared configured color pool', () => {
+  const source = new SohuSource();
+  const rows = ['16711680', '#00ff00', 'AABBCC', 255].map((color, index) => ({ t: { c: color }, c: `颜色${index}`, v: index + 1 }));
+  Globals.init({ LOG_LEVEL: 'error', CONVERT_COLOR: 'default' });
+  assert.deepEqual(source.formatComments(rows).map(item => Number(item.p.split(',')[3])), [16711680, 65280, 0xAABBCC, 255]);
+  Globals.init({ LOG_LEVEL: 'error', CONVERT_COLOR: 'color', COLOR_POOL: '1193046', GROUP_MINUTE: '0', BLOCKED_WORDS: '', LIKE_SWITCH: 'false', GRADIENT_ENABLED: 'false' });
+  const colored = convertToDanmakuJson(source.formatComments(rows), 'sohu');
+  assert.ok(colored.every(item => Number(item.p.split(',')[2]) === 1193046));
+  runWithCommentTransform(() => {
+    Globals.init({ LOG_LEVEL: 'error', CONVERT_COLOR: 'default' });
+    assert.ok(source.formatComments(rows).every(item => Number(item.p.split(',')[3]) === 16777215), '已开始请求使用原有颜色配置');
+  });
+});
+
+test('Tencent and Iqiyi concurrency settings have defaults and integer limits', () => {
+  Globals.init({ LOG_LEVEL: 'error' });
+  assert.equal(Globals.envs.tencentConcurrency, 100);
+  assert.equal(Globals.envs.iqiyiConcurrency, 100);
+  Globals.init({ LOG_LEVEL: 'error', TENCENT_CONCURRENCY: '999', IQIYI_CONCURRENCY: '-1' });
+  assert.equal(Globals.envs.tencentConcurrency, 200);
+  assert.equal(Globals.envs.iqiyiConcurrency, 1);
+  Globals.init({ LOG_LEVEL: 'error', TENCENT_CONCURRENCY: '2.9', IQIYI_CONCURRENCY: '3.8' });
+  assert.equal(Globals.envs.tencentConcurrency, 2);
+  assert.equal(Globals.envs.iqiyiConcurrency, 3);
+});
+
+for (const [name, Source, setting] of [['Tencent', TencentSource, 'TENCENT_CONCURRENCY'], ['Iqiyi', IqiyiSource, 'IQIYI_CONCURRENCY']]) {
+  test(`${name} bounds active segments, continues past a slow segment and retains other results on failure`, async t => {
+    Globals.init({ LOG_LEVEL: 'error', [setting]: '2' });
+    const source = new Source();
+    const segments = Array.from({ length: 4 }, (_, index) => ({ url: `https://example.com/segment/${index}`, segment_start: index, segment_end: index + 1 }));
+    t.mock.method(source, 'getEpisodeDanmuSegments', async () => ({ segmentList: segments }));
+    let active = 0, peak = 0, releaseFirst;
+    const started = [];
+    const download = async index => {
+      started.push(index);
+      peak = Math.max(peak, ++active);
+      try {
+        if (index === 0) await new Promise(resolve => { releaseFirst = resolve; });
+        if (index === 2) throw new Error('坏分片');
+        return [{ content: `分片${index}` }];
+      } finally { active--; }
+    };
+    if (name === 'Iqiyi') t.mock.method(source, 'getEpisodeSegmentDanmu', segment => download(segment.segment_start));
+    t.mock.method(globalThis, 'fetch', async input => {
+      const url = String(input);
+      if (!url.includes('/segment/')) return mockResponse('<title>测试</title>');
+      const index = Number(url.split('/').at(-1));
+      // 腾讯的 JSON 错误发生在单片解析阶段，无需触发 HTTP 重试。
+      if (index === 2) {
+        started.push(index);
+        return mockResponse('{bad-json');
+      }
+      return mockResponse({ barrage_list: await download(index) });
+    });
+    const pending = source.getEpisodeDanmu('https://example.com/video');
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(started, [0, 1, 2, 3], '第一个分片未完成时其余空闲名额继续下载');
+      assert.equal(peak, 2);
+    } finally { releaseFirst?.(); }
+    assert.deepEqual((await pending).map(item => item.content), ['分片0', '分片1', '分片3']);
+  });
+}
+
+const webSeries = (id, name = '测试短剧') => ({ video_data: { series_id: id, series_name: name, episode_cnt: 30 } });
+
+test('Hongguo searches the web API, deduplicates pages and retains results if a later page fails', async t => {
+  Globals.init({ LOG_LEVEL: 'error' });
+  const source = new HongguoSource();
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async input => {
+    const url = new URL(input);
+    calls.push(url.pathname);
+    assert.equal(url.searchParams.get('query'), '测试 短剧');
+    const page = Number(url.searchParams.get('page'));
+    if (page === 3) throw new Error('第三页失败');
+    return mockResponse({ searchList: page === 1 ? [webSeries('1')] : [webSeries('1'), webSeries('2')] });
+  });
+  assert.deepEqual((await source.search('测试 短剧')).map(item => item.seriesId), ['1', '2']);
+  assert.deepEqual(calls, Array(3).fill('/api/search/result/'));
+});
+
+test('Hongguo keeps SSR fallback and shares one deadline across App fallback pages', async t => {
+  Globals.init({ LOG_LEVEL: 'error' });
+  const source = new HongguoSource();
+  t.mock.method(globalThis, 'fetch', async input => mockResponse(String(input).includes('/api/search/result/') ? { searchList: [] } : `<script>{"searchList":${JSON.stringify([webSeries('ssr')])}}</script>`));
+  assert.equal((await source.search('测试'))[0].seriesId, 'ssr');
+  t.mock.method(globalThis, 'fetch', async input => mockResponse(String(input).includes('/api/search/result/') ? [] : '无SSR'));
+  let now = 1700000000000, appCalls = 0;
+  t.mock.method(Date, 'now', () => now);
+  t.mock.method(source, 'request', async (_method, _path, options) => {
+    appCalls++;
+    assert.equal(options.deadline, 1700000010000);
+    now = options.deadline;
+    return { search_tabs: [] };
+  });
+  assert.deepEqual(await source.search('测试'), []);
+  assert.equal(appCalls, 1);
+});
+
+test('Hongguo stops at the shared search deadline without starting fallback traffic', async t => {
+  Globals.init({ LOG_LEVEL: 'error' });
+  let now = 1700000000000, calls = 0;
+  t.mock.method(Date, 'now', () => now);
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    now += 10000;
+    return mockResponse({ searchList: [] });
+  });
+  assert.deepEqual(await new HongguoSource().search('测试'), []);
+  assert.equal(calls, 1);
+});
+
+test('Hongguo App host fallback stops when its search deadline expires', async t => {
+  Globals.init({ LOG_LEVEL: 'error' });
+  let now = 1700000000000, calls = 0;
+  t.mock.method(Date, 'now', () => now);
+  const source = new HongguoSource();
+  t.mock.method(source, 'throttle', async () => {});
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    now += 10000;
+    throw new Error('超时');
+  });
+  await assert.rejects(source.request('GET', '/reading/bookapi/search/tab/v', { deadline: now + 10000 }), /红果搜索超时/);
+  assert.equal(calls, 1);
 });

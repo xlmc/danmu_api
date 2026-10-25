@@ -904,28 +904,26 @@ export default class IqiyiSource extends BaseSource {
     const segmentList = segmentResult.segmentList;
     log("info", `[iqiyi] 弹幕分段数量: ${segmentList.length}`);
 
-    // 创建请求Promise数组
-    const promises = [];
-    for (const segment of segmentList) {
-      promises.push(this.getEpisodeSegmentDanmu(segment));
-    }
-
-    // 解析弹幕数据
-    let contents = [];
-    try {
-      const results = await Promise.allSettled(promises);
-      const datas = results
-        .filter(result => result.status === "fulfilled")
-        .map(result => result.value)
-        .filter(data => data !== null); // 过滤掉null值
-
-      datas.forEach(data => {
-        contents.push(...data);
-      });
-    } catch (error) {
-      log("error", "[iqiyi] 解析弹幕数据失败:", error);
-      return [];
-    }
+    // 固定数量的下载任务持续领取分片，慢分片不会阻塞其余空闲名额。
+    const concurrency = Math.max(1, Number(globals.iqiyiConcurrency) || 100);
+    const segmentContents = new Array(segmentList.length);
+    let nextSegment = 0;
+    let fulfilledCount = 0;
+    const downloadNext = async () => {
+      while (nextSegment < segmentList.length) {
+        const segmentIndex = nextSegment++;
+        const segment = segmentList[segmentIndex];
+        try {
+          segmentContents[segmentIndex] = await this.getEpisodeSegmentDanmu(segment, { throwOnError: true });
+          fulfilledCount++;
+        } catch (error) {
+          log("warn", `[iqiyi] 第 ${segmentIndex + 1} 个分片请求失败: ${error.message}（${segment.segment_start}-${segment.segment_end}s）`);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, segmentList.length) }, downloadNext));
+    const contents = segmentContents.flat();
+    log("info", `[iqiyi] 分段下载完成: ${fulfilledCount}/${segmentList.length}` + (fulfilledCount < segmentList.length ? `，失败 ${segmentList.length - fulfilledCount} 段` : ""));
 
     printFirst200Chars(contents);
 
@@ -1057,7 +1055,7 @@ export default class IqiyiSource extends BaseSource {
     });
   }
 
-  async getEpisodeSegmentDanmu(segment) {
+  async getEpisodeSegmentDanmu(segment, options = {}) {
     try {
       const response = await httpGet(segment.url, {
         headers: {
@@ -1084,7 +1082,8 @@ export default class IqiyiSource extends BaseSource {
       return this._parseIqiyiProtoDanmu(payload);
     } catch (error) {
       log("error", "[iqiyi] 请求分片弹幕失败:", error);
-      return []; // 返回空数组而不是抛出错误，保持与getEpisodeDanmu一致的行为
+      if (options.throwOnError) throw error;
+      return []; // 分片接口保持吞异常返回空数组；整集路径传 throwOnError 以便统计失败分片
     }
   }
 

@@ -559,6 +559,8 @@ export class Envs {
       'CUSTOM_MERGE_RULES': { category: 'source', type: 'text', sources: this.MERGE_ALLOWED_SOURCES, description: '合并映射表，用于自定义源合并行为。\n格式1(合并)：副源剧名/S季数@来源 -> 主源剧名/S季数@来源 | E副源集数>E主源集数\n格式2(阻断)：副源剧名/S季数@来源 × 主源剧名/S季数@来源\n说明：[/S季数] 与 [|路由规则] 为可选项，留空则交由程序判断。多个规则用分号隔开，多段路由用逗号分隔。\n示例：\n1. 常规合并：天气之子@bilibili -> 天气之子@tencent\n2. 多集路由：我推的孩子/S01@bahamut -> 我推的孩子/S03@tencent | E25~E35>E25~E35\n3. 阻断合并：辉夜大小姐想让我告白？～天才们的恋爱头脑战～(2020)@bilibili × 辉夜大小姐想让我告白～天才们的恋爱头脑战～ OVA(2021)【OVA】@tencent' },
       'BILIBILI_COOKIE': { category: 'source', type: 'text', description: 'B站Cookie' },
       'YOUKU_CONCURRENCY': { category: 'source', type: 'number', description: '优酷并发配置，默认8', min: 1, max: 16 },
+      'TENCENT_CONCURRENCY': { category: 'source', type: 'number', description: '腾讯弹幕分片并发数，默认100，范围1-200', min: 1, max: 200 },
+      'IQIYI_CONCURRENCY': { category: 'source', type: 'number', description: '爱奇艺弹幕分片并发数，默认100，范围1-200', min: 1, max: 200 },
 
       // 匹配配置
       'PLATFORM_ORDER': { category: 'match', type: 'multi-select', options: this.ALLOWED_PLATFORMS, description: '自动匹配的平台组搜索与选择顺序：逗号分组，按组依次执行；& 连接同组并发来源。有有效季集匹配就停止，不启动后续组；全部未命中才搜索其余启用源。\n示例：tencent&youku,hongguo。只搜索 SOURCE_ORDER 已启用的来源。\n& 本身不启用弹幕合并，实际合并由 MERGE_SOURCE_PAIRS / CUSTOM_MERGE_RULES 控制。指定平台或手动选择优先。' },
@@ -625,6 +627,8 @@ export class Envs {
       bilibiliUgcEnabled: this.get('BILIBILI_UGC_ENABLED', false, 'boolean'),
       bilibiliUgcBudgetMs: Math.max(1000, Math.min(120000, this.get('BILIBILI_UGC_BUDGET_MS', 10000, 'number'))),
       youkuConcurrency: Math.min(this.get('YOUKU_CONCURRENCY', 8, 'number'), 16), // 优酷并发配置
+      tencentConcurrency: Math.min(200, Math.max(1, Math.floor(this.get('TENCENT_CONCURRENCY', 100, 'number')))),
+      iqiyiConcurrency: Math.min(200, Math.max(1, Math.floor(this.get('IQIYI_CONCURRENCY', 100, 'number')))),
       platformOrderArr: this.resolvePlatformOrder(), // 自动匹配优选平台
       animeTitleFilter: this.resolveAnimeTitleFilter(), // 剧名正则过滤
       episodeTitleFilter: this.resolveEpisodeTitleFilter(), // 剧集标题正则过滤
