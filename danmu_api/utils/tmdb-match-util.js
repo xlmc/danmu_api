@@ -1,5 +1,5 @@
 import { searchTmdbTitles, getTmdbMatchDetails, getTmdbMatchEpisode } from './tmdb-util.js';
-import { extractSeasonNumberFromAnimeTitle, workIdentityConflict } from './common-util.js';
+import { extractSeasonNumberFromAnimeTitle, workIdentityConflict, compoundTitleMatches } from './common-util.js';
 import { filterMappingTargetCandidates } from './auto-match-mapping-util.js';
 
 const normalize = value => String(value || '').normalize('NFKC').toLowerCase().replace(/[\s._:：·-]+/g, '');
@@ -78,7 +78,8 @@ export function filterTmdbMatchCandidates(animes, identity, mapping = null, save
     const titles = mapping?.targetTitle ? [mapping.targetTitle] : identity.aliases;
     const annual = !mapping?.targetTitle && annualVariety(anime, identity);
     const candidate = annual ? { ...anime, animeTitle: annual.title } : anime;
-    return titles.some(title => filterMappingTargetCandidates([candidate], { targetTitle: title }).length > 0);
+    return titles.some(title => filterMappingTargetCandidates([candidate], { targetTitle: title }).length > 0 ||
+      (!mapping?.targetTitle && [candidate.animeTitle, ...(candidate.aliases || [])].some(value => compoundTitleMatches(value, title))));
   });
 }
 

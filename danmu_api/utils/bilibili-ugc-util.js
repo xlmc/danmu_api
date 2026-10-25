@@ -2,7 +2,8 @@ import BilibiliSource from '../sources/bilibili.js';
 import { globals } from '../configs/globals.js';
 import { httpGet } from './http-util.js';
 import { logEvent } from './log-util.js';
-import { convertChineseNumber, extractAnimeInfo, extractYear, matchMediaType, workIdentityConflict } from './common-util.js';
+import { convertChineseNumber, extractAnimeInfo, extractYear, matchMediaType, workIdentityConflict,
+  buildTitleKeywordQueries, compoundTitleMatches, getTitleKeywordParts } from './common-util.js';
 import { decodeHtmlEntities } from './codec-util.js';
 import { isDomesticTmdbProduction } from './tmdb-util.js';
 import { simplized, traditionalized } from './zh-util.js';
@@ -68,7 +69,13 @@ export function calculateUgcTitlePrecision(candidateTitle, context) {
     }
   }
 
-  if (matchedTitleLength === 0) return 0;
+  if (matchedTitleLength === 0) {
+    const contentTitle = working.replace(RELEASE_DECORATORS, ' ').trim();
+    if (!aliases.some(name => compoundTitleMatches(contentTitle, name))) return 0;
+    const parts = getTitleKeywordParts(contentTitle);
+    matchedTitleLength = normalize(parts.main + parts.subtitle).length;
+    working = working.replace(parts.main, '').replace(parts.subtitle, '');
+  }
 
   for (const epName of ugcEpisodeTitles(context)) {
     if (normalize(working).includes(normalize(epName))) matchedTitleLength += normalize(epName).length;
@@ -185,7 +192,8 @@ export function buildUgcQueries(context) {
   // B站优先搜索中文别名；其他已确认别名仍参与，不因列表位置被截断。
   const chinese = name => /[\u3400-\u9fff]/u.test(name) && !/[\u3040-\u30ff]/u.test(name);
   aliases.sort((a, b) => Number(chinese(b)) - Number(chinese(a)));
-  const names = [...new Set([context.title, ...aliases].filter(Boolean).flatMap(name => [name, simplized(name), traditionalized(name)]))];
+  const keywordNames = [context.title, ...aliases].flatMap(buildTitleKeywordQueries);
+  const names = [...new Set([context.title, ...keywordNames, ...aliases].filter(Boolean).flatMap(name => [name, simplized(name), traditionalized(name)]))];
   const broadNames = new Set([context.title, ...aliases.slice(0, 2)].filter(Boolean).flatMap(name => [name, simplized(name), traditionalized(name)]));
   if (context.year) { names.unshift(`${context.title} ${context.year}`); broadNames.add(names[0]); }
   if (context.mediaType === 'movie') return [...new Set(names)];
@@ -280,7 +288,9 @@ function ugcEpisodeNumber(title, context) {
 export function selectUgcPages(context, video, onReject = () => {}) {
   const reject = (reason, page) => { onReject(reason, page); return []; };
   const title = clean(video.title), aliases = [context.title, ...(context.aliases || [])];
-  if (!aliases.some(name => normalize(name).length >= 2 && normalize(title).includes(normalize(name)))) return reject('title-mismatch');
+  const contentTitle = title.replace(RELEASE_DECORATORS, ' ').trim();
+  if (!aliases.some(name => normalize(name).length >= 2 &&
+      (normalize(title).includes(normalize(name)) || compoundTitleMatches(contentTitle, name)))) return reject('title-mismatch');
   const precision = calculateUgcTitlePrecision(title, context);
   if (precision < MIN_UGC_TITLE_PRECISION) return reject('title-precision-low');
   const season = title.match(/第\s*([\d一二三四五六七八九十百]+)\s*季|(?<![a-z0-9])S(\d{1,3})(?=\s*E\d|\b)/i);
