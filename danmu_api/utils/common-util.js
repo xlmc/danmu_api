@@ -366,6 +366,49 @@ export function normalizeTitleForMatch(str) {
   return stripNonTitleChars(simplized(String(str)));
 }
 
+// 只在有明确主副标题结构时扩展匹配，不对普通标题做任意前缀截取。
+function keywordTitleText(title) {
+  return simplized(String(title || '')).normalize('NFKC')
+    .replace(/(?:\s+|(?<=】))from\s+.+$/i, '').replace(/【[^】]*】/g, '')
+    .replace(/\((?:19|20)\d{2}\)/g, '')
+    .replace(/(?:第\s*[\d一二三四五六七八九十]+\s*季|\bS\d+)\s*$/i, '').trim();
+}
+
+function normalizeTitleKeyword(value) {
+  return normalizeTitleForMatch(value).toLowerCase()
+    .replace(/[一二两三四五六七八九][零〇一二两三四五六七八九十百千万]*[百千万][零〇一二两三四五六七八九十百千万]*/g,
+      text => String(convertChineseNumber(text.replace(/两/g, '二'))));
+}
+
+export function getTitleKeywordParts(title) {
+  const text = keywordTitleText(title);
+  const match = text.match(/^(.{4,}?)(?:之|[:：]\s*|\s+[-—–]\s+|\s+)(.{3,})$/u);
+  if (!match) return null;
+  const main = match[1].trim(), subtitle = match[2].trim();
+  if (!/[\u3400-\u9fff]/u.test(main) || !/[\u3400-\u9fff]/u.test(subtitle)) return null;
+  if (normalizeTitleKeyword(main).length < 4 || normalizeTitleKeyword(subtitle).length < 3) return null;
+  return { main, subtitle };
+}
+
+// “历险记/历险”是明确的标题形式变体；不全局删除“记”等普通字。
+const subtitleKeyword = value => normalizeTitleKeyword(value).replace(/(历险|冒险)记$/, '$1');
+
+export function buildTitleKeywordQueries(title) {
+  const parts = getTitleKeywordParts(title);
+  if (!parts) return [];
+  const main = normalizeTitleKeyword(parts.main);
+  return [...new Set([`${main} ${parts.subtitle}`, `${main} ${subtitleKeyword(parts.subtitle)}`])]
+    .filter(query => query !== String(title).trim());
+}
+
+export function compoundTitleMatches(candidate, query) {
+  const expected = getTitleKeywordParts(query);
+  if (!expected) return false;
+  const actual = getTitleKeywordParts(candidate);
+  if (!actual || normalizeTitleKeyword(actual.main) !== normalizeTitleKeyword(expected.main)) return false;
+  return subtitleKeyword(actual.subtitle) === subtitleKeyword(expected.subtitle);
+}
+
 /**
  * 严格标题匹配函数
  * @param {string} title - 动漫标题
@@ -389,6 +432,8 @@ export function strictTitleMatch(title, query, parsedSeason = null) {
   // 严格模式必须尊重已解析出的季：候选明确写了其他季时直接排除。
   const candidateSeason = getExplicitSeasonNumber(cleanTitle);
   if (parsedSeason !== null && candidateSeason !== null && Number(candidateSeason) !== Number(parsedSeason)) return false;
+
+  if (compoundTitleMatches(cleanTitle, cleanQuery)) return true;
 
   // 标题以搜索词开头，且后面为季号或有效关键词时，允许严格匹配通过
   if (t.startsWith(q) && t.length > q.length) {

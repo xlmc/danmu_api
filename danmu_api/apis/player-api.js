@@ -24,7 +24,8 @@ import { filterMappingQualifierCandidates, filterMappingTargetCandidates, collec
 import { ensureRemoteAutoMatchMapping, getCachedRemoteAutoMatchMappingRules } from "../utils/auto-match-mapping-url-util.js";
 import {
   extractEpisodeTitle, convertChineseNumber, parseFileName, extractReleaseGroups, createDynamicPlatformOrder, normalizeSpaces, normalizeTitleForMatch,
-  extractYear, matchMediaType, workIdentityConflict, titleMatches, extractAnimeInfo, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle
+  extractYear, matchMediaType, workIdentityConflict, titleMatches, extractAnimeInfo, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle,
+  buildTitleKeywordQueries, compoundTitleMatches, getExplicitSeasonNumber
 } from "../utils/common-util.js";
 import { getDomesticPersonMetadataForTitle, getTmdbMediaTitleById, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
 import { shouldBlockDomesticCelebrities, getCurrentWorkFilterTitles } from '../utils/person-filter-exclusion-util.js';
@@ -335,6 +336,11 @@ export function matchSeason(anime, queryTitle, season) {
     ? queryTitle.replace(/[（(]\s*(?:19|20)\d{2}\s*[）)]/g, '').trim()
     : queryTitle;
   const normalizedQueryTitle = normalizeTitleForMatch(seasonQueryTitle);
+
+  if (compoundTitleMatches(originalTitle, seasonQueryTitle)) {
+    const candidateSeason = getExplicitSeasonNumber(originalTitle);
+    return candidateSeason !== null ? candidateSeason === season : season === 1;
+  }
 
   if (normalizedAnimeTitle.includes(normalizedQueryTitle)) {
     if (normalizedAnimeTitle.startsWith(normalizedQueryTitle)) {
@@ -920,6 +926,22 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
         resultData[source] = searchResult;
         await traceMatchStep(log, `来源 ${source} 分集目录处理`, () =>
           executeSourceHandlers({ [source]: searchResult }, queryTitle, isolatedAnimes, isolatedDetailStore, querySeason, preferAnimeId, preferSource, sourceOrder));
+        // 检索词可调整分隔写法，处理和最终选择始终校验原始完整作品。
+        for (const keyword of buildTitleKeywordQueries(queryTitle)) {
+          if (isolatedAnimes.length) break;
+          const meta = getSourceMetaByKey(source);
+          const args = meta.extraSearchArgs ? [keyword, preferAnimeId, preferSource] : [keyword];
+          const key = JSON.stringify([source, ...args]);
+          let pending = sourceSearches?.get(key);
+          if (!pending) {
+            log('info', `[system] [match-search] ${source} 主副标题关键词回退: ${keyword}`);
+            pending = sourceLogContext.run(meta.logName, () => meta.instance.search(...args));
+            sourceSearches?.set(key, pending);
+          }
+          const rows = structuredClone(await pending);
+          resultData[source] = rows;
+          await executeSourceHandlers({ [source]: rows }, queryTitle, isolatedAnimes, isolatedDetailStore, querySeason, preferAnimeId, preferSource, sourceOrder);
+        }
         if (getMatchTracePrefix()) log('info', `[system] [match-source] ${source} 管道完成，候选 ${isolatedAnimes.length} 个（空结果不代表故障）`);
         completedSources.set(source, { animes: isolatedAnimes, details: isolatedDetailStore });
         if (onProgress) {
@@ -1323,7 +1345,7 @@ export async function matchAniAndEp(season, episode, year, searchData, title, re
 
         if (season && episode) {
             // 剧集模式
-            if (normalizeTitleForMatch(candTitle).includes(candidateQueryTitle)) {
+            if (normalizeTitleForMatch(candTitle).includes(candidateQueryTitle) || compoundTitleMatches(candTitle, title)) {
                 // 年份匹配依然以原始 anime 为准，且年份匹配优先于季匹配
                 if (!matchYear(anime, year)) {
                     log("info", `Year mismatch: anime year ${extractYear(anime.animeTitle)} vs query year ${year}`);
@@ -1349,7 +1371,7 @@ export async function matchAniAndEp(season, episode, year, searchData, title, re
         } else {
             // 电影模式
             const cleanTitle = candTitle.split("(")[0].trim();
-            if (normalizeTitleForMatch(cleanTitle) === candidateQueryTitle) {
+            if (normalizeTitleForMatch(cleanTitle) === candidateQueryTitle || compoundTitleMatches(cleanTitle, title)) {
                 // 年份匹配检查
                 if (!matchYear(anime, year)) {
                     log("info", `Year mismatch: anime year ${extractYear(anime.animeTitle)} vs query year ${year}`);
@@ -1744,7 +1766,8 @@ function confidentCandidates(animes, { title, season, episode, year, mapping, tm
   const guard = mapping || { targetTitle: title };
   let candidates = tmdbIdentity
     ? filterTmdbMatchCandidates(animes, tmdbIdentity, mapping, globals.animes)
-    : filterMappingTargetCandidates(animes, guard);
+    : animes.filter(anime => filterMappingTargetCandidates([anime], guard).length > 0 ||
+      (!mapping && [anime.animeTitle, ...(anime.aliases || [])].some(candidate => compoundTitleMatches(candidate, title))));
   candidates = candidates.filter(anime => {
     const target = { year: mapping?.targetYear || year, mediaType: mapping?.targetType || tmdbIdentity?.mediaType || mediaType || (season && episode ? 'tv' : 'movie'), tmdbIdentity };
     const conflict = workIdentityConflict(anime, target);

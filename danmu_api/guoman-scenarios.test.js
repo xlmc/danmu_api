@@ -8,11 +8,78 @@ import { getSourceByKey } from './sources/registry.js';
 import { collectAutoMatchCandidates, parseAutoMatchMappingRules } from './utils/auto-match-mapping-util.js';
 import { applyRemoteTitleMappingText } from './utils/title-mapping-url-util.js';
 import { refreshRemoteAutoMatchMappingNow } from './utils/auto-match-mapping-url-util.js';
-import { titleMatches } from './utils/common-util.js';
+import { titleMatches, buildTitleKeywordQueries, getTitleKeywordParts, compoundTitleMatches } from './utils/common-util.js';
+import { filterTmdbMatchCandidates } from './utils/tmdb-match-util.js';
+import { buildUgcQueries, buildUgcRequestContext, selectUgcPages } from './utils/bilibili-ugc-util.js';
 import TencentSource from './sources/tencent.js';
 const catalog = JSON.parse(fs.readFileSync(new URL('./fixtures/guoman-catalog.json', import.meta.url)));
 const titles = fs.readFileSync(new URL('./fixtures/guoman-2026.txt', import.meta.url), 'utf8');
 const seasons = fs.readFileSync(new URL('./fixtures/guoman-season-candidates.txt', import.meta.url), 'utf8');
+
+const compoundQuery = '蓝猫淘气3000问之太空历险记';
+test('主副标题联合匹配兼容分隔、数字与历险标题形式，保留系列和季号约束', () => {
+  reset({ STRICT_TITLE_MATCH: 'true' });
+  assert.deepEqual(buildTitleKeywordQueries(compoundQuery), ['蓝猫淘气3000问 太空历险记', '蓝猫淘气3000问 太空历险']);
+  for (const title of ['蓝猫淘气3000问 太空历险', '藍貓淘氣三千問：太空歷險記']) {
+    assert.equal(titleMatches(title, compoundQuery, 1), true, title);
+  }
+  for (const title of ['蓝猫淘气3000问 恐龙时代', '蓝猫淘气3000问 海洋世界', '其他动画系列 太空历险', '蓝猫淘气3000问 太空历险 第二季']) {
+    assert.equal(titleMatches(title, compoundQuery, 1), false, title);
+  }
+  assert.equal(compoundTitleMatches('蓝猫淘气3000问 太空历险记续篇', compoundQuery), false);
+  assert.equal(compoundTitleMatches('蓝猫淘气3000问 太空历险', '蓝猫淘气3000问之太空历险记续篇'), false);
+  for (const title of ['天之骄子', '命运之夜', 'Test Series']) assert.equal(getTitleKeywordParts(title), null);
+});
+
+test('TMDB 主副标题候选仍需通过年份与身份检查', () => {
+  reset();
+  const identity = { key: 'tv:250974', tmdbId: '250974', mediaType: 'tv', aliases: [compoundQuery], year: 2005, seasonYear: 2005 };
+  const good = { animeId: 1, animeTitle: '蓝猫淘气3000问 太空历险(2005)【动漫】from bilibili', startDate: '2005-01-01', type: '动漫', source: 'bilibili' };
+  assert.deepEqual(filterTmdbMatchCandidates([good, { ...good, animeId: 2, tmdbId: '999' },
+    { ...good, animeId: 3, startDate: '2020-01-01', animeTitle: good.animeTitle.replace('2005', '2020') },
+    { ...good, animeId: 4, animeTitle: good.animeTitle.replace('太空历险', '恐龙时代') }], identity).map(item => item.animeId), [1]);
+});
+
+test('UGC 使用相同关键字并联合校验系列，拒绝错误年份、季集和解说', () => {
+  reset();
+  const context = buildUgcRequestContext({ title: compoundQuery, season: 1, episode: 1, year: 2005 });
+  assert.ok(buildUgcQueries(context).some(query => query.startsWith('蓝猫淘气3000问 太空历险 ')));
+  const video = { bvid: 'BVcompound', title: '蓝猫淘气三千问 太空历险 第1集 全集',
+    pages: [{ cid: 1, page: 1, part: '第1集', duration: 600 }] };
+  assert.equal(selectUgcPages(context, video).length, 1);
+  for (const title of [video.title.replace('太空历险', '恐龙时代'), video.title + ' 解说',
+    video.title + ' 第二季', video.title + ' 2020']) {
+    assert.equal(selectUgcPages(context, { ...video, title }).length, 0, title);
+  }
+  assert.equal(selectUgcPages(context, { ...video, pages: [{ ...video.pages[0], part: '第2集' }] }).length, 0);
+});
+
+test('自动匹配以组合关键词回退，通过真实 B站目录处理并选中正确系列第1集', async t => {
+  reset({ SOURCE_ORDER: 'bilibili', PLATFORM_ORDER: 'bilibili', STRICT_TITLE_MATCH: 'true',
+    TITLE_MAPPING_TABLE: '', AUTO_MATCH_MAPPING_TABLE: '', TMDB_API_KEY: '', PROXY_URL: '',
+    TITLE_MAPPING_TABLE_URL: '', AUTO_MATCH_MAPPING_TABLE_URL: '', BILIBILI_UGC_ENABLED: 'false', LOG_LEVEL: 'error' });
+  const source = getSourceByKey('bilibili'), searched = [], details = [];
+  const wrong = { provider: 'bilibili', mediaId: 'ss999', title: '蓝猫淘气3000问 恐龙时代', type: '动漫', year: 2005, episodeCount: 2 };
+  const correct = { ...wrong, mediaId: 'ss888', title: '蓝猫淘气3000问 太空历险' };
+  t.mock.method(source, 'search', async keyword => {
+    searched.push(keyword);
+    return keyword === '蓝猫淘气3000问 太空历险' ? [wrong, correct] : [wrong];
+  });
+  t.mock.method(source, 'getEpisodes', async id => {
+    details.push(id);
+    return [{ id: 88801, title: '第1话', link: 'https://www.bilibili.com/bangumi/play/ep88801' },
+      { id: 88802, title: '第2话', link: 'https://www.bilibili.com/bangumi/play/ep88802' }];
+  });
+  const response = await matchAnime(new URL('http://localhost/api/v2/match'), new Request('http://localhost/api/v2/match', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fileName: compoundQuery + '.2005.S01E01.mkv' })
+  }));
+  const result = await response.json();
+  assert.equal(result.isMatched, true, JSON.stringify({result,searched,details}));
+  assert.match(result.matches[0].animeTitle, /太空历险/);
+  assert.match(result.matches[0].episodeTitle, /第1话/);
+  assert.deepEqual(searched, [compoundQuery, '蓝猫淘气3000问 太空历险记', '蓝猫淘气3000问 太空历险']);
+  assert.deepEqual(details, ['ss888'], '无关系列不应读取分集详情');
+});
 
 function reset(extra = {}) {
   Globals.init({SOURCE_ORDER: 'tencent,bilibili,youku', PLATFORM_ORDER: 'tencent,bilibili,youku',
