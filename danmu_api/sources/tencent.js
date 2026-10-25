@@ -804,43 +804,34 @@ export default class TencentSource extends BaseSource {
     const segmentList = segmentResult.segmentList;
     log("info", `[tencent] 弹幕分段数量: ${segmentList.length}`);
 
-    // 创建请求Promise数组
-    const promises = [];
-    for (const segment of segmentList) {
-      promises.push(
-        httpGet(segment.url, {
-          headers: {
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-          },
-          retries: 1,
-        })
-      );
-    }
-
-    // 解析弹幕数据
-    let contents = [];
-    try {
-      const results = await Promise.allSettled(promises);
-      const datas = results
-        .filter(result => result.status === "fulfilled")
-        .map(result => {
-          // 检查result是否包含响应数据
-          if (result.value && result.value.data) {
-            return result.value.data;
-          }
-          return null;
-        })
-        .filter(data => data !== null); // 过滤掉null值
-
-      datas.forEach(data => {
-        data = typeof data === "string" ? JSON.parse(data) : data;
-        contents.push(...data.barrage_list);
-      });
-    } catch (error) {
-      log("error", "[tencent] 解析弹幕数据失败:", error);
-      return [];
-    }
+    // 固定数量的下载任务持续领取分片，慢分片不会阻塞其余空闲名额。
+    const concurrency = Math.max(1, Number(globals.tencentConcurrency) || 100);
+    const segmentContents = new Array(segmentList.length);
+    let nextSegment = 0;
+    let fulfilledCount = 0;
+    const downloadNext = async () => {
+      while (nextSegment < segmentList.length) {
+        const segmentIndex = nextSegment++;
+        const segment = segmentList[segmentIndex];
+        try {
+          const response = await httpGet(segment.url, {
+            headers: {
+              "Content-Type": "application/json",
+              "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            },
+            retries: 1,
+          });
+          const data = typeof response.data === "string" ? JSON.parse(response.data) : response.data;
+          segmentContents[segmentIndex] = Array.isArray(data?.barrage_list) ? data.barrage_list : [];
+          fulfilledCount++;
+        } catch (error) {
+          log("warn", `[tencent] 第 ${segmentIndex + 1} 个分片请求失败: ${error.message}（${segment.segment_start}-${segment.segment_end}s）`);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, segmentList.length) }, downloadNext));
+    const contents = segmentContents.flat();
+    log("info", `[tencent] 分段下载完成: ${fulfilledCount}/${segmentList.length}` + (fulfilledCount < segmentList.length ? `，失败 ${segmentList.length - fulfilledCount} 段` : ""));
 
     printFirst200Chars(contents);
 

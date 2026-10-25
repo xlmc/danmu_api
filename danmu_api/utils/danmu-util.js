@@ -533,7 +533,8 @@ const DANMU_MODE_FALLBACK = 1;
 export function convertToDanmakuJson(contents, platform, commentConfig = getCommentTransformConfig()) {
   let danmus = [];
   let cidCounter = 1;
-  let isMultiSource = false; // 用于记录当前弹幕集合是否为多源组合
+  let isMultiSource = false;
+  const sourceLabels = new Set();
   let colorV2Count = 0; // 源渐变色弹幕（B站 color_v2）识别计数；DanmuX 不输出原生纹理
   let unsupportedModeCount = 0; // 降级为滚动弹幕的高级/代码/BAS 弹幕计数
 
@@ -624,7 +625,8 @@ export function convertToDanmakuJson(contents, platform, commentConfig = getComm
       currentPlatform = `${currentPlatform}＆${realTimeSource}`;
     }
 
-    // 在组装字符串时，顺带通过符号检测判定当前是否为多源组合数据
+    // 合并结果可能逐条携带单源标签，也可能统一携带组合标签。
+    sourceLabels.add(currentPlatform);
     if (!isMultiSource && /[&＆]/.test(currentPlatform)) {
       isMultiSource = true;
     }
@@ -672,7 +674,7 @@ export function convertToDanmakuJson(contents, platform, commentConfig = getComm
 
   // 按n分钟内去重
   log("info", `[system] [danmu] 去重分钟数: ${globals.groupMinute}`);
-  const groupedDanmus = groupDanmusByMinute(filteredDanmus, globals.groupMinute, isMultiSource);
+  const groupedDanmus = groupDanmusByMinute(filteredDanmus, globals.groupMinute, isMultiSource || sourceLabels.size > 1);
 
   // 处理点赞数
   const likeDanmus = handleDanmusLike(groupedDanmus);

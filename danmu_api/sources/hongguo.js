@@ -97,6 +97,38 @@ function parseWebSearchResults(html) {
   try { return JSON.parse(html.slice(i, end + 1)); } catch { return []; }
 }
 
+// 归一化网页搜索接口（/api/search/result/）返回的单条结果
+function normalizeWebSearchItem(item) {
+  if (!item || typeof item !== "object") return null;
+  const data = item.video_data || {};
+  const seriesId = String(data.series_id || item.keyword || "");
+  const name = String(data.series_name || data.series_title || item.name || "").trim();
+  const episodeCount = Number(data.episode_cnt) || 0;
+  if (!seriesId || !name || episodeCount <= 0) return null;
+  return {
+    seriesId,
+    name,
+    episodeCount,
+    score: "",
+    year: extractYearFromTimestamp(data.create_time),
+    imageUrl: extractImageUrl(data.series_cover),
+  };
+}
+
+// 解析网页搜索接口（/api/search/result/）的响应，兼容对象与字符串（HTML/文本）两种入参
+function parseWebSearchApi(payload) {
+  let result = payload;
+  if (typeof result === "string") {
+    const text = result.trim();
+    if (!text) return [];
+    try { result = JSON.parse(text); } catch { return []; }
+  }
+  const list = result && Array.isArray(result.searchList)
+    ? result.searchList
+    : (Array.isArray(result) ? result : []);
+  return list.map(normalizeWebSearchItem).filter(Boolean);
+}
+
 function parseWebSeriesDetail(html) {
   const marker = '"seriesDetail":';
   const start = html.indexOf(marker);
@@ -127,6 +159,7 @@ const COMMENT_CONCURRENCY = 3;
 const COMMENT_THROTTLE_MS = 180;
 const COMMENT_THROTTLE_JITTER_MS = 240;
 const MAX_SEARCH_ITEMS = 20;
+const SEARCH_BUDGET_MS = 10000;
 const IMAGE_SHRINK =
   "W3siaW1hZ2VfdHlwZSI6MywiaW1hZ2Vfd2lkdGgiOjkwMCwic2hyaW5rX3R5cGUiOjN9LHsiaW1h\n" +
   "Z2VfdHlwZSI6NCwiaW1hZ2Vfd2lkdGgiOjU0LCJzaHJpbmtfdHlwZSI6NH1d\n";
@@ -737,9 +770,10 @@ export default class HongguoSource extends BaseSource {
     }
   }
 
-  async throttle(baseMs = 600, jitterMs = 401) {
+  async throttle(baseMs = 600, jitterMs = 401, deadline = Infinity) {
     const now = Date.now();
     const scheduled = Math.max(now, this.nextRequestAt);
+    if (scheduled >= deadline) throw new Error("红果搜索超时");
     this.nextRequestAt = scheduled + baseMs + Math.floor(Math.random() * jitterMs);
     if (scheduled > now) await sleep(scheduled - now);
   }
@@ -769,7 +803,7 @@ export default class HongguoSource extends BaseSource {
     throw new Error(`风控或平台异常 code=${code}: ${message}`);
   }
 
-  async request(method, path, { body = null, extraQuery = {}, comment = false } = {}) {
+  async request(method, path, { body = null, extraQuery = {}, comment = false, deadline = Infinity } = {}) {
     const apiHosts = this.getApiHosts();
     const failures = [];
     const payload = body == null ? null : JSON.stringify(body);
@@ -778,6 +812,7 @@ export default class HongguoSource extends BaseSource {
       // 风控冷却是按设备身份生效的（与具体主机无关），在主机内做有限次退避重试，之后再切换线路
       const maxAttempts = 3;
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        if (Date.now() >= deadline) throw new Error("红果搜索超时");
         try {
           const url = this.buildUrl(path, extraQuery, apiHost);
           const headers = {};
@@ -796,12 +831,15 @@ export default class HongguoSource extends BaseSource {
           const releaseCommentSlot = comment ? await this.acquireCommentSlot() : null;
           // 弹幕请求同样需要节流，避免分页/整剧连发触发风控
           if (comment) await this.throttle(COMMENT_THROTTLE_MS, COMMENT_THROTTLE_JITTER_MS);
-          else await this.throttle();
+          else await this.throttle(600, 401, deadline);
+          const timeout = Math.min(30000, deadline - Date.now());
+          if (timeout <= 0) throw new Error("红果搜索超时");
           let response;
           try {
+            const signal = Number.isFinite(deadline) ? AbortSignal.timeout(timeout) : undefined;
             response = method === "GET"
-              ? await httpGet(url, { headers, timeout: 30000 })
-              : await httpPost(url, payload, { headers, timeout: 30000 });
+              ? await httpGet(url, { headers, timeout, signal })
+              : await httpPost(url, payload, { headers, timeout, signal });
           } finally {
             if (releaseCommentSlot) releaseCommentSlot();
           }
@@ -811,10 +849,13 @@ export default class HongguoSource extends BaseSource {
           this.preferredApiHost = apiHost;
           return result;
         } catch (error) {
+          if (Date.now() >= deadline) throw new Error("红果搜索超时");
           if (error && error.coolDownMs) {
             // 遵守服务端给出的冷却时间并稍作随机，退避后重试当前主机
             log("warn", `[Hongguo] ${apiHost} 触发风控冷却 ${Math.round(error.coolDownMs / 1000)}s，退避后重试`);
-            await sleep(error.coolDownMs + Math.floor(Math.random() * 1000));
+            const delay = error.coolDownMs + Math.floor(Math.random() * 1000);
+            if (Date.now() + delay >= deadline) throw new Error("红果搜索预算不足，停止冷却重试");
+            await sleep(delay);
             if (attempt < maxAttempts - 1) continue;
           }
           const message = error && error.message ? error.message : String(error);
@@ -835,21 +876,41 @@ export default class HongguoSource extends BaseSource {
   }
 
   async search(keyword) {
+    const deadline = Date.now() + SEARCH_BUDGET_MS;
+    const results = [];
+    const seen = new Set();
     try {
-      const response = await httpGet(`${WEB_ORIGIN}/search/${encodeURIComponent(keyword)}`, { headers: { accept: "text/html" }, timeout: 30000 });
-      const items = parseWebSearchResults(typeof response.data === "string" ? response.data : "");
-      if (items.length) return items.map((item) => {
-        const data = item.video_data || {};
-        return { seriesId: String(data.series_id || item.keyword || ""), name: String(data.series_name || data.series_title || item.name || ""), episodeCount: Number(data.episode_cnt) || 0, score: "", year: extractYearFromTimestamp(data.create_time), imageUrl: extractImageUrl(data.series_cover) };
-      }).filter((item) => item.seriesId && item.name && item.episodeCount > 0).slice(0, MAX_SEARCH_ITEMS);
+      // 官网已改为客户端渲染，搜索页 HTML 不再内嵌 searchList，需直接调用其搜索接口
+      for (let page = 1; page <= 3 && results.length < MAX_SEARCH_ITEMS && Date.now() < deadline; page++) {
+        const url = `${WEB_ORIGIN}/api/search/result/?query=${encodeURIComponent(keyword)}&page=${page}`;
+        const timeout = Math.max(1, Math.min(3000, deadline - Date.now()));
+        const response = await httpGet(url, { headers: { accept: "application/json" }, timeout, signal: AbortSignal.timeout(timeout) });
+        const items = parseWebSearchApi(response.data);
+        for (const item of items) {
+          if (seen.has(item.seriesId)) continue;
+          seen.add(item.seriesId);
+          results.push(item);
+          if (results.length >= MAX_SEARCH_ITEMS) break;
+        }
+        if (items.length === 0) break;
+      }
     } catch (error) { log("warn", `[Hongguo] web search unavailable: ${error.message}`); }
+    // 后续页失败时仍交付已确认结果，不再进入其他线路重搜。
+    if (results.length || Date.now() >= deadline) return results;
     try {
-      const results = [];
-      const seen = new Set();
+      // 兜底：部分环境下搜索页仍以 SSR 形式内嵌 searchList
+      const timeout = Math.max(1, Math.min(2000, deadline - Date.now()));
+      const response = await httpGet(`${WEB_ORIGIN}/search/${encodeURIComponent(keyword)}`, { headers: { accept: "text/html" }, timeout, signal: AbortSignal.timeout(timeout) });
+      const items = parseWebSearchResults(typeof response.data === "string" ? response.data : "")
+        .map(normalizeWebSearchItem).filter(Boolean);
+      if (items.length) return items.slice(0, MAX_SEARCH_ITEMS);
+    } catch (error) { log("warn", `[Hongguo] web search SSR unavailable: ${error.message}`); }
+    if (Date.now() >= deadline) return results;
+    try {
       let offset = 0;
       let passback = "";
       let searchId = "";
-      for (let page = 0; page < 12 && results.length < MAX_SEARCH_ITEMS; page++) {
+      for (let page = 0; page < 12 && results.length < MAX_SEARCH_ITEMS && Date.now() < deadline; page++) {
         const params = {
           query: keyword,
           tab_name: "feed",
@@ -860,7 +921,7 @@ export default class HongguoSource extends BaseSource {
         };
         if (passback) params.passback = passback;
         if (searchId) params.search_id = searchId;
-        const payload = await this.request("GET", "/reading/bookapi/search/tab/v", { extraQuery: params });
+        const payload = await this.request("GET", "/reading/bookapi/search/tab/v", { extraQuery: params, deadline });
         const tabs = payload.search_tabs || [];
         if (!tabs.length) break;
         const tab = tabs[0];
@@ -881,7 +942,7 @@ export default class HongguoSource extends BaseSource {
       return results;
     } catch (error) {
       log("error", `[Hongguo] 搜索失败: ${error.message}`);
-      return [];
+      return results;
     }
   }
 
