@@ -3,12 +3,126 @@ import assert from 'node:assert/strict';
 import { Globals } from './configs/globals.js';
 import { extractBaiduPersonMetadata, getBaiduPersonMetadata } from './utils/baidu-person-util.js';
 import { getDomesticPersonMetadataForTitle, getBangumiSeriesCharacterNames } from './utils/tmdb-util.js';
-import { cachedPersonSource, personCacheIdentity } from './utils/person-source-cache.js';
+import { cachedPersonSource, personCacheIdentity, readCachedPersonSources } from './utils/person-source-cache.js';
 import { getComment, getCommentByUrl, getSegmentComment } from './apis/player-api.js';
 import { setCommentCache } from './utils/cache-util.js';
 import { filterDanmusByBlockedNames } from './utils/danmu-util.js';
+import { getSourceByKey } from './sources/registry.js';
 
 const castRow = (actor, role) => `<div class="actorItem_example"><dl><dt><a>${actor}</a>&nbsp;饰&nbsp;<span>${role}</span></dt></dl></div>`;
+
+test('弹幕下载期间角色补齐后，普通、URL及分段入口使用最新名单', async t => {
+  Globals.init({ BLOCK_DOMESTIC_CELEBRITIES: 'true', USE_BANGUMI_DATA: 'false',
+    BILIBILI_UGC_ENABLED: 'false', BLOCKED_WORDS: '', GROUP_MINUTE: '0',
+    COMMENT_CACHE_MIN_COUNT: '0', LOCAL_CACHE_ENABLED: 'false', LOG_LEVEL: 'warn' });
+  Globals.commentCache = new Map();
+  const title = '最新角色名单回归', animeTitle = `${title}(2026)【动漫】from tencent`;
+  const key = await personCacheIdentity([title, '2026', '', '', false]);
+  await cachedPersonSource(`${key}:identity`, async () => ({ id: 990871, media_type: 'tv', name: title,
+    first_air_date: '2026-01-01', genre_ids: [16] }), () => true);
+  await cachedPersonSource(`${key}:tv/990871:credits-v2`, async () => ({ actorNames: ['原演员'], characterNames: [] }), () => true);
+  await cachedPersonSource(`${key}:wiki`, async () => ({ actorNames: [], characterNames: [] }), () => true);
+  let release, finishRelations;
+  const held = new Promise(resolve => { release = resolve; });
+  const relationsHeld = new Promise(resolve => { finishRelations = resolve; });
+  t.mock.method(globalThis, 'fetch', async input => {
+    const url = String(input);
+    if (url.includes('/search/subject/')) return Response.json({ list: [{ id: 990872, type: 2, name: title, air_date: '2026-01-01' }] });
+    if (url.endsWith('/characters')) { await held; return Response.json([{ name: '孟川' }, { name: '柳七月' }]); }
+    if (url.endsWith('/subjects')) { await relationsHeld; return Response.json([]); }
+    throw new Error('unexpected request');
+  });
+  const comments = ['孟川来了', '阿川来了', '柳七月来了', '剧情很好看'].map((m, i) => ({ p: `${i + 1},1,16777215,[tencent]`, m }));
+  const download = async () => {
+    await held;
+    await new Promise(resolve => setImmediate(resolve));
+    const metadata = await getDomesticPersonMetadataForTitle(animeTitle, { cachedOnly: true });
+    assert.ok(metadata.characterNames.includes('孟川'));
+    return structuredClone(comments);
+  };
+  const source = getSourceByKey('tencent');
+  t.mock.method(source, 'getComments', download);
+  t.mock.method(source, 'getSegmentComments', download);
+  const url = 'https://v.qq.com/x/cover/latest-person/episode.html';
+  Globals.animes = [{ animeTitle, links: [{ id: 990871, url, title: '第1集' }] }];
+  const responses = [getComment('/api/v2/comment/990871', 'json', false), getCommentByUrl(url, 'json', false),
+    getSegmentComment({ type: 'tencent', url: 'latest-person-segment', animeTitle, sourceUrl: url }, 'json')];
+  const timer = setTimeout(release, 1650);
+  try {
+    for (const response of await Promise.all(responses)) {
+      assert.deepEqual((await response.json()).comments.map(comment => comment.m), ['剧情很好看']);
+    }
+  } finally {
+    clearTimeout(timer); release(); finishRelations();
+    await Promise.allSettled(responses);
+    await getDomesticPersonMetadataForTitle(animeTitle);
+    Globals.animes = []; Globals.commentCache = new Map(); Globals.init({});
+  }
+});
+
+test('身份查询慢或失败时立即复用已有角色缓存，最新快照不发请求且隔离作品和配置', async t => {
+  Globals.init({ LOG_LEVEL: 'error', USE_BANGUMI_DATA: 'false' });
+  const title = '旧角色缓存回归', animeTitle = `${title}(2026)【动漫】from tencent`;
+  const key = await personCacheIdentity([title, '2026', '', '', false]);
+  await cachedPersonSource(`${key}:bangumi`, async () => ({ names: ['孟川'], subjectIds: [990881] }), () => true);
+  await cachedPersonSource(`${key}:wiki`, async () => ({ actorNames: [], characterNames: [] }), () => true);
+  let release, requests = 0;
+  const held = new Promise(resolve => { release = resolve; });
+  t.mock.method(globalThis, 'fetch', async () => { requests++; await held; throw new Error('身份查询失败'); });
+  let complete;
+  try {
+    const cached = await getDomesticPersonMetadataForTitle(animeTitle, { cachedOnly: true });
+    assert.deepEqual(cached.characterNames, ['孟川']);
+    assert.equal(requests, 0, '只读快照不得启动网络查询');
+    cached.characterNames.length = 0;
+    assert.deepEqual((await getDomesticPersonMetadataForTitle(animeTitle, { cachedOnly: true })).characterNames, ['孟川']);
+    complete = getDomesticPersonMetadataForTitle(animeTitle);
+    const partial = await getDomesticPersonMetadataForTitle(animeTitle, { budgetMs: 25 });
+    assert.deepEqual(partial.characterNames, ['孟川']);
+    const beforePeek = requests;
+    assert.deepEqual((await getDomesticPersonMetadataForTitle(animeTitle, { cachedOnly: true })).characterNames, ['孟川']);
+    assert.equal(requests, beforePeek);
+    assert.deepEqual((await getDomesticPersonMetadataForTitle('其他作品(2026)', { cachedOnly: true })).names, []);
+    assert.deepEqual((await getDomesticPersonMetadataForTitle(`${title}(2025)`, { cachedOnly: true })).names, []);
+    Globals.init({ LOG_LEVEL: 'error', TMDB_API_KEY: 'other-config' });
+    assert.deepEqual((await getDomesticPersonMetadataForTitle(animeTitle, { cachedOnly: true })).names, []);
+    Globals.init({ LOG_LEVEL: 'error' });
+    release();
+    assert.deepEqual((await complete).characterNames, ['孟川'], '刷新失败仍保留旧角色');
+  } finally {
+    release(); await complete; Globals.init({});
+  }
+});
+
+test('分来源缓存部分刷新和失败均不丢弃已确认角色', async t => {
+  Globals.init({ LOG_LEVEL: 'error' });
+  let now = 1700000000000;
+  t.mock.method(Date, 'now', () => now);
+  for (const [name, previous, updated] of [
+    ['cast', { actorNames: ['旧演员'], characterNames: ['孟川'], incomplete: false },
+      { actorNames: ['新演员'], characterNames: ['柳七月'], incomplete: true }],
+    ['bangumi', { names: ['孟川'], incomplete: false }, { names: ['柳七月'], incomplete: true }]
+  ]) {
+    const key = `partial-refresh-regression:${name}`, usable = value => Boolean(value);
+    const complete = value => !value.incomplete;
+    await cachedPersonSource(key, async () => previous, usable, complete);
+    now += 86400001;
+    let release;
+    const held = new Promise(resolve => { release = resolve; });
+    const stale = await cachedPersonSource(key, async () => { await held; return updated; }, usable, complete);
+    assert.deepEqual(stale.value, previous);
+    release(); await new Promise(resolve => setImmediate(resolve));
+    const refreshed = (await readCachedPersonSources('partial-refresh-regression:')).get(name);
+    const names = name === 'cast' ? refreshed.value.characterNames : refreshed.value.names;
+    assert.deepEqual(names, ['孟川', '柳七月']);
+    assert.equal(refreshed.stale, true);
+    now += 300001;
+    await cachedPersonSource(key, async () => { throw new Error('刷新失败'); }, usable, complete);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual((await readCachedPersonSources('partial-refresh-regression:')).get(name).value, refreshed.value);
+  }
+  Globals.init({});
+});
 const html = (title, rows = castRow('方逸伦', '宁长樾'), {year = '2026', region = '中国大陆', type = '电视剧'} = {}) =>
   `<title>${title}（${year}年导演执导的${type}）_百度百科</title>
    <div><dt class="basicInfoItem_test">制片地区</dt><dd>${region}</dd></div>
