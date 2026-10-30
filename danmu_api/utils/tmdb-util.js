@@ -6,7 +6,7 @@ import { isNonChinese } from "./zh-util.js";
 import { searchBangumiData } from './bangumi-data-util.js';
 import { getWikipediaPersonMetadata } from './wikipedia-person-util.js';
 import { getBaiduPersonMetadata } from './baidu-person-util.js';
-import { cachedPersonSource, personCacheIdentity } from './person-source-cache.js';
+import { cachedPersonSource, personCacheIdentity, readCachedPersonSources } from './person-source-cache.js';
 
 // ---------------------
 // TMDB API 工具方法
@@ -314,6 +314,29 @@ export async function getBangumiSeriesCharacterNames(subjectId, onProgress) {
 const emptyPersonMetadata = (status = 'unavailable') => ({ actorNames: [], characterNames: [], names: [], status });
 const copyPersonMetadata = value => ({ ...value, actorNames: value.actorNames.slice(), characterNames: value.characterNames.slice(), names: value.names.slice() });
 
+export function mergePersonMetadata(...values) {
+  const actorNames = [...new Set(values.flatMap(value => value?.actorNames || []))];
+  const characterNames = [...new Set(values.flatMap(value => value?.characterNames || []))];
+  const names = [...new Set([...actorNames, ...characterNames, ...values.flatMap(value => value?.names || [])])];
+  return { ...Object.assign({}, ...values), actorNames, characterNames, names,
+    status: values.some(value => value?.status === 'ready') ? 'ready' : names.length ? 'partial' : 'unavailable',
+    workTitles: [...new Set(values.flatMap(value => value?.workTitles || []))] };
+}
+
+async function readCachedPersonMetadata(cacheKey, searchTitle) {
+  const sources = await readCachedPersonSources(`${cacheKey}:`);
+  const identity = sources.get('identity')?.value;
+  const credits = identity ? sources.get(`${identity.media_type}/${identity.id}:credits-v2`) : null;
+  const providers = [credits, sources.get('wiki'), sources.get('baidu-v2'), sources.get('bangumi')].filter(Boolean);
+  const metadata = mergePersonMetadata(credits?.value, sources.get('wiki')?.value, sources.get('baidu-v2')?.value,
+    { characterNames: sources.get('bangumi')?.value.names || [], workTitles: [searchTitle] });
+  const animation = identity?.genre_ids?.includes(16) || identity?.genres?.some(genre => genre.id === 16);
+  if (identity && credits && sources.has('wiki') && (!animation || sources.has('bangumi'))
+      && !sources.get('identity').stale && providers.every(source => !source.stale)
+      && metadata.actorNames.length && metadata.characterNames.length) metadata.status = 'ready';
+  return metadata;
+}
+
 async function waitForPersonMetadata(state, title, budgetMs) {
   let timer;
   try {
@@ -326,7 +349,7 @@ async function waitForPersonMetadata(state, title, budgetMs) {
   } finally { clearTimeout(timer); }
 }
 
-export async function getDomesticPersonMetadataForTitle(title, { budgetMs = 1500 } = {}) {
+export async function getDomesticPersonMetadataForTitle(title, { budgetMs = 1500, cachedOnly = false } = {}) {
   if (!String(title || '').trim()) return emptyPersonMetadata();
 
   const context = personSeasonContext(title);
@@ -336,20 +359,21 @@ export async function getDomesticPersonMetadataForTitle(title, { budgetMs = 1500
     globals.tmdbApiKey || '', globals.proxyUrl || '', Boolean(globals.useBangumiData), ...(context.hasSeason ? ['season-identity-v2'] : [])]);
   if (!searchTitle) return emptyPersonMetadata();
 
-  if (TMDB_ACTOR_NAMES_PENDING.has(cacheKey)) {
-    return waitForPersonMetadata(TMDB_ACTOR_NAMES_PENDING.get(cacheKey), title, budgetMs);
+  const pending = TMDB_ACTOR_NAMES_PENDING.get(cacheKey);
+  if (cachedOnly) {
+    return pending ? copyPersonMetadata(pending.value) : readCachedPersonMetadata(cacheKey, searchTitle);
+  }
+  if (pending) {
+    return waitForPersonMetadata(pending, title, budgetMs);
   }
 
   const state = { value: emptyPersonMetadata(), task: null };
   const publish = (value = {}) => {
-    const actorNames = [...new Set([...state.value.actorNames, ...(value.actorNames || [])])];
-    const characterNames = [...new Set([...state.value.characterNames, ...(value.characterNames || [])])];
-    const names = [...new Set([...actorNames, ...characterNames])];
-    state.value = { actorNames, characterNames, names, status: names.length ? 'partial' : 'unavailable',
-      workTitles: [...new Set([...(state.value.workTitles || []), ...(value.workTitles || [])])] };
+    state.value = mergePersonMetadata(state.value, value);
   };
   const task = (async () => {
     try {
+      publish(await readCachedPersonMetadata(cacheKey, searchTitle));
       // 复用 bangumi-data 中已经建立的 TMDB ID 映射，并用详情再次校验身份。
       const identity = await cachedPersonSource(`${cacheKey}:identity`, async () => {
         let candidate = null;
@@ -496,7 +520,10 @@ export async function getDomesticPersonMetadataForTitle(title, { budgetMs = 1500
       resolved.names = [...new Set([...resolved.actorNames, ...resolved.characterNames])];
       const status = resolved.names.length === 0 ? 'unavailable' : incomplete ? 'partial' : 'ready';
       log('info', `[system] [person-metadata] 「${title}」TMDB ${candidate ? `${candidate.media_type}/${candidate.id}${candidate.personSeason ? ` S${candidate.personSeason.number}(${candidate.personSeason.year})` : ''}` : '身份未匹配'}${bangumiSubjectId ? ` + Bangumi ${bangumiSubjectId}` : ''}，演员 ${resolved.actorNames.length} 个，角色 ${resolved.characterNames.length} 个，状态 ${status}`);
-      return { ...resolved, status, workTitles: [...new Set([searchTitle, candidate?.name, candidate?.original_name, candidate?.title, candidate?.original_title].filter(Boolean))] };
+      state.value = mergePersonMetadata(state.value, { ...resolved, status,
+        workTitles: [searchTitle, candidate?.name, candidate?.original_name, candidate?.title, candidate?.original_title].filter(Boolean) });
+      state.value.status = status;
+      return state.value;
     } catch (error) {
       log('warn', `[system] [tmdb] 作品演员表加载失败，保留已取得名单: ${error.message}`);
       return state.value;

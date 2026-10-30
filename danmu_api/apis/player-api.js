@@ -27,7 +27,7 @@ import {
   extractYear, matchMediaType, workIdentityConflict, titleMatches, extractAnimeInfo, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle,
   buildTitleKeywordQueries, compoundTitleMatches, getExplicitSeasonNumber
 } from "../utils/common-util.js";
-import { getDomesticPersonMetadataForTitle, getTmdbMediaTitleById, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
+import { getDomesticPersonMetadataForTitle, mergePersonMetadata, getTmdbMediaTitleById, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
 import { shouldBlockDomesticCelebrities, getCurrentWorkFilterTitles } from '../utils/person-filter-exclusion-util.js';
 import { applyMergeLogic, mergeDanmakuList, MERGE_DELIMITER, sanitizeUrl } from "../utils/merge-util.js";
 
@@ -100,6 +100,8 @@ async function applyDomesticCelebrityFilter(danmus, animeTitle, pendingMetadata 
   let metadata = { actorNames: [], characterNames: [], names: [], status: 'unavailable' };
   if (blockCelebrities && animeTitle) {
     metadata = await (pendingMetadata || getDomesticPersonMetadataForTitle(animeTitle));
+    // 下载/补充弹幕期间名单可能已更新；这里只读最新快照，不再次等待网络。
+    metadata = mergePersonMetadata(metadata, await getDomesticPersonMetadataForTitle(animeTitle, { cachedOnly: true }));
   }
 
   const blockedNames = blockCelebrities ? metadata.names : [];
@@ -3232,7 +3234,7 @@ async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, incl
 
   if (segmentFlag) createUgcLogger(buildUgcContext(resolveEpisodeContextById(commentId)) || { title: animeTitle })('skip', '分段请求跳过UGC补充', { commentId, reason: 'segment-request' });
 
-  // Start metadata before upstream comments; still await the complete filter before returning.
+  // 提前加载人物资料；最终过滤前读取最新快照，等待预算仍受限。
   const pendingMetadata = !segmentFlag && animeTitle && await shouldBlockDomesticCelebrities(animeTitle)
     ? getDomesticPersonMetadataForTitle(animeTitle) : null;
 

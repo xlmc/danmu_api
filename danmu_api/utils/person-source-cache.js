@@ -61,6 +61,16 @@ async function persist() {
   await writes;
 }
 
+/** Read existing provider values without starting a refresh or extending their lifetime. */
+export async function readCachedPersonSources(prefix) {
+  await initialize();
+  return new Map([...entries].filter(([key, entry]) => key.startsWith(prefix) && entry.value != null)
+    .map(([key, entry]) => [key.slice(prefix.length), {
+      value: structuredClone(entry.value),
+      stale: Boolean(entry.partial) || Date.now() >= entry.expiresAt
+    }]));
+}
+
 /** Cache providers independently. Valid stale data returns immediately while one refresh runs. */
 export async function cachedPersonSource(key, loader, usable, complete = () => true) {
   await initialize();
@@ -80,10 +90,19 @@ export async function cachedPersonSource(key, loader, usable, complete = () => t
   if (!task) {
     task = (async () => {
       try {
-        const value = await loader();
+        let value = await loader();
         if (!usable(value)) throw new Error('资料为空或不完整');
         entries.delete(key);
         const partial = !complete(value);
+        // 同一来源的刷新不完整时，保留此前已确认的人名。
+        if (partial && good) {
+          value = { ...value };
+          for (const field of ['actorNames', 'characterNames', 'names']) {
+            if (Array.isArray(entry.value[field]) && Array.isArray(value[field])) {
+              value[field] = [...new Set([...entry.value[field], ...value[field]])];
+            }
+          }
+        }
         entries.set(key, { value: copy(value), expiresAt: Date.now() + (partial ? RETRY : DAY), retryAt: 0, partial });
         return { value, stale: partial };
       } catch (error) {
