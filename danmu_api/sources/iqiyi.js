@@ -7,7 +7,7 @@ import { generateValidStartDate } from "../utils/time-util.js";
 import { addAnime, removeEarliestAnime } from "../utils/cache-util.js";
 import { globals } from '../configs/globals.js';
 import { SegmentListResponse } from '../models/player-model.js';
-import { isSupplementaryEpisode, isSupplementaryCategory } from '../utils/episode-category-util.js';
+import { isSupplementaryEpisode, isSupplementaryCategory, mergeEpisodeTitles } from '../utils/episode-category-util.js';
 
 // =====================
 // 获取爱奇艺弹幕
@@ -561,12 +561,7 @@ export default class IqiyiSource extends BaseSource {
    * @returns {string} 分集标题
    */
   _buildEpisodeTitle(epData) {
-    let title = epData.short_display_name || epData.title || "未知分集";
-    const subtitle = epData.subtitle;
-    if (subtitle && !title.includes(subtitle)) {
-      title = `${title} ${subtitle}`;
-    }
-    return title;
+    return mergeEpisodeTitles(epData.title, epData.short_display_name, epData.subtitle) || "未知分集";
   }
 
   /**

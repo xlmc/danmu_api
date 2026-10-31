@@ -1,3 +1,4 @@
+import { mergeEpisodeTitles } from '../utils/episode-category-util.js';
 import BaseSource from './base.js';
 import { globals } from '../configs/globals.js';
 import { log } from "../utils/log-util.js";
@@ -440,8 +441,8 @@ export default class YoukuSource extends BaseSource {
    * @returns {string} 格式化后的标题
    */
   _formatEpisodeTitle(ep, episodeIndex, mediaType) {
-    // 清理 displayName (移除日期前缀)
-    let cleanDisplayName = ep.displayName || ep.title;
+    // 保留完整标题及展示名中的互补信息，再清理日期前缀。
+    let cleanDisplayName = mergeEpisodeTitles(ep.title, ep.displayName);
     const datePattern = /^(?:\d{2,4}-\d{2}-\d{2}|\d{2}-\d{2})\s*(?=(?:第\d+期))|^(?:\d{2,4}-\d{2}-\d{2}|\d{2}-\d{2})\s*:\s*/;
     cleanDisplayName = cleanDisplayName.replace(datePattern, '').trim();
 
@@ -450,14 +451,9 @@ export default class YoukuSource extends BaseSource {
       return cleanDisplayName;
     }
 
-    // 综艺：使用 "第N期" 格式
+    // 目录位置不是综艺期号；保留源站版本、期号与上下篇，避免给先导/加更虚构期号。
     if (mediaType === 'variety') {
-      const periodMatch = cleanDisplayName.match(/第(\d+)期/);
-      if (periodMatch) {
-        return `第${periodMatch[1]}期 ${ep.published?.split(' ')[0] ?? ''} ${cleanDisplayName}`;
-      } else {
-        return `第${episodeIndex}期 ${ep.published?.split(' ')[0] ?? ''} ${cleanDisplayName}`;
-      }
+      return `${ep.published?.split(' ')[0] ?? ''} ${cleanDisplayName}`.trim();
     }
 
     // 电视剧/动漫：使用 "第N集" 格式 + 原始标题

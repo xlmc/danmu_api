@@ -970,7 +970,7 @@ export default class HongguoSource extends BaseSource {
       const episodes = (videoData.video_list || []).map((item) => ({
         index: Number(item.vid_index) || 0,
         vid: String(item.vid || ""),
-        title: String(item.episode_title || "").trim().slice(0, 30),
+        title: String(item.episode_title || "").trim(),
         duration: Math.max(0, Number(item.duration) || 0),
         commentCount: Math.max(0, Number(item.comment_count) || 0),
         imageUrl: extractImageUrl(item.episode_cover || item.cover),
@@ -1007,7 +1007,7 @@ export default class HongguoSource extends BaseSource {
             return {
               index: index + 1,
               vid: String(vid),
-              title: String(value.episode_title || value.title || `第${index + 1}集`).trim().slice(0, 30),
+              title: String(value.episode_title || value.title || `第${index + 1}集`).trim(),
               duration: Math.max(0, Number(value.duration || value.video_duration) || 0),
               commentCount: Math.max(0, Number(value.comment_count) || 0),
               imageUrl: extractImageUrl(value.episode_cover || value.cover),

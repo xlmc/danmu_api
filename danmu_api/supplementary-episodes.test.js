@@ -3,10 +3,15 @@ import assert from 'node:assert/strict';
 import { Globals } from './configs/globals.js';
 import { Envs } from './configs/envs.js';
 import TencentSource from './sources/tencent.js';
+import YoukuSource from './sources/youku.js';
+import HongguoSource from './sources/hongguo.js';
+import { selectTmdbEpisode, varietyKey } from './utils/tmdb-match-util.js';
 import MangoSource from './sources/mango.js';
 import IqiyiSource from './sources/iqiyi.js';
 import BilibiliSource from './sources/bilibili.js';
 import { getBangumi } from './apis/player-api.js';
+import { handleRequest } from './worker.js';
+import { getSourceByKey } from './sources/registry.js';
 
 Globals.init({ LOG_LEVEL: 'error', PROXY_URL: '', LOCAL_CACHE_ENABLED: 'false' });
 const response = data => new Response(JSON.stringify(data), { status: 200 });
@@ -205,4 +210,116 @@ test('源保留的目录通过作品详情入口按设置过滤，关闭手动�
     assert.equal(reply.success, true);
     assert.deepEqual(reply.bangumi.episodes.map(ep => ep.episodeTitle.replace(/^【tencent】 /, '')), expected);
   }
+});
+
+
+test('芒果完整标题贯通两期抢鲜版匹配，区分同日正片和加更', async () => {
+  Globals.init({ LOG_LEVEL: 'error', PROXY_URL: '', LOCAL_CACHE_ENABLED: 'false',
+    MERGE_SOURCE_PAIRS: '', ENABLE_ANIME_EPISODE_FILTER: 'false' });
+  Globals.animes = []; Globals.episodeIds = [];
+  const rows = [
+    { video_id: '24718368', t1: '抢鲜版：厉娜许飞下周正片抢先看', t2: '2026-10-23',
+      t3: '后会友期 抢鲜版第1期：厉娜许飞痛诉迟到十五年的心结' },
+    { video_id: '24718369', t1: '抢鲜版：EP04正片真心话抢先看', t2: '2026-10-30',
+      t3: '后会友期 抢鲜版第2期：火车进藏全员真心话大冒险' },
+    { video_id: 'extra', t1: '加更版：厉娜怒怼许飞现场翻脸', t2: '2026-10-23',
+      t3: '后会友期 加更版第1期：厉娜怒怼许飞现场翻脸' },
+    { video_id: 'main', t1: '第1期：朋友再见', t2: '2026-10-23' }
+  ].map(row => ({ ...row, src_clip_id: '914227' }));
+  const source = new MangoSource(), results = [], details = new Map();
+  await withFetch(async () => response({ data: { list: rows } }), async () => {
+    await source.handleAnimes([{ mediaId: '914227', title: '后会友期', type: '综艺', year: 2026 }],
+      '后会友期', results, details, 1);
+  });
+  const anime = [...details.values()][0];
+  assert.match(anime.links[0].url, /main\.html$/, '正片排序不被有期号的抢鲜/加更版挤占');
+  const episodes = item => item.links.map((link, i) => ({ episodeId: i + 1, episodeTitle: link.title, url: link.url }));
+  const identity = { key: 'tv:338938', tmdbId: '338938', mediaType: 'tv', aliases: ['后会友期'],
+    year: 2026, seasonYear: 2026, seasons: [{ season: 1, year: 2026 }] };
+  for (const [issue, date, id] of [[1, '2026-10-23', '24718368'], [2, '2026-10-30', '24718369']]) {
+    const metadata = { title: `抢鲜版第${issue}期：TMDB的不同描述`, airDate: date, year: 2026, targetSeason: 1 };
+    const chosen = selectTmdbEpisode([anime], metadata, identity, episodes);
+    assert.ok(chosen, `抢鲜版第${issue}期应匹配`);
+    assert.match(chosen.resEpisode.url, new RegExp(`/${id}\\.html$`));
+    assert.match(chosen.resEpisode.episodeTitle, new RegExp(`抢鲜版第${issue}期`));
+    assert.equal(selectTmdbEpisode([anime], { ...metadata, airDate: '2026-10-24' }, identity, episodes), null);
+    assert.equal(selectTmdbEpisode([{ ...anime, links: [...anime.links, { ...anime.links.find(link => link.url === chosen.resEpisode.url), url: 'https://www.mgtv.com/duplicate' }] }], metadata, identity, episodes), null);
+  }
+  assert.notEqual(varietyKey('抢鲜版第1期：描述'), varietyKey('第1期：描述'));
+  assert.notEqual(varietyKey('抢鲜版第1期：描述'), varietyKey('加更版第1期：描述'));
+  assert.notEqual(varietyKey('抢鲜版第1期上：描述'), varietyKey('抢鲜版第1期下：描述'));
+  assert.equal(varietyKey('抢鲜版：EP04正片真心话抢先看'), null, '短标题的预览内容不能提供抢鲜版期号');
+});
+
+test('爱奇艺和优酷保留完整分集标题中的版本和真实期号', () => {
+  const iqiyi = new IqiyiSource();
+  const full = '抢鲜版第2期：完整分集描述';
+  const iqiyiTitle = iqiyi._buildEpisodeTitle({ short_display_name: '抢鲜版', title: full, subtitle: '补充描述' });
+  assert.ok(iqiyiTitle.includes(full));
+  assert.ok(iqiyiTitle.includes('补充描述'));
+  assert.equal(varietyKey(iqiyiTitle), varietyKey(full));
+  const youku = new YoukuSource();
+  const title = youku._formatEpisodeTitle({ displayName: '抢鲜版', title: full, published: '2026-10-30 12:00:00' }, 9, 'variety');
+  assert.ok(title.includes(full));
+  assert.ok(title.includes('2026-10-30'));
+  assert.equal(varietyKey(title), varietyKey(full));
+  const unnumbered = youku._formatEpisodeTitle({ displayName: '先导片下：出发' }, 9, 'variety');
+  assert.equal(varietyKey(unnumbered), 'pilot::lower', '目录位置不能成为特别篇期号');
+});
+
+test('B站详情与搜索预览同时保留展示标题和长标题', async () => {
+  Globals.init({ LOG_LEVEL: 'error', PROXY_URL: '', LOCAL_CACHE_ENABLED: 'false' });
+  const source = new BilibiliSource();
+  const ep = { id: 2, aid: 20, cid: 21, title: '先导片下', show_title: '先导片', long_title: '森林体验篇（下）' };
+  await withFetch(async () => response({ code: 0, result: { episodes: [ep] } }), async () => {
+    const episodes = await source.getEpisodes('ss123');
+    assert.ok(episodes[0].title.includes(ep.long_title));
+    assert.ok(episodes[0].title.includes(ep.title));
+  });
+  const results = [], details = new Map();
+  await source.handleAnimes([{ mediaId: 'ss123', title: '测试动画', isOversea: true, _eps: [ep] }], '测试动画', results, details);
+  assert.ok([...details.values()][0].links[0].title.includes(ep.long_title));
+});
+
+test('红果分集标题不截断末尾的期号和上下篇信息', async () => {
+  const source = new HongguoSource();
+  const title = '这是一段超过三十个字符的正式分集名称用于验证标题在目录转换后仍然完整 抢鲜版第2期下';
+  source.request = async () => ({ data: { video_data: { video_list: [{ vid: 'full-title', vid_index: 1, episode_title: title }] } } });
+  const result = await source.getEpisodes('title-series');
+  assert.equal(result.episodes[0].title, title);
+});
+
+
+test('Infuse S00E03通过芒果完整标题自动对应抢鲜版，过滤开关仍有效', async t => {
+  const source = getSourceByKey('imgo');
+  t.mock.method(source, 'search', async () => [{ mediaId: '914227', title: '后会友期', type: '综艺', year: 2026 }]);
+  await withFetch(async input => {
+    const url = new URL(input);
+    if (url.hostname === 'pcweb.api.mgtv.com') return response({ data: { list: [
+      { src_clip_id: '914227', video_id: '24718368', t1: '抢鲜版：厉娜许飞下周正片抢先看', t2: '2026-10-23',
+        t3: '后会友期 抢鲜版第1期：厉娜许飞痛诉迟到十五年的心结' }
+    ] } });
+    if (url.pathname.endsWith('/tv/338938')) return response({ id: 338938, name: '后会友期', first_air_date: '2026-10-22',
+      seasons: [{ season_number: 0, air_date: '2026-10-23' }, { season_number: 1, air_date: '2026-10-22' }] });
+    if (url.pathname.endsWith('/season/0/episode/3')) return response({ id: 123, season_number: 0, episode_number: 3,
+      name: '第1季 抢鲜版第1期:厉娜许飞痛诉“心结”', air_date: '2026-10-23' });
+    throw new Error(`Unexpected request: ${url}`);
+  }, async () => {
+    for (const enabled of [false, true]) {
+      Globals.init({ TOKEN_AUTH_DISABLED: 'true', LOG_LEVEL: 'error', PROXY_URL: '', LOCAL_CACHE_ENABLED: 'false',
+        LOCAL_REDIS_URL: '', SOURCE_ORDER: 'imgo', PLATFORM_ORDER: 'imgo', MATCH_SEARCH_BUDGET_MS: '0',
+        MERGE_SOURCE_PAIRS: '', USE_BANGUMI_DATA: 'false', TITLE_MAPPING_TABLE: '', TITLE_MAPPING_TABLE_URL: '',
+        AUTO_MATCH_MAPPING_TABLE: '', AUTO_MATCH_MAPPING_TABLE_URL: '', BILIBILI_UGC_ENABLED: 'false',
+        REMEMBER_LAST_SELECT: 'false', TMDB_API_KEY: 'test-key', EPISODE_TITLE_FILTER: '抢鲜',
+        ENABLE_ANIME_EPISODE_FILTER: String(enabled), RATE_LIMIT_MAX_REQUESTS: '0' });
+      Globals.animes = []; Globals.episodeIds = []; Globals.episodeNum = 10001;
+      Globals.searchCache = new Map(); Globals.lastSelectMap = new Map(); Globals.queryCacheInitialized = false;
+      const result = await (await handleRequest(new Request('http://localhost/api/v2/match', { method: 'POST',
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify({
+          fileName: '后会友期 S00E03 2160p.WEB-DL.AVC.AAC-ADWeb', tmdbId: 338938, mediaType: 'tv' })
+      }), Globals.env, 'node', '127.0.0.1')).json();
+      assert.equal(result.isMatched, !enabled, JSON.stringify(result));
+      if (!enabled) assert.match(result.matches[0].episodeTitle, /抢鲜版第1期/);
+    }
+  });
 });

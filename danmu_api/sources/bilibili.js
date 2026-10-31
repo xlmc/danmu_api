@@ -10,7 +10,13 @@ import { SegmentListResponse } from '../models/player-model.js';
 import { simplized } from "../utils/zh-util.js";
 import { getTmdbJaOriginalTitle, smartTitleReplace } from "../utils/tmdb-util.js";
 import { searchBangumiData } from '../utils/bangumi-data-util.js';
-import { isSupplementaryCategory } from '../utils/episode-category-util.js';
+import { isSupplementaryCategory, mergeEpisodeTitles } from '../utils/episode-category-util.js';
+
+function pgcEpisodeTitle(ep, fallback) {
+  const index = ep.title || ep.index_title || String(fallback);
+  const display = ep.show_title || (/^\d+(\.\d+)?$/.test(index) ? `第${index}话` : index);
+  return mergeEpisodeTitles(/^\d+(\.\d+)?$/.test(index) ? '' : index, display, ep.long_title);
+}
 
 // =====================
 // 获取b站弹幕
@@ -505,18 +511,7 @@ export default class BilibiliSource extends BaseSource {
     }
 
     const episodes = rawEpisodes.map((ep, index) => {
-        let displayTitle = "";
-
-        if (ep.show_title) {
-            displayTitle = ep.show_title;
-        } else {
-            const epIndex = ep.title || String(index + 1);
-            const longTitle = ep.long_title || "";
-            displayTitle = /^\d+(\.\d+)?$/.test(epIndex) ? `第${epIndex}话` : epIndex;
-            if (longTitle && longTitle !== epIndex) {
-                displayTitle += ` ${longTitle}`;
-            }
-        }
+        const displayTitle = pgcEpisodeTitle(ep, index + 1);
 
         return {
             vid: `${ep.aid},${ep.cid}`,
@@ -680,11 +675,7 @@ export default class BilibiliSource extends BaseSource {
                    realVal = ep.index_title || ep.index || (index + 1).toString();
                }
 
-               const epIndex = ep.title || ep.index_title || realVal;
-               const longTitle = ep.long_title || "";
-
-               let displayTitle = /^\d+(\.\d+)?$/.test(epIndex) ? `第${epIndex}话` : epIndex;
-               if (longTitle && longTitle !== epIndex) displayTitle += ` ${longTitle}`;
+               const displayTitle = pgcEpisodeTitle(ep, realVal);
 
                const epId = ep.id || ep.param;
                let linkUrl = `https://www.bilibili.com/bangumi/play/ep${epId}?season_id=${anime.mediaId.substring(2)}`;
