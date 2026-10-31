@@ -10,6 +10,14 @@ import { addAnime, removeEarliestAnime } from "../utils/cache-util.js";
 import { SegmentListResponse } from '../models/player-model.js';
 import { isSupplementaryEpisode } from '../utils/episode-category-util.js';
 
+// t1 is a card caption and may omit edition/issue information present in t3.
+function mangoEpisodeTitle(ep, showTitle = '') {
+  const fullTitle = (ep.t3 || '').trim() || (ep.t1 || '').trim();
+  const title = showTitle && fullTitle.startsWith(showTitle)
+    ? fullTitle.slice(showTitle.length).trim() || fullTitle : fullTitle;
+  return `${ep.t2 || ''} ${title}`.trim();
+}
+
 // =====================
 // 获取芒果TV弹幕
 // =====================
@@ -296,7 +304,7 @@ export default class MangoSource extends BaseSource {
 
     // 检查是否有"第N期"格式
     const hasQiFormat = rawEpisodes.some(ep => {
-      const fullTitle = `${ep.t2 || ''} ${ep.t1 || ''}`.trim();
+      const fullTitle = mangoEpisodeTitle(ep);
       return /第\d+期/.test(fullTitle);
     });
 
@@ -307,9 +315,9 @@ export default class MangoSource extends BaseSource {
     const qiInfoMap = new Map(); // 存储期数信息的映射
 
     for (const ep of rawEpisodes) {
-      const fullTitle = `${ep.t2 || ''} ${ep.t1 || ''}`.trim();
+      const fullTitle = mangoEpisodeTitle(ep);
 
-      if (isSupplementaryEpisode(fullTitle)) {
+      if (isSupplementaryEpisode(fullTitle) || /抢鲜版|搶鮮版|抢先版|搶先版|加更版/.test(fullTitle)) {
         supplementaryEpisodes.push(ep);
         continue;
       }
@@ -358,7 +366,7 @@ export default class MangoSource extends BaseSource {
       // 没有期数格式时，按集数排序
       episodeInfos.sort((a, b) => {
         const getEpisodeNumber = (ep) => {
-          const fullTitle = `${ep.t2 || ''} ${ep.t1 || ''}`.trim();
+          const fullTitle = mangoEpisodeTitle(ep);
           const match = fullTitle.match(/第(\d+)集/);
           return match ? parseInt(match[1]) : 999999;
         };
@@ -464,7 +472,7 @@ export default class MangoSource extends BaseSource {
         for (let i = 0; i < eps.length; i++) {
           const ep = eps[i];
           const fullUrl = `https://www.mgtv.com/b/${anime.mediaId}/${ep.video_id}.html`;
-          const episodeTitle = `${ep.t2 || ''} ${ep.t1 || ''}`.trim();
+          const episodeTitle = mangoEpisodeTitle(ep, anime.title);
 
           links.push({
             "name": String(i + 1),

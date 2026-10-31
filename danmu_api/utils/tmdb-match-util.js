@@ -141,8 +141,9 @@ export function varietyKey(title) {
   const issue = text.match(/第(\d+)期/);
   const kind = /加更/.test(text) ? (/超前/.test(text) ? 'ahead-extra' : /还有/.test(text) ? 'more-extra' :
     /特别/.test(text) ? 'special-extra' : /先导片|先導片/.test(text) ? 'pilot-extra' : 'extra') :
+    /抢鲜版|搶鮮版|抢先版|搶先版/.test(text) ? 'early' :
     /先导片|先導片/.test(text) ? 'pilot' : issue ? 'main' : null;
-  if (!kind) return null;
+  if (!kind || (kind === 'early' && !issue)) return null;
   // 上下篇标记在三处都可能出现：期号后紧跟（第3期上：…）、冒号前末尾（先导片下：…）、
   // 以及冒号后副标题的末尾（第1期：初舞台（上）——芒果这类写法，截断后会把上下篇丢掉）。
   const stripped = raw.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
