@@ -89,7 +89,7 @@ TMDB 身份为 tv:ID 或 movie:ID，随匹配成功的目录保存；失败候�
 | ENABLE_ANIME_EPISODE_FILTER | boolean | 控制手动搜索的时候是否根据ANIME_TITLE_FILTER进行剧名过滤以及根据EPISODE_TITLE_FILTER进行集标题过滤 |
 | STRICT_TITLE_MATCH | boolean | 严格标题匹配模式 |
 | ANIME_TITLE_SIMPLIFIED | boolean | 搜索的剧名标题自动繁转简 |
-| TITLE_MAPPING_TABLE | map | 本机剧名映射表，用于自动匹配、FongMi、收藏时替换标题进行搜索。精确标题优先；未命中时会忽略标题尾部括号年份再匹配（如“变形金刚3：月黑之时(2011)”可命中“变形金刚3：月黑之时”）。本机规则优先于远程规则。远程映射默认关闭；启用时请在下方 TITLE_MAPPING_TABLE_URL 填写：https://raw.githubusercontent.com/xlmc/danmu-mapping/main/Word/2026.txt。格式：原始标题->映射标题;原始标题->映射标题;...，例如："唐朝诡事录->唐朝诡事录之西行;国色芳华->锦绣芳华" |
+| TITLE_MAPPING_TABLE | map | 本机剧名映射表，用于自动匹配、FongMi、收藏时替换标题进行搜索。精确标题优先，带年份的标题须写带年份的规则。本机规则优先于远程规则。远程映射默认关闭；启用时请在下方 TITLE_MAPPING_TABLE_URL 填写：https://raw.githubusercontent.com/xlmc/danmu-mapping/main/Word/2026.txt。格式：原始标题->映射标题;原始标题->映射标题;...，例如："唐朝诡事录->唐朝诡事录之西行;国色芳华->锦绣芳华" |
 | TITLE_MAPPING_TABLE_URL | text | 远程剧名映射表（默认关闭，填写后启用）。推荐地址：https://raw.githubusercontent.com/xlmc/danmu-mapping/main/Word/2026.txt。程序首次下载后保存到本地，匹配时只读取本地缓存，不连接远程；每天北京时间05:30更新，失败保留旧缓存。本机 TITLE_MAPPING_TABLE 优先于远程表。支持 GitHub 文件页、Gist、jsDelivr 及任意 TXT 直链；内容格式为每行 原始标题->映射标题，# 或 // 开头为注释 |
 | AUTO_MATCH_MAPPING_TABLE | map | 自动匹配映射表，仅作用于 POST /api/v2/match。多个规则使用分号分隔。 开放映射：永生 S05E02 -> 永生 S01E58 有限范围：永生 S05E02~03 -> 永生 S01E58~59 特别篇：灵笼 S00E01~01 -> 灵笼 S01E07~07（源侧支持 S00，目标侧须为 S01+） 指定结果：海贼王 S02E01 -> 航海王(1999)【动漫】 S01E62 指定平台：航海王 S01E01 -> 航海王 S01E01 @iqiyi 可选发布组：作品 S01E01 {[group=ANi]} -> 作品 S01E02；文件名有发布组时优先专用规则，失败后回退通用规则 |
 | AUTO_MATCH_MAPPING_TABLE_URL | text | 远程季集映射表（默认关闭）。推荐填写 danmu-mapping 的 Word/season-candidates.txt。下载后保存到本机缓存，匹配过程中只读取本机缓存；每天北京时间05:30更新，失败沿用旧缓存。本机 AUTO_MATCH_MAPPING_TABLE 优先。支持起始集偏移及明确起止集的范围规则；源侧可选使用 {[group=ANi]} 发布组标记。 |
