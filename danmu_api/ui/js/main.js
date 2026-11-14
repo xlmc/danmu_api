@@ -274,6 +274,8 @@ function updateApiEndpoint() {
 
       const pathParts = urlPath.split('/').filter(part => part !== '');
       const urlToken = pathParts.length > 0 ? pathParts[0] : '';
+      // 打开页面时服务端已注入当前 TOKEN，地址里不带也能拿到
+      const effectiveToken = urlToken || currentToken;
       let apiToken = '********';
 
       // 判断是否使用默认token
@@ -283,8 +285,8 @@ function updateApiEndpoint() {
         // 如果是默认token，则显示真实token
         apiToken = token;
       } else {
-        // 如果不是默认token，则检查URL中的token是否匹配，匹配则显示真实token，否则显示星号
-        if (urlToken === token) {
+        // 如果不是默认token，则检查URL或页面注入的token是否匹配，匹配则显示真实token，否则显示星号
+        if (effectiveToken === token) {
           apiToken = token; // 更新全局token变量
         }
       }
@@ -443,9 +445,11 @@ function switchSection(section, event = null) {
 
         const pathParts = urlPath.split('/').filter(part => part !== '');
         const urlToken = pathParts.length > 0 ? pathParts[0] : '';
+        // 服务端在打开页面时已注入当前 TOKEN（currentToken），地址里不必再带
+        const accessToken = urlToken || currentToken;
 
-        // 检查URL中是否有token
-        if (!tokenAuthDisabled && !urlToken && originalToken !== "87654321") {
+        // 检查是否已有可用token
+        if (!tokenAuthDisabled && !accessToken && originalToken !== "87654321") {
             // 提示用户需要在URL中配置TOKEN
             setTimeout(() => {
                 // 获取当前页面的协议、主机和端口

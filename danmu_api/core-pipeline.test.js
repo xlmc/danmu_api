@@ -41,8 +41,11 @@ test('统一 TOKEN 读取完整配置，旧管理员令牌与匿名请求不能�
 test('打开页面即注入当前 TOKEN，接口仍按 TOKEN 校验', async () => {
   reset({ TOKEN: 'viewer-token' });
   const [barePage, tokenPage] = await Promise.all([request('/'), request('/viewer-token/')]);
-  assert.match(await barePage.text(), /let currentToken = "viewer-token"/);
+  const bareHtml = await barePage.text();
+  assert.match(bareHtml, /let currentToken = "viewer-token"/);
   assert.match(await tokenPage.text(), /let currentToken = "viewer-token"/);
+  // 页面用注入的 TOKEN 判定访问权限，打开界面不再要求地址里带 TOKEN
+  assert.match(bareHtml, /const accessToken = urlToken \|\| currentToken;/);
   assert.equal((await request('/api/config')).status, 401);
 });
 
