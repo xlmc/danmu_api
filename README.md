@@ -64,7 +64,7 @@ docker compose -f compose.nas.yml up -d
 docker compose -f compose.nas.yml logs --tail=100
 ```
 
-用 NAS 图形化项目管理时，导入同一模板并提供上述变量，确认相对挂载目录的实际解析位置。默认需要令牌，访问 `http://<NAS_IP>:<NAS_HTTP_PORT>/<TOKEN>` 才能让管理界面拿到令牌；接口调用同样使用 `/<TOKEN>/api/...` 前缀，裸路径会返回 401。显式设置 `TOKEN_AUTH_DISABLED=true` 后才可直接打开 `http://<NAS_IP>:<NAS_HTTP_PORT>/`。容器默认端口为 `9321`；如设置了 `DANMU_API_PORT`，需相应调整映射。
+用 NAS 图形化项目管理时，导入同一模板并提供上述变量，确认相对挂载目录的实际解析位置。直接打开 `http://<NAS_IP>:<NAS_HTTP_PORT>/` 即可使用管理界面：页面会注入当前 `TOKEN`，界面内的请求自动带上。外部直接调用接口仍需 `/<TOKEN>/api/...` 前缀，裸路径会返回 401；显式设置 `TOKEN_AUTH_DISABLED=true` 时接口也免令牌。容器默认端口为 `9321`；如设置了 `DANMU_API_PORT`，需相应调整映射。
 
 免令牌（`TOKEN_AUTH_DISABLED=true`）只适合受信任内网；暴露到公网时保持 `TOKEN_AUTH_DISABLED=false` 并设置足够复杂的 `TOKEN`。配置、缓存数据和备份应仅保存在自己的设备上。
 

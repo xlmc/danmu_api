@@ -45,7 +45,9 @@ async function handleRequestBody(req, env, deployPlatform, clientIp) {
 
 
   const auth = resolveRequestAuth(path, globals.token, globals.tokenAuthDisabled);
-  globals.currentToken = auth.currentToken;
+  // 打开管理界面不要求在地址里带 TOKEN：页面直接注入当前 TOKEN，页面内的接口请求会自动带上；
+  // 外部直接调用 /api/* 仍按 TOKEN 校验。
+  globals.currentToken = method === 'GET' && path === '/' ? globals.token : auth.currentToken;
 
   if (path === '/' && method === 'GET') return handleUI();
   if (path === '/favicon.ico' || path === '/robots.txt' || method === 'OPTIONS') {
