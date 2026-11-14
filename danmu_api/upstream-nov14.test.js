@@ -119,14 +119,9 @@ test('目标侧仍拒绝 S00', () => {
   assert.equal(warnings.length, 1);
 });
 
-test('剧名映射未精确命中时忽略尾部年份重试', () => {
-  reset({ TITLE_MAPPING_TABLE: '变形金刚3：月黑之时->变形金刚3 月黑之时' });
-  assert.equal(applyTitleMappingWithLog('变形金刚3：月黑之时(2011)'), '变形金刚3 月黑之时');
+test('剧名映射只认精确键，带年份的标题不回退去年级键', () => {
+  reset({ TITLE_MAPPING_TABLE: '变形金刚3：月黑之时->变形金刚3 月黑之时;变形金刚3：月黑之时(2011)->年份键' });
   assert.equal(applyTitleMappingWithLog('变形金刚3：月黑之时'), '变形金刚3 月黑之时');
-});
-
-test('带年份的精确键优先于忽略年份的键', () => {
-  reset({ TITLE_MAPPING_TABLE: '变形金刚3：月黑之时(2011)->精确年份;变形金刚3：月黑之时->忽略年份' });
-  assert.equal(applyTitleMappingWithLog('变形金刚3：月黑之时(2011)'), '精确年份');
-  assert.equal(applyTitleMappingWithLog('变形金刚3：月黑之时'), '忽略年份');
+  assert.equal(applyTitleMappingWithLog('变形金刚3：月黑之时(2011)'), '年份键');
+  assert.equal(applyTitleMappingWithLog('变形金刚3：月黑之时(2019)'), '变形金刚3：月黑之时(2019)');
 });
