@@ -3,6 +3,7 @@
 - 访问 `/` 时 `danmu_api/worker.js:48` 直接把当前 `TOKEN` 写入页面（`globals.currentToken`），管理界面内的接口请求自动走 `/<TOKEN>/` 前缀；打开界面不用再改地址。
 - 外部脚本、播放器直接调用 `/api/*` 仍按 TOKEN 校验，裸路径 401；`TOKEN_AUTH_DISABLED=true` 时接口才免令牌。
 - 代价：能打开页面的客户端可以从页面源码读到这个 TOKEN。实例只在自己内网/私用域名暴露时与之前的免令牌等价；若要对外隐藏，请用反代限制来源 IP。
+- 管理界面自身的 TOKEN 门槛同步放开：`danmu_api/ui/js/main.js:447-452` 用 `const accessToken = urlToken || currentToken;` 判定，地址里没 token 也不再弹「请在URL中配置相应的TOKEN以访问此功能」；`danmu_api/ui/js/main.js:277-287` 同样以 `urlToken || currentToken` 决定 API 地址是否显示真实 TOKEN（之前裸开页面显示 `********`）。
 
 ## 恢复默认 TOKEN 鉴权
 
