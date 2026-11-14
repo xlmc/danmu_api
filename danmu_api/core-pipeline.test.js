@@ -38,11 +38,12 @@ test('统一 TOKEN 读取完整配置，旧管理员令牌与匿名请求不能�
   assert.equal((await request('/viewer-token/api/env/set', { key: 'ADMIN_TOKEN', value: 'retired' })).status, 400);
 });
 
-test('并发页面请求独立保存 TOKEN，不污染公开页面', async () => {
+test('打开页面即注入当前 TOKEN，接口仍按 TOKEN 校验', async () => {
   reset({ TOKEN: 'viewer-token' });
-  const [privatePage, publicPage] = await Promise.all([request('/viewer-token/'), request('/')]);
-  assert.match(await privatePage.text(), /let currentToken = "viewer-token"/);
-  assert.match(await publicPage.text(), /let currentToken = ""/);
+  const [barePage, tokenPage] = await Promise.all([request('/'), request('/viewer-token/')]);
+  assert.match(await barePage.text(), /let currentToken = "viewer-token"/);
+  assert.match(await tokenPage.text(), /let currentToken = "viewer-token"/);
+  assert.equal((await request('/api/config')).status, 401);
 });
 
 test('URL 分发只使用域名，查询参数不能改变来源；巴哈直链可下载', async t => {
