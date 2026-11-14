@@ -1,3 +1,9 @@
+## 恢复默认 TOKEN 鉴权
+
+- `TOKEN_AUTH_DISABLED` 默认值改回 `false`（此前默认 true 免令牌）：裸路径访问 API 与管理界面返回 401，需使用 `/<TOKEN>/` 前缀；受信任内网要免令牌时显式设置 `TOKEN_AUTH_DISABLED=true`。
+- 同时把 `resolveRequestAuth` 的 `currentToken` 恢复为 `disabled ? '' : ...`：免令牌模式下页面不再拼令牌前缀，行为与默认免鉴权之前一致。
+- 鉴权仍是单一 `TOKEN`：不恢复 `ADMIN_TOKEN`、角色分级或管理员专用地址，`/api/env/*` 等写操作同样只认这一个令牌。
+
 ## 撤回剧名映射的年份回退
 
 - 剧名映射回到「只认精确键」：`applyTitleMappingWithLog` 不再在精确键落空后去掉标题尾部 `(2011)`/\[2011\]/【2011】 再查一次（`danmu_api/utils/title-mapping-url-util.js` 的 `TRAILING_RELEASE_YEAR_PATTERN`、`stripTrailingReleaseYear` 与候选键追加、紧凑兜底循环一并移除，文件回到 `3038adb` 的形态）。
@@ -736,7 +742,7 @@
 | 严格标题/季号保护 | 普通匹配及 FongMi 入口 | 排除无关标题及明确的其他季候选 |
 | 人名、地区与日期时间过滤 | `BLOCKED_WORDS`、`BLOCK_DOMESTIC_CELEBRITIES` | 地区和日期时间由屏蔽词正则控制；当前作品演员/角色按完整名字匹配；名单来自当前作品 TMDB/Bangumi |
 | 渐变弹幕与 danmux 格式 | 自用功能文档中的格式/渐变配置 | 保留服务器转换功能，播放器是否支持需单独验证 |
-| 默认免 TOKEN | `TOKEN_AUTH_DISABLED` | 默认关闭鉴权（免令牌）；需要校验时显式设为 false |
+| 默认校验 TOKEN | `TOKEN_AUTH_DISABLED` | 默认 false，需带 TOKEN 访问；受信任内网可显式设为 true 免令牌；只有单一 TOKEN，无管理员分级 |
 | 收藏能力检测和独立映射日志 | 管理界面 / API | 保留自用能力检测、刷新与日志入口 |
 
 完整行为及配置见 [自用功能说明](docs/self-use-features.md)。
