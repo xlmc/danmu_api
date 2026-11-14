@@ -3,8 +3,7 @@
 TITLE_MAPPING_TABLE 和 AUTO_MATCH_MAPPING_TABLE 的编辑弹窗内有“上传共享”按钮，上传当前表全部已保存规则；修改后需先保存并重开编辑器。多于 100 条或接近大小限制时自动分批，无需勾选。
 只读取这两项原始本地已保存配置，不分享混入的远程映射表。
 点击按钮即上传当前表全部已保存规则，不要求最终用户创建 GitHub Token。
-实际入口 POST /api/title-mapping/share 使用配置写入的管理员权限：配置了 ADMIN_TOKEN 时普通 TOKEN 无权上传；
-未配置 ADMIN_TOKEN 时延续项目原有管理员判断；TOKEN_AUTH_DISABLED 模式也延续原有行为。
+实际入口 POST /api/title-mapping/share 与其它写接口一样只校验 `TOKEN`：请求需带 `/<TOKEN>/` 前缀（或 `TOKEN_AUTH_DISABLED=true` 时免令牌）。项目只有单一 `TOKEN`，不区分管理员与普通令牌。
 
 固定中央接收地址：
 https://danmu-rules-upload.cbzj.workers.dev/api/rules/submit

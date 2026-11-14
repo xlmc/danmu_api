@@ -40,7 +40,7 @@
 2. 同一文件自用是否已大改：`utils/danmu-util.js`、`utils/auto-match-mapping-util.js` 与上游差异在数百行量级。命中时只替换函数内部，保留自用的调用参数（如 `groupDanmusByMinute` 的 `sourceLabels` 判断）以及颜色、渐变、合并标签处理。
 3. 是否依赖上游独有基础设施：`Globals.resolveTitleMapping`（`configs/globals.js`）在自用版不存在，等价入口是 `utils/title-mapping-url-util.js` 的 `applyTitleMappingWithLog`。改完逐个核对上游调用点在自用版有无对应入口；自用没有的功能（如收藏）可以跳过，并在记录里写明原因。
 4. 开关语义是否一致：上游受 `ENABLE_ANIME_EPISODE_FILTER` 等开关约束时，自用版必须同样受约束，不能无条件生效。
-5. 是否改动自用既有行为：渐变与颜色池、合并来源标签、AI 兜底、默认免鉴权。
+5. 是否改动自用既有行为：渐变与颜色池、合并来源标签、AI 兜底、默认校验 TOKEN（`TOKEN_AUTH_DISABLED` 默认 `false`）。
 
 判定结论写进 `SELF_USE_CHANGELOG.md` 的当次条目：吸收了哪些、跳过了哪些、依据是什么；只写“吸收上游”不足以复核。
 

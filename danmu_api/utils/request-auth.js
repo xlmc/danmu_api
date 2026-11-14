@@ -7,6 +7,6 @@ export function resolveRequestAuth(path, token, disabled = false) {
   return {
     authorized: disabled || explicit || defaultAccess,
     path: explicit ? '/' + parts.slice(1).join('/') : path,
-    currentToken: explicit || (!disabled && defaultAccess) ? token : '',
+    currentToken: disabled ? '' : (explicit || defaultAccess ? token : ''),
   };
 }
