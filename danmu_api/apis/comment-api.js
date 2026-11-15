@@ -25,8 +25,10 @@ import { getHanjutvSourceLabel } from '../utils/hanjutv-util.js';
 
 
 const PENDING_DANMAKU_REQUESTS = new Map();
-// 弹幕过滤只等第一批人名：冷缓存下拿到 TMDB 演员表就立刻拦截，剩余来源（别名、百科）继续补齐缓存。
-const PERSON_FILTER_METADATA_OPTIONS = { awaitNames: true, budgetMs: 4000 };
+// 弹幕过滤要等完整名单：只拿 TMDB 演员表就先拦会漏掉百度/维基补充的演员（电视剧尤其明显，
+// TMDB 常只有 11~15 个演员、0 个角色），所以等首轮来源跑完再过滤。等待从请求开头算起，
+// 弹幕下载与人物查询并行，冷缓存首集最多多等十几秒，之后直接走本地人物缓存。
+const PERSON_FILTER_METADATA_OPTIONS = { budgetMs: 12000 };
 
 function latestCommentTime(comments) {
   return comments.reduce((max, item) => Math.max(max, parseFloat(item.p) || 0), 0);
@@ -459,7 +461,7 @@ async function getCommentResponse(path, queryFormat, segmentFlag, clientIp, incl
 
   if (segmentFlag) createUgcLogger(buildUgcContext(resolveEpisodeContextById(commentId)) || { title: animeTitle })('skip', '分段请求跳过UGC补充', { commentId, reason: 'segment-request' });
 
-  // 提前加载人物资料；最终过滤前读取最新快照，等待预算仍受限。
+  // 提前加载人物资料；过滤时等它跑完首轮来源，预算见 PERSON_FILTER_METADATA_OPTIONS。
   const pendingMetadata = !segmentFlag && animeTitle && await shouldBlockDomesticCelebrities(animeTitle)
     ? getDomesticPersonMetadataForTitle(animeTitle, PERSON_FILTER_METADATA_OPTIONS) : null;
 

@@ -1,3 +1,10 @@
+## 弹幕过滤等完整人物名单
+
+- 根因：danmu_api/apis/comment-api.js 的 PERSON_FILTER_METADATA_OPTIONS 之前是 { awaitNames: true, budgetMs: 4000 }，冷缓存下 TMDB 演员表一到就开拦。电视剧的 aggregate_credits 通常只有演员、没有角色，于是必然再查百度百科，而百度比 TMDB 慢 5~10 秒；实例日志里「先取得演员 11 个」后 9 秒才出现「Baidu 补充…合并后演员 70 个、角色 28 个」，首集只用 11 个名字过滤，百度独有的演员/角色全部漏拦。
+- 改法：改成 { budgetMs: 12000 }，等首轮来源（TMDB 演员表、维基、百度补充）跑完再过滤；预算从请求开头（comment-api.js 里 pendingMetadata 创建处）开始计时，弹幕下载与人物查询并行，所以实际多等的时间远小于 12 秒，且同一作品后续集直接命中本地人物缓存。
+- 顺带在 danmu_api/apis/player-api.js 的 searchEpisodes 里加了 prewarmPersonMetadata()：分集结果返回前就按作品标题预取名单（仅 BLOCK_DOMESTIC_CELEBRITIES 开启时），播放器拿到分集后紧接着请求弹幕，这段时间正好用来跑人物查询。
+- 回归测试：danmu_api/baidu-person.test.js 新增「弹幕过滤等首轮来源跑完，冷缓存下百度独有的角色也要拦掉」——冷缓存、TMDB 只给演员、百度慢 120ms，断言 TMDB 演员与百度独有角色两条弹幕都被拦掉；改回旧参数时该用例失败（只拦 TMDB 演员）。
+- 未改动：awaitNames 能力与其用例保留（其它调用方仍可提前取名单）；弹幕缓存依旧存未过滤的原始弹幕，过滤在输出时进行。
 ## 打开页面即带上 TOKEN
 
 - 访问 `/` 时 `danmu_api/worker.js:48` 直接把当前 `TOKEN` 写入页面（`globals.currentToken`），管理界面内的接口请求自动走 `/<TOKEN>/` 前缀；打开界面不用再改地址。
