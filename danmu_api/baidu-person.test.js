@@ -322,6 +322,44 @@ test('冷缓存拿到演员表就立即用于过滤，不等别名与百科补�
   } finally { releaseAlias(); globalThis.fetch = original; Globals.init({}); }
 });
 
+test('弹幕过滤等首轮来源跑完，冷缓存下百度独有的角色也要拦掉', async () => {
+  Globals.init({ BLOCK_DOMESTIC_CELEBRITIES: 'true', USE_BANGUMI_DATA: 'false', BILIBILI_UGC_ENABLED: 'false',
+    BLOCKED_WORDS: '', GROUP_MINUTE: '0', COMMENT_CACHE_MIN_COUNT: '0', LOCAL_CACHE_ENABLED: 'false', LOG_LEVEL: 'error' });
+  Globals.commentCache = new Map();
+  // 每次用新片名，避免复用磁盘人物缓存而测不到冷缓存路径。
+  const title = `完整名单过滤回归${Date.now()}`;
+  const animeTitle = `${title}(2026)【电视剧】from tencent`;
+  const url = 'https://v.qq.com/x/cover/full-person-list/episode.html';
+  const original = globalThis.fetch;
+  let baiduRequests = 0;
+  globalThis.fetch = async request => {
+    const parsed = new URL(request);
+    const path = decodeURIComponent(parsed.pathname);
+    if (path === '/3/search/multi') return Response.json({ results: [{ id: 990901, media_type: 'tv',
+      name: title, first_air_date: '2026-01-01', genre_ids: [] }] });
+    // 电视剧的 aggregate_credits 常只有演员没有角色，于是必然触发百度补查，而百度比 TMDB 慢。
+    if (path.endsWith('/aggregate_credits')) return Response.json({ cast: [{ id: 990902, name: '张演员' }] });
+    if (path === '/3/person/990902') return Response.json({ id: 990902, name: '张演员', also_known_as: [] });
+    if (parsed.hostname === 'bkso.baidu.com') {
+      baiduRequests++;
+      await new Promise(resolve => setTimeout(resolve, 120));
+      return new Response(html(title));
+    }
+    throw new Error('unexpected request: ' + parsed.hostname + path);
+  };
+  const comments = ['张演员来了', '宁长樾来了', '剧情很好看'].map((m, index) => ({ p: `${index + 1},1,16777215,[test]`, m }));
+  setCommentCache(url, comments);
+  Globals.animes = [{ animeTitle, links: [{ id: 990901, url, title: '第1集' }] }];
+  try {
+    const response = await getComment('/api/v2/comment/990901', 'json', false);
+    // 只拿到 TMDB 演员就开拦会把百度独有的角色放过去——这里要求两条人物弹幕都被拦掉。
+    assert.deepEqual((await response.json()).comments.map(comment => comment.m), ['剧情很好看']);
+    assert.equal(baiduRequests, 1);
+  } finally {
+    globalThis.fetch = original; Globals.animes = []; Globals.commentCache = new Map(); Globals.init({});
+  }
+});
+
 test('Bangumi角色查询完成后立即提供名单，不等待慢季度关系', async () => {
   Globals.init({ LOG_LEVEL: 'error' });
   const original = globalThis.fetch;

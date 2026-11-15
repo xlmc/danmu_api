@@ -22,7 +22,7 @@ import { applySearchKeywordMapping, ensureRemoteTitleMapping, ensureCachedRemote
 import { filterMappingQualifierCandidates, filterMappingTargetCandidates, collectAutoMatchCandidates } from "../utils/auto-match-mapping-util.js";
 import { ensureRemoteAutoMatchMapping, getCachedRemoteAutoMatchMappingRules } from "../utils/auto-match-mapping-url-util.js";
 import { extractEpisodeTitle, convertChineseNumber, parseFileName, extractReleaseGroups, createDynamicPlatformOrder, normalizeTitleForMatch, extractYear, workIdentityConflict, titleMatches, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle, buildTitleKeywordQueries, compoundTitleMatches, getExplicitSeasonNumber } from "../utils/common-util.js";
-import { getTmdbMediaTitleById, getTmdbSeasonBoundaries } from "../utils/tmdb-util.js";
+import { getTmdbMediaTitleById, getTmdbSeasonBoundaries, getDomesticPersonMetadataForTitle } from "../utils/tmdb-util.js";
 import { applyMergeLogic, MERGE_DELIMITER } from "../utils/merge-util.js";
 
 
@@ -2711,6 +2711,14 @@ function mergeEpisodeSearchResults(...responses) {
   };
 }
 
+// 人物屏蔽开启时，按分集结果里的作品标题预取演员/角色名单（失败不影响分集响应）。
+function prewarmPersonMetadata(titles) {
+  if (!globals.blockDomesticCelebrities) return;
+  for (const title of new Set(titles.filter(Boolean)).values()) {
+    getDomesticPersonMetadataForTitle(title).catch(() => {});
+  }
+}
+
 // Extracted function for GET /api/v2/search/episodes
 export async function searchEpisodes(url, clientIp = null, options = {}) {
   const searchAnimeFn = options.searchAnimeFn || searchAnime;
@@ -2786,6 +2794,8 @@ export async function searchEpisodes(url, clientIp = null, options = {}) {
     }
   }
   log('info', `[system] [episodes] 找到 ${results.length} 个含目标集的候选`);
+  // 播放器拿到分集后会立刻请求弹幕；先把人物名单备好，避免首集过滤时还在等百度补充。
+  prewarmPersonMetadata(results.map(({ animeItem }) => animeItem.animeTitle));
   const animes = results.map(({ animeItem, episodes }) => Episodes.fromJson({
     animeId: animeItem.animeId, animeTitle: animeItem.animeTitle,
     type: animeItem.type, typeDescription: animeItem.typeDescription,
