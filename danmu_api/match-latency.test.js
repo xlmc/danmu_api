@@ -700,3 +700,31 @@ test('诛仙第四季第12话排除同名腾讯预告并命中正片', async () 
   assert.equal(result.isMatched, true);
   assert.equal(result.matches[0].url, data.links[1].url);
 });
+
+test('诛仙文件名保留首播年时，S04 标题映射仍选中腾讯第16话', async () => {
+  reset({ SOURCE_ORDER: 'tencent', PLATFORM_ORDER: 'tencent', BILIBILI_UGC_ENABLED: 'false', LOG_LEVEL: 'error' });
+  const data = anime();
+  data.links = Array.from({ length: 16 }, (_, i) => ({
+    title: `【tencent】 诛仙 最终季 第${i + 1}话`,
+    url: `https://v.qq.com/x/cover/test/ep${i + 1}.html`,
+  }));
+  data.episodeCount = data.links.length;
+  const restore = installSource('tencent', data);
+  try {
+    const result = await match('诛仙.2022.S04E16.mkv');
+    assert.equal(result.matches[0]?.url, data.links[15].url);
+  } finally { restore(); }
+});
+
+test('不同平台的同名同季候选仍由年份区分', async () => {
+  reset({ TITLE_MAPPING_TABLE: '', BILIBILI_UGC_ENABLED: 'false', LOG_LEVEL: 'error' });
+  const first = { ...anime(), animeTitle: '诛仙 第4季(2026)【动漫】from tencent' };
+  const second = { ...anime('bilibili'), animeTitle: '诛仙 第4季(2024)【动漫】from bilibili' };
+  const restoreFirst = installSource('tencent', first);
+  const restoreSecond = installSource('bilibili', second);
+  try {
+    const exact = await match('诛仙.2024.S04E09.mkv');
+    assert.equal(exact.matches[0]?.animeId, second.animeId);
+    assert.equal((await match('诛仙.2022.S04E09.mkv')).isMatched, false);
+  } finally { restoreSecond(); restoreFirst(); }
+});

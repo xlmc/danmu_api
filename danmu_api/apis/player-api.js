@@ -41,7 +41,7 @@ export { getComment, getCommentByUrl, getSegmentComment } from './comment-api.js
 // 既不跟随弹幕阶段的 BILIBILI_UGC_BUDGET_MS，也不作为配置项暴露。
 const UGC_MATCH_BUDGET_MS = 5000;
 
-// 匹配年份函数，优先于季匹配
+// 校验当前候选选择阶段使用的年份。
 function matchYear(anime, queryYear) {
   if (!queryYear) {
     return true; // 如果没有查询年份，则视为匹配
@@ -1596,28 +1596,55 @@ function isSeriesType(anime) {
   return /tvseries|tv_series|电视剧|综艺|纪录片|紀錄片|documentary/i.test(String(anime.type || '') + String(anime.typeDescription || ''));
 }
 
+function candidateReleaseYear(anime) {
+  return Number(String(anime.startDate || '').slice(0, 4)) || extractYear(anime.animeTitle);
+}
+
 function confidentCandidates(animes, { title, season, episode, year, mapping, tmdbIdentity, details, mediaType, decision, mappedTitleSeason = false }) {
   const guard = mapping || { targetTitle: title };
   let candidates = tmdbIdentity
     ? filterTmdbMatchCandidates(animes, tmdbIdentity, mapping, globals.animes)
     : animes.filter(anime => filterMappingTargetCandidates([anime], guard).length > 0 ||
       (!mapping && [anime.animeTitle, ...(anime.aliases || [])].some(candidate => compoundTitleMatches(candidate, title))));
+  const withConfirmedSeason = [];
   candidates = candidates.filter(anime => {
     const target = { year: mapping?.targetYear || year, mediaType: mapping?.targetType || tmdbIdentity?.mediaType || mediaType || (season && episode ? 'tv' : 'movie'), tmdbIdentity };
     const conflict = workIdentityConflict(anime, target);
-    if (conflict) {
+    // Only completed searches may relax the input year. An explicit target year is binding.
+    const mayRelaxYear = conflict === 'year-mismatch' && decision && !mapping && (mappedTitleSeason || season > 1);
+    if (conflict && !mayRelaxYear) {
       logEvent('info', 'match.candidate.reject', `[system] [match-reject] ${anime.animeTitle}，原因=${conflict}`, { candidateTitle: anime.animeTitle, reason: conflict, year: target.year, mediaType: target.mediaType });
       return false;
     }
-    if (season && episode) {
-      if (isMovieMatchCandidate(anime)) return false;
-      return [anime.animeTitle, ...(anime.aliases || [])].some(candidate =>
-        matchSeason({ ...anime, animeTitle: candidate }, title, season)) || matchEpisodeSeason(anime, title, season, details, mappedTitleSeason);
+
+    if (!(season && episode)) return !isSeriesType(anime);
+    if (isMovieMatchCandidate(anime)) return false;
+    const seasonTitles = [anime.animeTitle, ...(anime.aliases || [])].filter(candidate =>
+      matchSeason({ ...anime, animeTitle: candidate }, title, season));
+    const directorySeason = matchEpisodeSeason(anime, title, season, details, mappedTitleSeason);
+    if (!conflict) return seasonTitles.length > 0 || directorySeason;
+    if (directorySeason || (season > 1 && seasonTitles.some(candidate =>
+      getExplicitSeasonNumber(extractAnimeTitle(candidate)) === season))) {
+      withConfirmedSeason.push(anime);
+    } else {
+      logEvent('info', 'match.candidate.reject', `[system] [match-reject] ${anime.animeTitle}，原因=${conflict}`, { candidateTitle: anime.animeTitle, reason: conflict, year: target.year, mediaType: target.mediaType });
     }
-    return !isSeriesType(anime);
+    return false;
   });
+  if (year && season && episode && !mapping) {
+    const exactYear = candidates.filter(anime => candidateReleaseYear(anime) === year);
+    if (decision) decision.exactSeasonYear = exactYear.length > 0;
+    if (exactYear.length) return exactYear;
+    if (withConfirmedSeason.length) {
+      for (const anime of withConfirmedSeason) decision.seasonYears.add(candidateReleaseYear(anime));
+      if (!candidates.length && decision.seasonYears.size === 1) {
+        decision.seasonYearFallback = true;
+        return withConfirmedSeason;
+      }
+    }
+  }
   if (!year) {
-    const years = new Set(candidates.map(anime => extractYear(anime.animeTitle) || Number(String(anime.startDate || '').slice(0, 4))).filter(Boolean));
+    const years = new Set(candidates.map(anime => extractYear(anime.animeTitle) || candidateReleaseYear(anime)).filter(Boolean));
     if (years.size > 1) {
       if (decision) decision.ambiguousWork = true;
       log('info', '[system] [match-reject] 同名同季候选年份不同，需进一步确认作品');
@@ -1640,6 +1667,9 @@ async function executeMatchAttempt(options) {
   const visitedScopes = new Set();
   let attempt = { resAnime: null, resEpisode: null, spilloverMatched: false,
     title: options.title, season: options.season, episode: options.episode };
+  let seasonYearMatch = null;
+  const seasonYears = new Set();
+  let exactSeasonYear = false;
   for (const platform of platformOrder) {
     if (options.collectionRace?.ugcMatched) break;
     const members = new Set(String(platform || '').split(/[&＆]/).map(canonicalPlatformName).filter(Boolean));
@@ -1652,6 +1682,12 @@ async function executeMatchAttempt(options) {
     const label = platform || '其余启用来源';
     log('info', `[system] [match-search] 开始平台组 ${label}，搜索来源: ${scope}`);
     const selected = await executeMatchAttemptBody({ ...options, sourceSearches, searchSources, stagePlatform: platform });
+    for (const year of selected.seasonYears || []) seasonYears.add(year);
+    exactSeasonYear ||= Boolean(selected.exactSeasonYear);
+    if (selected.seasonYearFallback) {
+      seasonYearMatch ||= selected;
+      continue;
+    }
     attempt = { ...selected, cacheWarning: selected.cacheWarning || attempt.cacheWarning };
     // 同名作品有歧义时先回到作品识别，不能让后续只有一个候选的平台绕过校验。
     if (selected.ambiguousWork) return attempt;
@@ -1661,6 +1697,11 @@ async function executeMatchAttempt(options) {
     }
     log('info', `[system] [match-search] 平台组 ${label} 无可用匹配，继续下一组`);
   }
+  if (seasonYearMatch && seasonYears.size === 1 && !exactSeasonYear) {
+    log('info', `[system] [match] 已确认 S${options.season} 季目录，采用平台年份 ${candidateReleaseYear(seasonYearMatch.resAnime)}`);
+    return seasonYearMatch;
+  }
+  if (seasonYears.size > 1) log('info', '[system] [match-reject] 已确认同名同季候选年份不同，没有可用的指定年份匹配');
   return attempt;
 }
 
@@ -1901,13 +1942,13 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, medi
   });
   const titleGuard = mapping || (strictTargetTitle ? { targetTitle: title } : null);
   const guardedCandidates = titleGuard ? filterMappingTargetCandidates(searchData.animes, titleGuard) : searchData.animes;
-  const decision = {};
+  const decision = { seasonYears: new Set() };
   const targetCandidates = confidentCandidates(guardedCandidates, { title, season, episode, year, mapping, tmdbIdentity, mediaType, details: detailStore, decision, mappedTitleSeason });
   if (decision.ambiguousWork) return { resAnime: null, resEpisode: null, spilloverMatched: false,
     ambiguousWork: true, title, season, episode, cacheWarning };
   if (titleGuard && targetCandidates.length === 0) {
     log('info', '[system] [match-reject] 映射目标标题过滤后无候选');
-    return { resAnime: null, resEpisode: null, spilloverMatched: false, title, season, episode, cacheWarning };
+    return { resAnime: null, resEpisode: null, spilloverMatched: false, title, season, episode, cacheWarning, seasonYears: decision.seasonYears };
   }
 
   const targetSearchData = { ...searchData, animes: targetCandidates };
@@ -1919,7 +1960,7 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, medi
     }
   }
   if (!(mapping?.targetYear || mapping?.targetType || mapping?.targetTmdbId)) {
-    candidatePasses.push({ searchData: targetSearchData, year: mapping ? null : year, label: mapping ? 'fallback' : 'default' });
+    candidatePasses.push({ searchData: targetSearchData, year: mapping || decision.seasonYearFallback ? null : year, label: mapping ? 'fallback' : 'default' });
   }
 
   for (const pass of candidatePasses) {
@@ -1954,7 +1995,7 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, medi
         log('info', '[system] [match-reject] 缺少明确目标集号，不能用跨季或数组位置代替');
         continue;
       }
-      return { ...selected, title, season, episode, cacheWarning };
+      return { ...selected, title, season, episode, cacheWarning, ...decision };
     }
   }
 
@@ -1974,7 +2015,8 @@ async function executeMatchAttemptBody({ req, title, season, episode, year, medi
     }
   }
 
-  return { resAnime: null, resEpisode: null, spilloverMatched: false, title, season, episode, cacheWarning };
+  return { resAnime: null, resEpisode: null, spilloverMatched: false, title, season, episode, cacheWarning,
+    seasonYears: decision.seasonYears, exactSeasonYear: decision.exactSeasonYear };
 }
 
 export function selectCollectionEpisode(animes, context, getEpisodes) {
