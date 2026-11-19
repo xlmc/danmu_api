@@ -34,6 +34,12 @@ test('紧凑季号映射优先于裸标题，且不泄漏到其他季度', () =>
   assert.equal(applyTitleMappingWithLog('诛仙', 'test', 4), '诛仙 最终季');
 });
 
+test('有季号也有年份时，纯季号键优先于年份键和年份季号组合键', () => {
+  Globals.init({TITLE_MAPPING_TABLE: '诛仙S04->诛仙 最终季;诛仙2022S04->组合键标题;诛仙2022->年份键标题'});
+  assert.equal(resolveLocalTitleMapping('诛仙', 4, 2022).title, '诛仙 最终季');
+  assert.equal(resolveLocalTitleMapping('诛仙', 3, 2022).title, '年份键标题');
+});
+
 test('剧集标题下划线编号按标题集数解析', () => {
   assert.equal(extractEpisodeNumberFromTitle('【qq】 花开锦绣_31'), 31);
   assert.equal(extractEpisodeNumberFromTitle('【qq】 花开锦绣_32'), 32);

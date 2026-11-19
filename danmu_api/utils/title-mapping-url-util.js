@@ -541,30 +541,20 @@ export function buildMappingCandidateKeys(rawTitle, season = null, year = null) 
   const hasSeason = Number.isInteger(seasonNumber) && seasonNumber > 0;
   const hasYear = Number.isInteger(yearNumber) && yearNumber > 0;
 
-  // 季数的两种写法：S1 和 S01 都要（现实中两种都常见）
-  const tokens = [];
-  if (hasSeason) tokens.push(`S${seasonNumber}`, `S${String(seasonNumber).padStart(2, '0')}`);
-  if (hasYear) tokens.push(String(yearNumber));
-
-  // ---------- 拼出各种组合 ----------
   const combos = [];
   const yearToken = hasYear ? String(yearNumber) : null;
   const seasonTokens = hasSeason ? [`S${seasonNumber}`, `S${String(seasonNumber).padStart(2, '0')}`] : [];
 
-  // 组合 1：剧名 年份 季（两种先后顺序都试）
-  // 例："Monster Island 2017 S01"、"Monster Island S01 2017"
+  // 季号键优先，年份有时是整部剧的首播年，并不是本季年份。
+  for (const st of seasonTokens) combos.push(`${title} ${st}`);
+
   if (yearToken && seasonTokens.length) {
     for (const st of seasonTokens) {
       combos.push(`${title} ${yearToken} ${st}`, `${title} ${st} ${yearToken}`);
     }
   }
 
-  // 组合 2：剧名 + 季（例："Monster Island S01"）
-  if (seasonTokens.length) {
-    for (const st of seasonTokens) combos.push(`${title} ${st}`);
-  }
-
-  // 组合 3：剧名 + 年份（例："Monster Island 2017"）
+  // 年份键与裸剧名依次兜底。
   if (yearToken) combos.push(`${title} ${yearToken}`);
 
   // 组合 4：裸剧名（例："Monster Island"），最通用的兜底
@@ -593,8 +583,7 @@ export function buildMappingCandidateKeys(rawTitle, season = null, year = null) 
  *   5. 全都没查到，返回原标题（不变）
  *
  * 例：输入 "Monster Island.2017.S01"（季=1 年份=2017）
- *   候选键："Monster Island 2017 S01"、"Monster Island S01 2017"、
- *           "Monster Island S01"、"Monster Island 2017"、"Monster Island" ...
+ *   候选键：先尝试 "Monster Island S01"，再尝试带年份的组合键、年份键及裸剧名。
  *   若表里有 "Monster Island -> 怪物岛"，则最终返回 "怪物岛"。
  *
  * @param {string} rawTitle 用户输入/解析出的原始剧名
