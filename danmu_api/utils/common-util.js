@@ -46,13 +46,28 @@ export function matchMediaType(value) {
   return null;
 }
 
+export function isTheatricalTitle(value) {
+  return /剧场版|劇場版/.test(extractAnimeTitle(String(value || '')));
+}
+
+export function candidateMediaType(candidate) {
+  const explicitType = matchMediaType(candidate.mediaType || '');
+  if (explicitType) return explicitType;
+  const category = [candidate.type, candidate.typeDescription].join(' ');
+  // 动画是表现形式。平台明确提供剧集类型时，仍尊重该类型。
+  if (/动漫|動畫|动画|番剧|番劇|\b(?:anime|animation)\b/i.test(category) &&
+      !/电视剧|電視劇|剧集|劇集|综艺|綜藝|纪录片|紀錄片|\b(?:tv|tvseries|tv_series|series|variety|documentary)\b/i.test(category) &&
+      isTheatricalTitle(candidate.animeTitle || candidate.title)) return 'movie';
+  return matchMediaType(category);
+}
+
 // 主源、缓存与投稿都拒绝明确的年份、类型与作品 ID 冲突。
 export function workIdentityConflict(candidate, target) {
   const typeText = [candidate.type, candidate.typeDescription, candidate.animeTitle || candidate.title].join(' ');
   const animation = /动漫|番剧|动画|\banime\b/i.test(typeText);
   if (target.tmdbIdentity?.isAnimation === true && !animation &&
       (candidate.isAnimation === false || /短剧|综艺|真人|实拍|\b(?:drama|variety)\b/i.test(typeText))) return 'animation-mismatch';
-  const mediaType = matchMediaType([candidate.mediaType, candidate.type, candidate.typeDescription].join(' '));
+  const mediaType = candidateMediaType(candidate);
   if (target.mediaType && mediaType && target.mediaType !== mediaType) return 'type-mismatch';
   const key = candidate.tmdbIdentity?.key;
   if (target.tmdbIdentity && key && key !== target.tmdbIdentity.key) return 'tmdb-mismatch';

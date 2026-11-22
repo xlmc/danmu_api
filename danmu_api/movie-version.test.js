@@ -85,6 +85,37 @@ test('movie match selects a named audio version or merges both and serves the me
   assert.equal(result.matches[0]?.url, urls.map(url => 'tencent:' + url).join('$$$'), '不带语言的电影文件名合并正片与原版');
 });
 
+test('腾讯标为 3D 动漫的剧场版按电影命中带宣传语的正片，跳过彩蛋和剪辑', async t => {
+  reset();
+  const source = getSourceByKey('tencent');
+  const title = '斗破苍穹剧场版 双帝之战';
+  const cover = 'mzc00200u6gslvo';
+  const entries = [
+    { vid: 'o41033mfyo5', play_title: title + ' 联动彩蛋', duration: '31', is_trailer: '0' },
+    { vid: 'short', play_title: title + ' 终极一战', duration: '95', is_trailer: '0' },
+    { vid: 'u4103g6vo3e', play_title: title + ' 九年青春，终极一战！', duration: '8141', is_trailer: '0' },
+  ];
+  const catalog = { animeId: 9611405, bangumiId: cover, source: 'tencent', type: '3D动漫', typeDescription: '3D动漫',
+    animeTitle: title + '(2026)【3D动漫】from tencent', startDate: '2026-01-01', episodeCount: entries.length,
+    links: entries.map(item => ({ title: '【tencent】 ' + item.play_title, url: `https://v.qq.com/x/cover/${cover}/${item.vid}.html` })) };
+  t.mock.method(source, 'search', async () => []);
+  t.mock.method(source, 'handleAnimes', async (_raw, _title, results, details) => {
+    addAnime(catalog, details);
+    const { links, ...dto } = catalog;
+    results.push(dto);
+  });
+  t.mock.method(source, 'getEpisodes', async () => entries.map(item => source.extractEpisodeMeta(item)));
+  const match = async fileName => (await handleRequest(new Request('http://localhost/87654321/api/v2/match', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fileName }),
+  }), Globals.env)).json();
+  const request = title + '(2026)';
+  assert.equal((await match(request)).matches[0]?.url, catalog.links[2].url);
+  assert.equal((await match(request)).matches[0]?.url, catalog.links[2].url, '旧格式的目录缓存也能选对正片');
+  assert.equal((await match(title + '(2025)')).isMatched, false);
+  entries.pop();
+  assert.equal((await match(request)).isMatched, false, '目录只剩短片时不得返回正片匹配');
+});
+
 test('numeric and symbol presets block whole messages and preserve meaningful text', () => {
   Globals.init({ LOCAL_CACHE_ENABLED: 'false', LOCAL_REDIS_URL: '', LOG_LEVEL: 'error' });
   assert.equal(Globals.envs.blockedWords, BLOCKED_WORD_PRESETS.content.join(','));

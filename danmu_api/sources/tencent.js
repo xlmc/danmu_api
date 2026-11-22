@@ -335,6 +335,7 @@ export default class TencentSource extends BaseSource {
       videoSubtitle: p.video_subtitle || '',
       cTitleOutput: p.c_title_output || '',
       isTrailer: String(p.is_trailer) === '1',
+      duration: Number(p.duration) || 0,
     };
   }
 

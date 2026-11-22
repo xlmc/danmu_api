@@ -21,12 +21,12 @@ import { stripLinkOffset } from "../utils/offset-util.js";
 import { applySearchKeywordMapping, ensureRemoteTitleMapping, ensureCachedRemoteTitleMapping, resolveLocalTitleMapping, resolveCachedRemoteTitleMapping } from "../utils/title-mapping-url-util.js";
 import { filterMappingQualifierCandidates, filterMappingTargetCandidates, collectAutoMatchCandidates } from "../utils/auto-match-mapping-util.js";
 import { ensureRemoteAutoMatchMapping, getCachedRemoteAutoMatchMappingRules } from "../utils/auto-match-mapping-url-util.js";
-import { extractEpisodeTitle, convertChineseNumber, parseFileName, extractReleaseGroups, createDynamicPlatformOrder, normalizeTitleForMatch, extractYear, workIdentityConflict, titleMatches, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle, buildTitleKeywordQueries, compoundTitleMatches, getExplicitSeasonNumber } from "../utils/common-util.js";
+import { extractEpisodeTitle, convertChineseNumber, parseFileName, extractReleaseGroups, createDynamicPlatformOrder, normalizeTitleForMatch, extractYear, candidateMediaType, isTheatricalTitle, workIdentityConflict, titleMatches, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle, buildTitleKeywordQueries, compoundTitleMatches, getExplicitSeasonNumber } from "../utils/common-util.js";
 import { getTmdbMediaTitleById, getTmdbSeasonBoundaries, getDomesticPersonMetadataForTitle } from "../utils/tmdb-util.js";
 import { applyMergeLogic, MERGE_DELIMITER } from "../utils/merge-util.js";
 
 
-import { getSourceMetaByKey, getLogNameByKey } from "../sources/registry.js";
+import { getSourceByKey, getSourceMetaByKey, getLogNameByKey } from "../sources/registry.js";
 import { isHongguoPlayerUrl } from "../sources/hongguo.js";
 import { Anime, AnimeMatch, Episodes, Bangumi } from "../models/player-model.js";
 
@@ -58,9 +58,10 @@ function matchYear(anime, queryYear) {
 // 在带有 SxxExx 的匹配请求中，电影通常也只有一个“第 1 集”链接，
 // 会错误地抢在同名电视剧之前命中。优先使用详情中的有效集数，声明集数作为补充。
 function isMovieMatchCandidate(anime) {
-  const type = `${anime?.type || ''} ${anime?.typeDescription || ''}`;
-  return /(电影|剧场版|movie|film)/i.test(type);
+  return candidateMediaType(anime) === 'movie';
 }
+
+const NON_FEATURE_TITLE = /预告|預告|特辑|特輯|花絮|片段|幕后|幕後|采访|專訪|专访|首映|发布会|MV|推广曲|主题曲|预售|定档|开机|杀青|票房|战报|登顶|路透|高光|速看|看点|回顾|解说|点评|彩蛋/i;
 
 /**
  * 校验电影分集是否为真正的正片；排除纯预告、特辑、片段、花絮、新闻等非正片视频。
@@ -75,8 +76,7 @@ export function isMovieFeatureFilmEpisode(ep, anime) {
   if (featureTagRegex.test(cleanEpTitle)) return true;
 
   // 2. 明确的非正片标识词（预告/花絮/特辑/片段/新闻/战报等）
-  const nonFeatureRegex = /预告|特辑|花絮|片段|幕后|采访|专访|首映|发布会|MV|推广曲|主题曲|预售|定档|开机|杀青|票房|战报|登顶|路透|高光|速看|看点|回顾|解说|点评|彩蛋/i;
-  if (nonFeatureRegex.test(cleanEpTitle)) return false;
+  if (NON_FEATURE_TITLE.test(cleanEpTitle)) return false;
 
   // 平台常用配音版本代替片名；只接受完整版本标签，不接受带宣传描述的标题。
   const versionLabel = /^(?:普通|普通话|普通話|国语|國語|粤语|粵語|中文|日语|日語|英语|英語|原声|原聲|原)(?:版)?$/;
@@ -101,6 +101,27 @@ export function isMovieFeatureFilmEpisode(ep, anime) {
   if (/^(?:第\s*0*1\s*集|全\s*0*1\s*集|0*1)$/.test(cleanEpTitle)) return true;
 
   return false;
+}
+
+async function findMovieFeatures(episodes, anime) {
+  const features = episodes.filter(ep => isMovieFeatureFilmEpisode(ep, anime));
+  if (features.length || anime.source !== 'tencent' || !isMovieMatchCandidate(anime) ||
+      !isTheatricalTitle(anime.animeTitle)) return features;
+
+  // 腾讯剧场版可能用宣传语代替正片标签。只核对同一目录、带完整片名的腾讯视频。
+  const title = normalizeTitleForMatch(extractAnimeTitle(anime.animeTitle));
+  const candidates = episodes.filter(ep => extractEpisodeTitle(ep.episodeTitle) === 'tencent' &&
+    !ep.url.includes(MERGE_DELIMITER) && sourceForUrl(ep.url) === 'tencent' &&
+    !NON_FEATURE_TITLE.test(ep.episodeTitle) && extractEpisodeNumberFromTitle(ep.episodeTitle) === null &&
+    normalizeTitleForMatch(ep.episodeTitle.replace(/^【[^】]+】\s*/, '')).startsWith(title));
+  if (!candidates.length) return features;
+
+  const source = getSourceByKey('tencent');
+  const metadata = await source.getEpisodes(anime.bangumiId);
+  // 只在获得长片时长且视频唯一时兜底；未知时长或短视频不算正片。
+  const featureIds = new Set(metadata.filter(ep => !ep.isTrailer && ep.duration >= 40 * 60).map(ep => ep.vid));
+  const confirmed = candidates.filter(ep => featureIds.has(source.extractVid(ep.url)));
+  return confirmed.length === 1 ? confirmed : [];
 }
 
 // 计算对外上报的集数：过滤只会减少可用集数，平台声明值更小时以声明值为准
@@ -1263,7 +1284,7 @@ export async function matchAniAndEp(season, episode, year, searchData, title, re
         }
     } else {
         // 电影模式逻辑：候选分集中必须包含真正的“正片”，没有正片（纯预告/花絮/短片）则不予匹配
-        const features = bangumiData.bangumi.episodes.filter(ep => isMovieFeatureFilmEpisode(ep, anime));
+        const features = await findMovieFeatures(bangumiData.bangumi.episodes, anime);
         let featuresForPlatform = platform ? features.filter(ep =>
           getPlatformMatchScore(extractEpisodeTitle(ep.episodeTitle), platform) > 0) : features;
         if (!featuresForPlatform.length && isPreferredAnime) featuresForPlatform = features;
