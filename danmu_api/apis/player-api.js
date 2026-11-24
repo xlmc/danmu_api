@@ -24,6 +24,7 @@ import { ensureRemoteAutoMatchMapping, getCachedRemoteAutoMatchMappingRules } fr
 import { extractEpisodeTitle, convertChineseNumber, parseFileName, extractReleaseGroups, createDynamicPlatformOrder, normalizeTitleForMatch, extractYear, candidateMediaType, isTheatricalTitle, workIdentityConflict, titleMatches, extractEpisodeNumberFromTitle, extractSeasonNumberFromAnimeTitle, extractAnimeTitle, buildTitleKeywordQueries, compoundTitleMatches, getExplicitSeasonNumber } from "../utils/common-util.js";
 import { getTmdbMediaTitleById, getTmdbSeasonBoundaries, getDomesticPersonMetadataForTitle } from "../utils/tmdb-util.js";
 import { applyMergeLogic, MERGE_DELIMITER } from "../utils/merge-util.js";
+import { isVarietyBonusTitle } from '../utils/episode-category-util.js';
 
 
 import { getSourceByKey, getSourceMetaByKey, getLogNameByKey } from "../sources/registry.js";
@@ -428,8 +429,14 @@ function withEpisodeLookupTimeout(promise, source, deadline) {
 }
 
 function searchScopeCacheKey(key, searchSources) {
-  return searchSources
-    ? JSON.stringify(['match-sources', searchSources, globals.mergeSourcePairs, globals.customMergeRules, key]) : key;
+  // 刷新旧的搜索目录，填上逐集播出日期和时长，已有剧集 ID 继续可用。
+  return JSON.stringify(searchSources
+    ? ['catalog-v2', searchSources, globals.mergeSourcePairs, globals.customMergeRules, key]
+    : ['catalog-v2', key]);
+}
+
+function resolveKnownPlatformTitle(title) {
+  return normalizeTitleForMatch(title) === '奔跑吧大湾篇' ? '奔跑吧大湾区篇' : title;
 }
 
 // Extracted function for GET /api/v2/search/anime
@@ -475,6 +482,7 @@ async function searchAnimeBody(url, preferAnimeId = null, preferSource = null, d
     await ensureRemoteTitleMapping();
     queryTitle = applySearchKeywordMapping(queryTitle);
   }
+  queryTitle = resolveKnownPlatformTitle(queryTitle);
   const keywordWasMapped = queryTitle !== originalSearchKeyword;
 
   // 识别信息：随搜索响应一并返回，便于调试界面直接查看
@@ -2084,7 +2092,7 @@ function normalizeMatchTitle(title) {
   let normalized = String(title || '').trim();
   if (globals.animeTitleSimplified) normalized = simplized(normalized);
   if (globals.titleNoiseFilter) normalized = normalized.replace(globals.titleNoiseFilter, '').trim();
-  return normalized;
+  return resolveKnownPlatformTitle(normalized);
 }
 
 function findSeasonPreferenceTitle(titles, season) {
@@ -2360,7 +2368,7 @@ async function matchAnimeWithTrace(url, req, clientIp) {
       if (metadata) {
         log('info', '[system] [match-trace] TMDB 分集身份 ' + JSON.stringify(metadata));
         attempt = await traceMatchStep(log, `${label}对应平台分集`, () => executeMatchAttempt({
-          req, title: tmdbIdentity.title, season: metadata.targetSeason, episode: null,
+          req, title: metadata.seasonTitle || tmdbIdentity.title, season: metadata.targetSeason, episode: null,
           year: metadata.year, mediaType: requestMediaType, preferredPlatform, tmdbIdentity, tmdbEpisode: metadata,
           sourceSearches, preferAnimeId: null, preferSource: null, offsets: null, mapping: null, aiContext
         }));
@@ -2717,18 +2725,20 @@ function isEditorialTitle(value) {
   return FEATURE_EDITORIAL_MARKERS.some(marker => text.includes(marker));
 }
 
-function selectRequestedEpisodes(episodes, targetEpisode, links = []) {
+function selectRequestedEpisodes(episodes, targetEpisode, links = [], isVariety = false) {
   const usableEpisodes = (episodes || []).filter(ep => !isEditorialTitle(ep?.episodeTitle));
   const target = Number(targetEpisode);
   if (!Number.isInteger(target) || target < 1) return [];
 
   // 先相信标题中的明确集数。这样即使源站把预告/花絮插在正片前面，或返回顺序不是
   // 第 1 集开始，也不会把数组下标误当成集数。
-  const titleNumberedEpisodes = usableEpisodes.filter(ep =>
-    extractEpisodeNumberFromTitle(ep?.episodeTitle) !== null
-  );
+  const episodeNumber = ep => {
+    const issue = isVariety ? varietyKey(ep.episodeTitle)?.match(/^main:(\d+):/) : null;
+    return issue ? Number(issue[1]) : extractEpisodeNumberFromTitle(ep.episodeTitle);
+  };
+  const titleNumberedEpisodes = usableEpisodes.filter(ep => episodeNumber(ep) !== null);
   const titleMatches = titleNumberedEpisodes.filter(ep =>
-    extractEpisodeNumberFromTitle(ep?.episodeTitle) === target
+    episodeNumber(ep) === target
   );
   if (titleNumberedEpisodes.length > 0) return titleMatches;
 
@@ -2737,6 +2747,8 @@ function selectRequestedEpisodes(episodes, targetEpisode, links = []) {
     [link.episodeNumber, link.sort].map(Number).find(number => Number.isFinite(number) && number > 0)]));
   const numberedEpisodes = usableEpisodes.filter(ep => metadata.get(ep.episodeId) !== undefined);
   if (numberedEpisodes.length) return numberedEpisodes.filter(ep => metadata.get(ep.episodeId) === target);
+  // 有发布日期但没有期号的综艺目录常混排衍生节目，不能把位置当作期号。
+  if (isVariety && links.some(link => link.airDate)) return [];
 
   // 整组正片都没有集号时，才允许按过滤后的位置选择。
   return usableEpisodes[target - 1] ? [usableEpisodes[target - 1]] : [];
@@ -2813,6 +2825,28 @@ export async function searchEpisodes(url, clientIp = null, options = {}) {
 
   // 所有来源与补搜共用等待预算，避免一轮慢源后又串行等待多个完整超时。
   const deadline = performance.now() + 6500;
+  const explicit = anime.match(/^(.+?)\s*[.\s_-]*S(\d{1,2})E(\d{1,3})\s*$/i);
+  const seasonParam = url.searchParams.get('season');
+  const coordinates = explicit
+    ? { title: explicit[1].trim(), season: Number(explicit[2]), episode: Number(explicit[3]) }
+    : /^\d{1,2}$/.test(seasonParam || '') && /^\d{1,3}$/.test(episode)
+      ? { title: anime, season: Number(seasonParam), episode: Number(episode) } : null;
+  let identity, episodeMetadata;
+  const canUseTmdb = !featureRequest && (globals.tmdbApiKey || globals.proxyUrl);
+  const tmdbSignal = () => AbortSignal.timeout(Math.max(1, Math.min(2200, Math.ceil(deadline - performance.now()))));
+  if (coordinates && canUseTmdb) {
+    try {
+      const signal = tmdbSignal();
+      identity = await resolveTmdbMatchIdentity({ ...coordinates, tmdbId, mediaType: 'tv', signal });
+      const metadata = await resolveTmdbEpisodeMetadata(identity, coordinates.season, coordinates.episode, undefined, signal);
+      if (metadata?.seasonTitle) {
+        episodeMetadata = metadata;
+        anime = metadata.seasonTitle;
+      }
+    } catch (error) {
+      log('warn', `[system] [episodes] TMDB 季集识别失败: ${error.message}`);
+    }
+  }
   const details = new Map();
   const lookup = async (title, sources = sourceOrderOverride) => {
     if (performance.now() >= deadline) return { success: true, animes: [] };
@@ -2830,11 +2864,16 @@ export async function searchEpisodes(url, clientIp = null, options = {}) {
         : await (await getBangumi(`/bangumi/${item.bangumiId}`, details, item.source)).json();
       if (!catalog.success || !catalog.bangumi?.episodes) continue;
       let episodes = catalog.bangumi.episodes;
-      if (featureRequest) {
+      if (episodeMetadata) {
+        const matched = selectTmdbEpisode([detail || item], episodeMetadata, identity, () => episodes);
+        episodes = matched ? [matched.resEpisode] : [];
+      } else if (featureRequest) {
         if (!isFeatureCandidate(item, requestedYear)) continue;
         episodes = episodes.filter(ep => !isEditorialTitle(ep.episodeTitle));
       } else if (/^\d+$/.test(episode)) {
-        episodes = selectRequestedEpisodes(episodes, episode, detail?.links);
+        const isVariety = /综艺|綜藝|variety/i.test(`${item.type} ${item.typeDescription}`);
+        const eligible = isVariety ? episodes.filter(ep => !isVarietyBonusTitle(ep.episodeTitle)) : episodes;
+        episodes = selectRequestedEpisodes(eligible, episode, detail?.links, isVariety);
       }
       if (episodes.length) results.push({ animeItem: item, episodes });
     }
@@ -2843,10 +2882,22 @@ export async function searchEpisodes(url, clientIp = null, options = {}) {
 
   let searchData = await lookup(anime);
   let results = await collect(searchData);
-  if (!results.length && originalTitle && originalTitle !== anime) {
+  if (!results.length && !episodeMetadata && originalTitle && originalTitle !== anime) {
     log('info', `[system] [episodes] 补搜 TMDB 原名: ${originalTitle}`);
     searchData = mergeEpisodeSearchResults(searchData, await lookup(originalTitle));
     results = await collect(searchData);
+  }
+  if (!results.length && !coordinates && !tmdbId && canUseTmdb && performance.now() < deadline) {
+    try {
+      const resolved = await resolveTmdbMatchIdentity({ title: anime, mediaType, signal: tmdbSignal() });
+      if (resolved && resolved.title !== anime) {
+        log('info', `[system] [episodes] TMDB 确认正式标题，补搜: ${resolved.title}`);
+        searchData = mergeEpisodeSearchResults(searchData, await lookup(resolved.title));
+        results = await collect(searchData);
+      }
+    } catch (error) {
+      log('warn', `[system] [episodes] TMDB 标题识别失败: ${error.message}`);
+    }
   }
   if (!results.length) {
     const fallbackSources = sourceOrderOverride ? [] : resolveMissingDirectFallbackSources();

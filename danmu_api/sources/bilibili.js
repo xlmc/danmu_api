@@ -510,7 +510,18 @@ export default class BilibiliSource extends BaseSource {
         return [];
     }
 
-    const episodes = rawEpisodes.map((ep, index) => {
+    // 分集 ID 可能随集号递减。正片都有集号时按集号排序，否则保留接口顺序。
+    const mainEpisodes = rawEpisodes.filter(ep => !ep.supplementary).map(ep => {
+      const title = String(ep.title || ep.index_title || ep.show_title || '').trim();
+      const number = /^\d+(?:\.\d+)?$/.test(title) ? Number(title) : extractEpisodeNumberFromTitle(title);
+      return { ep, number };
+    });
+    if (mainEpisodes.every(({ number }) => number !== null)) {
+      mainEpisodes.sort((a, b) => a.number - b.number);
+    }
+
+    const orderedEpisodes = [...mainEpisodes.map(({ ep }) => ep), ...rawEpisodes.filter(ep => ep.supplementary)];
+    const episodes = orderedEpisodes.map((ep, index) => {
         const displayTitle = pgcEpisodeTitle(ep, index + 1);
 
         return {
@@ -716,14 +727,9 @@ export default class BilibiliSource extends BaseSource {
                 return {
                     name: `${index + 1}`,
                     url: linkUrl,
-                    title: `【bilibili】 ${ep.title}`,
-                    _supplementary: Boolean(ep.supplementary),
-                    _id: parseInt(ep.id, 10) || 0
+                    title: `【bilibili】 ${ep.title}`
                 };
              });
-
-             // 依据底层数据主键 ep_id 进行时间序列升序排列
-             links.sort((a, b) => Number(Boolean(a._supplementary)) - Number(Boolean(b._supplementary)) || a._id - b._id);
           }
 
           if (links.length === 0) return;

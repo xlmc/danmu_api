@@ -590,7 +590,8 @@ export function addAnime(anime, detailStore = null) {
                 if (episode) {
                     newLinks.push({ ...episode,
                       ...(link.episodeNumber != null ? { episodeNumber: link.episodeNumber } : {}),
-                      ...(link.sort != null ? { sort: link.sort } : {}) });
+                      ...(link.sort != null ? { sort: link.sort } : {}),
+                      airDate: link.airDate, duration: link.duration });
                 }
             } else {
                 log("error", `[cache] Invalid link in anime, missing url: ${JSON.stringify(link)}`);

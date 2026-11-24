@@ -372,7 +372,9 @@ export default class YoukuSource extends BaseSource {
             links.push({
               "name": ep.episodeIndex.toString(),
               "url": fullUrl,
-              "title": `【youku】 ${ep.title}`
+              "title": `【youku】 ${ep.title}`,
+              airDate: ep.airDate,
+              duration: ep.duration
             });
           }
 
@@ -426,7 +428,9 @@ export default class YoukuSource extends BaseSource {
         vid: ep.id,
         title: title,
         episodeIndex: episodeIndex,
-        link: ep.link
+        link: ep.link,
+        airDate: String(ep.published || '').slice(0, 10),
+        duration: Number(ep.duration) || 0
       };
     });
 
