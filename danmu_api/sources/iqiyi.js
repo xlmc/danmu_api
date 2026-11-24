@@ -1,7 +1,7 @@
 import BaseSource from './base.js';
 import { log } from "../utils/log-util.js";
 import { buildQueryString, httpGet} from "../utils/http-util.js";
-import { printFirst200Chars, titleMatches, getExplicitSeasonNumber, extractSeasonNumberFromAnimeTitle, extractEpisodeNumberFromTitle, extractAnimeTitle } from "../utils/common-util.js";
+import { printFirst200Chars, titleMatches, normalizeTitleForMatch, getExplicitSeasonNumber, extractSeasonNumberFromAnimeTitle, extractEpisodeNumberFromTitle, extractAnimeTitle } from "../utils/common-util.js";
 import { md5, convertToAsciiSum, decodeHtmlEntities, base64ToBytes, decompressBrotli, utf8BytesToString } from "../utils/codec-util.js";
 import { generateValidStartDate } from "../utils/time-util.js";
 import { addAnime, removeEarliestAnime } from "../utils/cache-util.js";
@@ -279,7 +279,7 @@ export default class IqiyiSource extends BaseSource {
    * @param {Map|null} seasonAlbumCache - 跨多次调用共享的分季数据缓存，避免同一 album 重复请求
    * @returns {Promise<Array>} 分集列表
    */
-  async getEpisodes(id, querySeason = null, seasonAlbumCache = null, inlinedAlbumIds = null, baseInfoCache = null) {
+  async getEpisodes(id, querySeason = null, seasonAlbumCache = null) {
     try {
       log("info", `[iqiyi] 获取分集列表: media_id=${id}`);
 
@@ -311,13 +311,7 @@ export default class IqiyiSource extends BaseSource {
         return [];
       }
 
-      // 分集列表数据；本次搜索已在 handleAnimes 中统一拉取时直接复用，避免重复请求
-      let data;
-      if (baseInfoCache && baseInfoCache.has(id)) {
-        data = baseInfoCache.get(id);
-      } else {
-        data = await this._fetchBaseInfoData(entityId);
-      }
+      const data = await this._fetchBaseInfoData(entityId);
       if (!data || data.status_code !== 0 || !data.data || !data.data.template) {
         return [];
       }
@@ -339,136 +333,53 @@ export default class IqiyiSource extends BaseSource {
       const fetchedSeasons = seasonAlbumCache || new Map();
 
       for (const block of blocks) {
-        // 查找 video_list 类型的块（新版API）
-        if (block.bk_type === "video_list" && block.data?.data) {
-          log("info", `[iqiyi] 找到 video_list 类型的分集数据块, bk_id: ${block.bk_id}`);
+        const groups = block.data?.data;
+        if (!Array.isArray(groups)) continue;
 
-          // 检查是否是分集选择器块
-          if ((!block.tag || !block.tag.includes("episodes")) && !block.supplementaryCategory &&
-              !isSupplementaryCategory(block.title || block.name)) {
-            log("info", `[iqiyi] 跳过非分集块: ${block.bk_id}`);
-            continue;
-          }
+        const supplementaryBlock = block.supplementaryCategory || isSupplementaryCategory(block.title || block.name);
 
+        if (block.bk_type === "video_list") {
+          if (!block.tag?.includes("episodes") && !supplementaryBlock) continue;
           foundEpisodes = true;
 
-          const dataGroups = block.data.data;
-          if (!Array.isArray(dataGroups)) {
-            log("warn", "[iqiyi] data.data 不是数组，跳过此块");
-            continue;
-          }
-
-          for (const group of dataGroups) {
-            if (!group.videos || !Array.isArray(group.videos)) continue;
-
-            // 遍历每个年份/季度分组
-            for (const videoGroup of group.videos) {
-              if (!videoGroup.data || !Array.isArray(videoGroup.data)) continue;
-
-              // 处理每个分集
-              for (const epData of videoGroup.data) {
-                const supplementary = block.supplementaryCategory ||
-                  isSupplementaryCategory(group.tab_name || videoGroup.tab_name) ||
-                  isSupplementaryEpisode([epData.short_display_name, epData.title, epData.subtitle].join(' '));
-
-                const playUrl = epData.play_url || "";
-                const tvidMatch = playUrl.match(/tvid=(\d+)/);
-                if (!tvidMatch) continue;
-
-                const tvid = tvidMatch[1];
-                const title = this._buildEpisodeTitle(epData);
-
-                const order = epData.album_order;
-                const pageUrl = epData.page_url;
-
-                if (tvid && title && pageUrl) {
-                  allEpisodes.push({
-                    id: tvid,
-                    title: title,
-                    order: order !== undefined ? order : allEpisodes.length,
-                    link: pageUrl,
-                    supplementary
-                  });
-                }
+          for (const group of groups) {
+            if (!Array.isArray(group.videos)) continue;
+            for (const segment of group.videos) {
+              if (!Array.isArray(segment.data)) continue;
+              const supplementary = supplementaryBlock || isSupplementaryCategory(group.tab_name) ||
+                isSupplementaryCategory(segment.tab_name);
+              for (const epData of segment.data) {
+                const episode = this._buildEpisodeEntry(epData, supplementary);
+                if (episode) allEpisodes.push(episode);
               }
             }
           }
-        }
-        // 兼容旧版 API 的 album_episodes 类型
-        else if (block.bk_type === "album_episodes" && block.data?.data) {
-          log("info", "[iqiyi] 找到 album_episodes 类型的分集数据块");
+        } else if (block.bk_type === "album_episodes") {
           foundEpisodes = true;
+          const group = this._selectSeasonGroup(groups, entityId, querySeason);
+          if (!group) continue;
 
-          const episodeGroups = block.data.data;
-          for (const group of episodeGroups) {
-            // 指定季时只处理目标季的分季组，避免拉取并合并无关季的分集
-            if (querySeason !== null && group.tab_name) {
-              const groupSeason = getExplicitSeasonNumber(group.tab_name);
-              if (groupSeason !== null && groupSeason !== querySeason) continue;
+          let videosData = group.videos;
+          if (typeof videosData === 'string') {
+            const albumIdKey = String(group.entity_id || videosData.match(/album_id=(\d+)/)?.[1] || videosData);
+            let seasonPromise = fetchedSeasons.get(albumIdKey);
+            if (!seasonPromise) {
+              seasonPromise = httpGet(videosData).then(({ data }) => typeof data === 'string' ? JSON.parse(data) : data);
+              fetchedSeasons.set(albumIdKey, seasonPromise);
             }
-
-            let videosData = group.videos;
-
-            // 分季数据是 URL 时需额外请求；以 album_id 为键复用已获取或正在获取的请求，
-            // 避免同一次搜索内同一分季被并发或重复请求
-            if (typeof videosData === 'string') {
-              // 该季的 album_id 已通过其它结果的 album_episodes 内联数据获取时，无需再请求分季URL
-              const groupAlbumId = group.entity_id ? String(group.entity_id) : (videosData.match(/album_id=(\d+)/)?.[1] || videosData);
-              if (inlinedAlbumIds && inlinedAlbumIds.has(groupAlbumId)) {
-                log("info", `[iqiyi] 该季分集已通过内联数据获取，跳过分季URL: ${groupAlbumId}`);
-                continue;
-              }
-              const albumIdKey = groupAlbumId;
-              let seasonPromise = fetchedSeasons.get(albumIdKey);
-              if (!seasonPromise) {
-                seasonPromise = (async () => {
-                  log("info", `[iqiyi] 发现分季URL，正在获取: ${videosData}`);
-                  const seasonResponse = await httpGet(videosData);
-                  return typeof seasonResponse.data === "string" ? JSON.parse(seasonResponse.data) : seasonResponse.data;
-                })();
-                fetchedSeasons.set(albumIdKey, seasonPromise);
-              } else {
-                log("info", `[iqiyi] 分季URL已获取过，跳过重复请求: ${albumIdKey}`);
-              }
-              try {
-                videosData = await seasonPromise;
-              } catch (error) {
-                fetchedSeasons.delete(albumIdKey);
-                log("error", `[iqiyi] 获取分季数据失败: ${error.message}`);
-                continue;
-              }
+            try {
+              videosData = await seasonPromise;
+            } catch (error) {
+              if (fetchedSeasons.get(albumIdKey) === seasonPromise) fetchedSeasons.delete(albumIdKey);
+              log("error", `[iqiyi] 获取分季数据失败: ${error.message}`);
+              continue;
             }
+          }
 
-            // 处理分页数据
-            if (videosData && typeof videosData === 'object' && videosData.feature_paged) {
-              for (const pageKey in videosData.feature_paged) {
-                const pagedList = videosData.feature_paged[pageKey];
-                for (const epData of pagedList) {
-                  const supplementary = block.supplementaryCategory || isSupplementaryCategory(group.tab_name) ||
-                    isSupplementaryEpisode([epData.short_display_name, epData.title, epData.subtitle].join(' '));
-
-                  const playUrl = epData.play_url || "";
-                  const tvidMatch = playUrl.match(/tvid=(\d+)/);
-                  if (!tvidMatch) continue;
-
-                  const tvid = tvidMatch[1];
-                  const title = this._buildEpisodeTitle(epData);
-
-                  const order = epData.album_order;
-                  const pageUrl = epData.page_url;
-
-                  if (tvid && title && pageUrl) {
-                    allEpisodes.push({
-                      id: tvid,
-                      title: title,
-                      order: order ?? allEpisodes.length,
-                      link: pageUrl,
-                      supplementary
-                    });
-                  }
-                }
-              }
-            }
+          const supplementary = supplementaryBlock || isSupplementaryCategory(group.tab_name);
+          for (const epData of this._collectSeasonEpisodes(videosData)) {
+            const episode = this._buildEpisodeEntry(epData, supplementary);
+            if (episode) allEpisodes.push(episode);
           }
         }
       }
@@ -478,14 +389,19 @@ export default class IqiyiSource extends BaseSource {
         return [];
       }
 
-      // 去重并排序
-      const uniqueEpisodes = Array.from(
-        new Map(allEpisodes.map(ep => [ep.id, ep])).values()
-      );
-      uniqueEpisodes.sort((a, b) => Number(Boolean(a.supplementary)) - Number(Boolean(b.supplementary)) || a.order - b.order);
+      // 同一期拆段时 album_order 可能重复。只有正片均有有效且唯一的集号时才据此排序。
+      const uniqueEpisodes = [...new Map(allEpisodes.map(ep => [ep.id, ep])).values()];
+      const mainEpisodes = uniqueEpisodes.filter(ep => !ep.supplementary);
+      const supplementaryEpisodes = uniqueEpisodes.filter(ep => ep.supplementary);
+      const orders = new Set(mainEpisodes.map(ep => ep.order));
+      if (!orders.has(null) && orders.size === mainEpisodes.length) {
+        mainEpisodes.sort((a, b) => a.order - b.order);
+      } else {
+        for (const episode of mainEpisodes) episode.order = null;
+      }
 
       log("info", `[iqiyi] 成功获取 ${uniqueEpisodes.length} 个分集`);
-      return uniqueEpisodes;
+      return [...mainEpisodes, ...supplementaryEpisodes];
 
     } catch (error) {
       log("error", "[iqiyi] 获取分集出错:", error.message);
@@ -574,7 +490,7 @@ export default class IqiyiSource extends BaseSource {
   _ensureEpisodeNumber(title, animeTitle, order) {
     if (extractEpisodeNumberFromTitle(title) !== null) return title;
     // 缺少分集序号时无法补全，保持标题原样
-    if (order === undefined || order === null || order === "") return title;
+    if (!Number.isInteger(order) || order <= 0) return title;
     // 作品名去掉年份与类型后缀后再与分集标题比对，避免拼接出来的名字对不上
     const animeName = extractAnimeTitle(animeTitle || "");
     const prefix = animeName && title.startsWith(animeName) ? animeName : "";
@@ -584,35 +500,39 @@ export default class IqiyiSource extends BaseSource {
       : `第${order}集 ${rest}`.trim();
   }
 
-  /**
-   * 全季搜索时统一拉取各结果的分集列表，收集其中以内联方式返回的季 album_id；
-   * 这些季无需再经分季URL获取，供 getEpisodes 判断跳过对应请求
-   * @param {Array} animes - 搜索结果数组
-   * @param {Map} baseInfoCache - 复用已拉取的分集列表数据，避免重复请求
-   * @returns {Promise<Set<string>>} 已被内联的季 album_id 集合
-   */
-  async _collectInlinedAlbumIds(animes, baseInfoCache) {
-    const inlined = new Set();
-    await Promise.all(animes.map(async (anime) => {
-      if (anime.mediaId.startsWith('movie_')) return;
-      const entityId = /^\d+$/.test(anime.mediaId) ? anime.mediaId : this._videoIdToEntityId(anime.mediaId);
-      if (!entityId) return;
-      const data = await this._fetchBaseInfoData(entityId);
-      baseInfoCache.set(anime.mediaId, data);
-      if (!data || !data.data || !data.data.template) return;
-      const tabs = data.data.template.tabs || [];
-      if (tabs.length === 0) return;
-      for (const block of (tabs[0].blocks || [])) {
-        if (block.bk_type === 'album_episodes' && block.data?.data) {
-          for (const group of block.data.data) {
-            if (group.videos && typeof group.videos === 'object' && group.videos.feature_paged && group.entity_id) {
-              inlined.add(String(group.entity_id));
-            }
-          }
-        }
-      }
-    }));
-    return inlined;
+  _selectSeasonGroup(groups, entityId, querySeason) {
+    const inlineGroups = groups.filter(group => group.videos && typeof group.videos === 'object');
+    const ownsGroup = group => String(group.entity_id) === entityId;
+    const ownGroup = inlineGroups.find(ownsGroup) || inlineGroups[0] || groups.find(ownsGroup);
+    if (querySeason === null) return ownGroup;
+
+    const matchesSeason = group => getExplicitSeasonNumber(group.tab_name || '') === querySeason;
+    const unnamedSeason = getExplicitSeasonNumber(ownGroup?.tab_name || '') === null ? ownGroup : undefined;
+    return inlineGroups.find(matchesSeason) || groups.find(matchesSeason) || unnamedSeason;
+  }
+
+  _collectSeasonEpisodes(videosData) {
+    if (!videosData || typeof videosData !== 'object') return [];
+    if (videosData.feature_paged) return Object.values(videosData.feature_paged).flat();
+    const segments = videosData.data?.videos || Object.values(videosData);
+    if (!Array.isArray(segments)) return [];
+    return segments.flatMap(segment => Array.isArray(segment) ? segment : (segment?.data || []));
+  }
+
+  _buildEpisodeEntry(epData, supplementaryCategory) {
+    const tvid = epData?.play_url?.match(/tvid=(\d+)/)?.[1];
+    if (!tvid || !epData.page_url) return null;
+
+    const supplementary = supplementaryCategory ||
+      isSupplementaryEpisode([epData.short_display_name, epData.title, epData.subtitle].join(' '));
+    const order = Number(epData.album_order);
+    return {
+      id: tvid,
+      title: this._buildEpisodeTitle(epData),
+      order: !supplementary && Number.isInteger(order) && order > 0 ? order : null,
+      link: epData.page_url,
+      supplementary
+    };
   }
 
   /**
@@ -797,9 +717,12 @@ export default class IqiyiSource extends BaseSource {
 
     // 初始列表预过滤机制：若用户指定了季度，优先检查初始结果中是否已包含匹配项
     if (resolvedQuerySeason !== null) {
+      const firstSeasonTitle = resolvedQuerySeason === 1 ? normalizeTitleForMatch(queryTitle).toLowerCase() : null;
       const seasonFiltered = filteredAnimes.filter(anime => {
-        const s = extractSeasonNumberFromAnimeTitle(anime.title).season;
-        return s === resolvedQuerySeason || (resolvedQuerySeason === 1 && s === null);
+        const { season } = extractSeasonNumberFromAnimeTitle(anime.title);
+        if (season === resolvedQuerySeason || (resolvedQuerySeason === 1 && season === null)) return true;
+        return firstSeasonTitle && normalizeTitleForMatch(anime.title).toLowerCase() === firstSeasonTitle &&
+          getExplicitSeasonNumber(anime.title) === null;
       });
 
       // 如果已命中目标，减少详情请求量
@@ -812,24 +735,16 @@ export default class IqiyiSource extends BaseSource {
     // 跨多个搜索结果共享分季数据缓存，避免同一 album 的分季URL被重复请求
     const seasonAlbumCache = new Map();
 
-    // 全季搜索时先统一拉取各结果的分集列表，收集已被内联的季 album_id；
-    // 这些季无需再经分季URL获取，后续处理各结果时据此跳过对应请求
-    let inlinedAlbumIds = null;
-    const baseInfoCache = new Map();
-    if (resolvedQuerySeason === null) {
-      inlinedAlbumIds = await this._collectInlinedAlbumIds(filteredAnimes, baseInfoCache);
-    }
-
     const processIqiyiAnimes = await Promise.all(filteredAnimes.map(async (anime) => {
         try {
-          const eps = await this.getEpisodes(anime.mediaId, resolvedQuerySeason, seasonAlbumCache, inlinedAlbumIds, baseInfoCache);
+          const eps = await this.getEpisodes(anime.mediaId, resolvedQuerySeason, seasonAlbumCache);
 
           // 格式化分集列表
           const links = [];
-          for (const ep of eps) {
+          for (const [index, ep] of eps.entries()) {
             const fullUrl = ep.link || `https://www.iqiyi.com/v_${anime.mediaId}.html`;
             links.push({
-              "name": ep.order.toString(),
+              "name": String(ep.order ?? index + 1),
               "url": fullUrl,
               "title": `【iqiyi】 ${this._ensureEpisodeNumber(ep.title, anime.title, ep.order)}`
             });

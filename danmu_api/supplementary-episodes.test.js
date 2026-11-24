@@ -104,6 +104,76 @@ test('爱奇艺旧目录中纯享无正片集号仍保留', async () => {
   assert.deepEqual((await source.getEpisodes('123')).map(ep => ep.id), ['2', '1']);
 });
 
+test('爱奇艺按条目读取内联分季并保留缺少可靠集号的综艺标题', async () => {
+  const ep = (id, title, album_order) => ({ title, album_order, play_url: `?tvid=${id}`, page_url: `https://www.iqiyi.com/v_${id}.html` });
+  const groups = [
+    { entity_id: 456, tab_name: '第2季', videos: 'https://example.test/iqiyi-season?album_id=456' },
+    { entity_id: 123, tab_name: '第1季', videos: { '1-10': { data: [
+      ep(1, '第1期上 首映', 1), ep(2, '第1期下 续篇', 1), ep(3, '下一站见', 0)
+    ] } } }
+  ];
+  const source = new IqiyiSource();
+  source._fetchBaseInfoData = async () => ({ status_code: 0, data: { template: { tabs: [{ blocks: [
+    { bk_type: 'album_episodes', data: { data: groups } }
+  ] }] } } });
+
+  const requests = [];
+  await withFetch(async url => {
+    requests.push(String(url));
+    return response({ data: { videos: [[ep(22, '续集', 2)], { data: [ep(21, '开场', 1)] }] } });
+  }, async () => {
+    const details = new Map();
+    await source.handleAnimes([{ mediaId: '123', title: '综艺名', type: '综艺' }], '综艺名', [], details);
+    const links = [...details.values()][0].links;
+    assert.deepEqual(links.map(link => [link.url.match(/v_(\d+)/)[1], link.title]), [
+      ['1', '【iqiyi】 第1期上 首映'], ['2', '【iqiyi】 第1期下 续篇'], ['3', '【iqiyi】 下一站见']
+    ]);
+    assert.deepEqual(requests, []);
+    assert.deepEqual((await source.getEpisodes('123', 2)).map(({ id, order }) => [id, order]), [['21', 1], ['22', 2]]);
+    assert.deepEqual(await source.getEpisodes('123', 3), []);
+    assert.deepEqual(requests, [groups[0].videos]);
+  });
+});
+
+test('爱奇艺首季保留末尾数字属于片名的条目', async () => {
+  const source = new IqiyiSource();
+  const requested = [];
+  source.getEpisodes = async id => {
+    requested.push(id);
+    return [];
+  };
+  const candidates = [
+    { mediaId: '123', title: '错爱2', type: '电视剧' },
+    { mediaId: '456', title: '错爱', type: '电影' },
+    { mediaId: '789', title: '错爱第2季', type: '电视剧' }
+  ];
+  await source.handleAnimes(candidates, '错爱2', [], null, 1);
+  assert.ok(requested.includes('123'));
+
+  requested.length = 0;
+  await source.handleAnimes(candidates, '错爱', [], null, 1);
+  assert.deepEqual(requested, ['456']);
+});
+
+test('B站番剧搜索沿用详情集号顺序，无法识别时沿用接口顺序', async () => {
+  const source = new BilibiliSource();
+  const raw = [
+    { id: 50, title: '2' }, { id: 90, title: '1' }, { id: 30, title: '3' }
+  ];
+  const pilot = { id: 10, title: '先导片' };
+  let episodes = raw;
+  await withFetch(async () => response({ code: 0, result: {
+    episodes, section: [{ title: '先导片', episodes: [pilot] }]
+  } }), async () => {
+    const details = new Map();
+    await source.handleAnimes([{ mediaId: 'ss123', title: '测试番剧' }], '测试番剧', [], details);
+    assert.deepEqual([...details.values()][0].links.map(link => link.url.match(/ep(\d+)/)[1]), ['90', '50', '30', '10']);
+
+    episodes = [raw[0], { ...raw[1], title: '特别故事' }, raw[2]];
+    assert.deepEqual((await source.getEpisodes('ss456')).map(ep => ep.id), [50, 90, 30, 10]);
+  });
+});
+
 test('B站详情缺少分类时查询 section 接口，保留纯享/先导并按视频 ID 去重', async () => {
   const main = { id: 1, aid: 10, cid: 11, title: '1' };
   const calls = [];
