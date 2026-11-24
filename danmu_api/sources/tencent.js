@@ -336,6 +336,7 @@ export default class TencentSource extends BaseSource {
       cTitleOutput: p.c_title_output || '',
       isTrailer: String(p.is_trailer) === '1',
       duration: Number(p.duration) || 0,
+      airDate: String(p.publish_date || '').slice(0, 10),
     };
   }
 
@@ -723,7 +724,9 @@ export default class TencentSource extends BaseSource {
             links.push({
               "name": (i + 1).toString(),
               "url": fullUrl,
-              "title": `【tencent】 ${epTitle}`
+              "title": `【tencent】 ${epTitle}`,
+              airDate: ep.airDate,
+              duration: ep.duration
             });
           }
 

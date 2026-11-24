@@ -55,7 +55,7 @@ export class Anime {
 
 // 定义 Link 模型
 class Link {
-  constructor({ name = "", url = "", title = "", id = 10001, episodeNumber = null, sort = null } = {}) {
+  constructor({ name = "", url = "", title = "", id = 10001, episodeNumber = null, sort = null, airDate, duration } = {}) {
     validateType(name, "string");
     validateType(url, "string");
     validateType(title, "string");
@@ -65,6 +65,8 @@ class Link {
     Object.assign(this, { name, url, title: canonicalPlatformTitle(title), id });
     if (episodeNumber !== null && episodeNumber !== undefined) this.episodeNumber = episodeNumber;
     if (sort !== null && sort !== undefined) this.sort = sort;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(airDate || '')) this.airDate = airDate;
+    if (Number.isFinite(duration) && duration > 0) this.duration = duration;
   }
 
   // ---- 静态方法：从 JSON 创建 Link 对象 ----

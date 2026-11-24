@@ -138,3 +138,62 @@ test('完整限时查询可复用缓存，强制刷新不读取通用缓存', as
   await searchAnime(url, null, null, null, null, true);
   assert.equal(searches, 2);
 });
+
+test('特别季简称和 TMDB 季集都命中三源首期，日期目录的短片不会冒充正片', async t => {
+  reset('tencent,youku,iqiyi');
+  Globals.init({ ...Globals.env, TOKEN: '87654321', TMDB_API_KEY: 'fixture-key',
+    PLATFORM_ORDER: 'tencent&youku&iqiyi', MERGE_SOURCE_PAIRS: 'tencent&youku&iqiyi' });
+  const seasonTitle = '奔跑吧·大湾区篇';
+  const fixture = {
+    tencent: [{ title: '第1期：王祖蓝回归', airDate: '2026-11-21', duration: 8164 },
+      { title: '第1期加更', airDate: '2026-11-21', duration: 1296 }],
+    youku: ['特别篇', '高光时刻', '宣传视频', '机智闯关解锁大湾区', '熟人局', '惩罚特辑', '游戏特辑', '剪辑']
+      .map((title, index) => ({ title: `2026-11-21 ${title}`, airDate: '2026-11-21', duration: index === 3 ? 8175 : 1800 + index })),
+    iqiyi: [{ title: '第1期 王祖蓝回归' }],
+  };
+  const host = { tencent: 'v.qq.com', youku: 'v.youku.com', iqiyi: 'www.iqiyi.com' };
+  for (const [index, [key, episodes]] of Object.entries(fixture).entries()) {
+    const source = getSourceByKey(key);
+    t.mock.method(source, 'search', async keyword => keyword.includes('大湾区篇') ? [key] : []);
+    t.mock.method(source, 'handleAnimes', async (raw, _title, results, details) => {
+      if (!raw.length) return;
+      const anime = { animeId: 7000 + index, bangumiId: key + '-bay', animeTitle: `${seasonTitle}(2026)【综艺】from ${key}`,
+        source: key, type: '综艺', typeDescription: '综艺', startDate: '2026-11-21', episodeCount: episodes.length,
+        links: episodes.map((ep, i) => ({ ...ep, title: `【${key}】 ${ep.title}`, url: `https://${host[key]}/bay-${i}.html` })) };
+      addAnime(anime, details);
+      const { links, ...dto } = anime;
+      results.push(dto);
+    });
+  }
+  t.mock.method(globalThis, 'fetch', async input => {
+    const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
+    if (url.pathname.endsWith('/search/tv')) return Response.json({ results: [url.searchParams.get('query') === '湾区节目别名'
+      ? { id: 239871, name: seasonTitle } : { id: 239870, name: '奔跑吧·特别篇' }] });
+    if (url.pathname.endsWith('/tv/239871')) return Response.json({ id: 239871, name: seasonTitle,
+      alternative_titles: { results: [{ title: '湾区节目别名' }] } });
+    if (url.pathname.endsWith('/tv/239870')) return Response.json({ id: 239870, name: '奔跑吧·特别篇',
+      seasons: [{ season_number: 7, name: '大湾区篇', air_date: '2026-11-21' }] });
+    if (url.pathname.endsWith('/season/7/episode/1')) return Response.json({ season_number: 7, episode_number: 1,
+      name: '年轻的回答', air_date: '2026-11-21' });
+    throw new Error('Unexpected fixture request: ' + url.pathname);
+  });
+  const primary = await (await searchEpisodes(request(new URLSearchParams({ anime: '奔跑吧 大湾篇' })))).json();
+  const merged = primary.animes[0]?.episodes[0]?.url;
+  assert.match(merged, /tencent:.*bay-0.*youku:.*bay-3/);
+  assert.match(merged, /iqiyi:.*bay-0/);
+  assert.equal(primary.animes[0].episodes.length, 2);
+  assert.ok(primary.animes.some(item => item.animeTitle.endsWith('from youku') &&
+    item.episodes.some(ep => ep.episodeTitle.includes('熟人局'))));
+
+  const expected = [merged];
+  const title = '奔跑吧·特别篇 S07E01';
+  for (const query of [{ anime: title }, { anime: '奔跑吧 大湾篇', episode: '1' },
+    { tmdbId: '239870', season: '7', episode: '1' }, { anime: '湾区节目别名', episode: '1' }]) {
+    const data = await (await searchEpisodes(request(new URLSearchParams(query)))).json();
+    assert.deepEqual(data.animes.flatMap(anime => anime.episodes.map(ep => ep.url)), expected, JSON.stringify(query));
+  }
+  const response = await handleRequest(new Request('http://localhost/87654321/api/v2/match', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fileName: title }),
+  }), Globals.env);
+  assert.deepEqual((await response.json()).matches.map(item => item.url), expected);
+});

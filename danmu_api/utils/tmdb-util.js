@@ -610,11 +610,11 @@ export async function searchTmdbTitles(title, mediaType = "multi", options = {})
 }
 
 // 使用 TMDB API 获取日语详情
-export async function getTmdbMatchDetails(mediaType, tmdbId) {
+export async function getTmdbMatchDetails(mediaType, tmdbId, { signal } = {}) {
   if (!['tv', 'movie'].includes(mediaType) || !/^\d+$/.test(String(tmdbId))) return null;
   return readTmdbData(await tmdbApiGet(`${mediaType}/${tmdbId}?${tmdbQuery({
     language: 'zh-CN', append_to_response: 'alternative_titles,translations'
-  })}`));
+  })}`, { signal }));
 }
 
 // 剧集搜索可只提供 TMDB ID；沿用代理/网关认证和标题回退。
@@ -639,10 +639,10 @@ export async function getTmdbMediaTitleById(tmdbId, preferredMediaType = 'tv') {
   return null;
 }
 
-export async function getTmdbMatchEpisode(tmdbId, season, episode) {
+export async function getTmdbMatchEpisode(tmdbId, season, episode, { signal } = {}) {
   if (!/^[1-9]\d*$/.test(String(tmdbId)) || !Number.isInteger(season) || season < 0 ||
       !Number.isInteger(episode) || episode < 1) return null;
-  return readTmdbData(await tmdbApiGet(`tv/${tmdbId}/season/${season}/episode/${episode}?${tmdbQuery({ language: 'zh-CN' })}`));
+  return readTmdbData(await tmdbApiGet(`tv/${tmdbId}/season/${season}/episode/${episode}?${tmdbQuery({ language: 'zh-CN' })}`, { signal }));
 }
 
 export async function getTmdbJpDetail(mediaType, tmdbId, options = {}) {

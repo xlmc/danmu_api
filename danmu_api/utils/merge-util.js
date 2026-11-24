@@ -2,8 +2,9 @@ import { globals } from '../configs/globals.js';
 import { log as baseLog } from './log-util.js';
 import { addAnime } from './cache-util.js';
 import { simplized } from '../utils/zh-util.js';
-import { stripNonTitleChars, convertChineseNumber } from '../utils/common-util.js';
+import { stripNonTitleChars, convertChineseNumber, extractAnimeTitle, extractYear, normalizeTitleForMatch } from '../utils/common-util.js';
 import { isSupportedSource, sourceForUrl } from '../sources/policy.js';
+import { isVarietyBonusTitle, varietyKey } from './episode-category-util.js';
 
 // ==============================================================================
 //  源合并处理工具 (merge-util.js)
@@ -1129,6 +1130,31 @@ function isMergeRatioValid(mergedCount, totalA, totalB, sourceA, sourceB, isAnyC
     // 集数较多时（>5 集）要求至少 18% 的覆盖率
     if (maxTotal > 5 && ratio < 0.18) return false;
     return true;
+}
+
+// 日期型目录的一级证据：同名同年综艺、同一播出日、相近时长、一对一对应。
+function findDatedVarietyPairs(primary, secondary, primaryLinks, secondaryLinks) {
+    if (![primary, secondary].every(anime => /综艺|綜藝|variety/i.test(`${anime.type} ${anime.typeDescription}`))) return [];
+    const year = extractYear(primary.animeTitle);
+    if (!year || year !== extractYear(secondary.animeTitle) ||
+        normalizeTitleForMatch(extractAnimeTitle(primary.animeTitle)) !==
+        normalizeTitleForMatch(extractAnimeTitle(secondary.animeTitle))) return [];
+    const eligible = ({ link }) => link.airDate && link.duration >= 20 * 60 && !isVarietyBonusTitle(link.title);
+    const catalog = links => links.filter(eligible).map(item => {
+        const issue = varietyKey(item.link.title)?.match(/^main:(\d+):(.*)$/);
+        return { ...item, number: issue ? Number(issue[1]) : null, part: issue?.[2] || '' };
+    });
+    const a = catalog(primaryLinks), b = catalog(secondaryLinks);
+    const pairs = [];
+    for (const p of a) {
+        for (const s of b) {
+            if (p.part !== s.part || (!p.number && !s.number) || (p.number && s.number && p.number !== s.number)) continue;
+            if (p.link.airDate !== s.link.airDate ||
+                Math.abs(p.link.duration - s.link.duration) > Math.max(30, Math.min(p.link.duration, s.link.duration) * 0.02)) continue;
+            pairs.push({ p, s });
+        }
+    }
+    return pairs.filter(({ p, s }) => pairs.filter(pair => pair.p === p || pair.s === s).length === 1);
 }
 
 
@@ -2584,6 +2610,7 @@ async function processMergeTask(params) {
     const logTitleA            = pAnime.animeTitle.replace(RegexStore.Clean.FROM_SUFFIX, '');
     const actualMergedSources  = [];
     const contentSignatureParts= [pAnime.animeId];
+    const partialSources = new Set();
     let hasMergedAny           = false;
     const seriesLangA          = getLanguageType(pAnime.animeTitle);
     const redundantP           = identifyRedundantTitle(derivedAnime.links, pAnime.animeTitle, currentPrimarySource);
@@ -3046,9 +3073,24 @@ async function processMergeTask(params) {
                 }
             }
 
-            if (mergedCount > 0) {
-                const isAnyCollection = collectionAnimeIds.has(pAnime.animeId) || collectionAnimeIds.has(match.animeId);
+            const isAnyCollection = isPrimaryCollection || isSecondaryCollection;
+            const ratioValid = mergedCount > 0 && isMergeRatioValid(mergedCount, filteredPLinksWithIndex.length,
+                filteredMLinksWithIndex.length, currentPrimarySource, secSource, isAnyCollection);
+            const confirmed = !customRule && !isAnyCollection && !ratioValid
+                ? findDatedVarietyPairs(derivedAnime, derivedMatch, filteredPLinksWithIndex, filteredMLinksWithIndex) : [];
+            if (confirmed.length) {
+                // 覆盖率不足时只提交独立核对过的正片，不继承位置推断的配对或补全。
+                pendingMutations.length = 0;
+                mappingEntries.length = 0;
+                mergedCount = confirmed.length;
+                for (const { p, s } of confirmed) {
+                    const merged = mergeLinkEntry(p.link, s.link, secSource, currentPrimarySource);
+                    pendingMutations.push({ linkIndex: p.originalIndex, newUrl: merged.url, newTitle: merged.title });
+                    mappingEntries.push({ idx: p.originalIndex, text: `   [日期与时长确认] ${p.link.title} <-> ${s.link.title}` });
+                }
+            }
 
+            if (mergedCount > 0) {
                 // ── 年份关系校验：与标题匹配侧沿用同一套判定 ──────────────────
                 // 映射表特权通道为最高优先级，命中后不参与年份判定
                 if (!customRule) {
@@ -3082,7 +3124,7 @@ async function processMergeTask(params) {
                     // 如果是映射表强行指定，跳过基于占比的覆盖率检查，有成功匹配的集数即视为合法
                     isValidMerge = mergedCount > 0;
                 } else {
-                    isValidMerge = isMergeRatioValid(mergedCount, filteredPLinksWithIndex.length, filteredMLinksWithIndex.length, currentPrimarySource, secSource, isAnyCollection);
+                    isValidMerge = ratioValid || confirmed.length > 0;
                 }
 
                 if (isValidMerge) {
@@ -3129,7 +3171,8 @@ async function processMergeTask(params) {
 
                     // 2. 在全局缓存中将“被合并的原始副源”标记为隐藏
                     const cachedSec = globals.animes.find(a => String(a.animeId) === String(match.animeId) && a.source === match.source);
-                    if (cachedSec) cachedSec.isHiddenChild = true;
+                    if (confirmed.length && confirmed.length < derivedMatch.links.length) partialSources.add(match.animeId);
+                    if (cachedSec && !partialSources.has(match.animeId)) cachedSec.isHiddenChild = true;
 
                     // ── 合集进度双向写入 ──────────────────────────────────────
                     // 支持主源为合集与副源为合集两种情况，为链式关联的下一次切片铺路
@@ -3180,7 +3223,7 @@ async function processMergeTask(params) {
 
                     if (collectionAnimeIds.has(match.animeId) || isCrossSeasonMapping) {
                         log("info", `${logPrefix} [智能补全] 跳过: 副源 [${secSource}] 为合集或触发跨季度映射，为避免混入其他季度集数，不执行补全。`);
-                    } else {
+                    } else if (!confirmed.length) {
                         stitchUnmatchedEpisodes(derivedAnime, orphanedEpisodes, secSource);
                     }
 
@@ -3228,7 +3271,7 @@ async function processMergeTask(params) {
             } else {
                 log("info", `${logPrefix} 合集保留: ID [${secId}] 是合集，保留以供同组复用。`);
             }
-            globalConsumedIds.add(secId);
+            if (!partialSources.has(secId)) globalConsumedIds.add(secId);
         }
 
         // 更新合并标题中的来源标签
